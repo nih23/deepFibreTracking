@@ -37,8 +37,8 @@ def visStreamlines(streamlines, volume, vol_slice_idx = 40):
         vol_actor2 = vol_actor.copy()
         vol_actor2.display(z=35)
         
-        #streamlines_actor = actor.line(streamlines, line_colors(streamlines, cmap = 'rgb_standard'))
-        streamlines_actor = actor.line(streamlines, (125,125,125))
+        streamlines_actor = actor.line(streamlines, line_colors(streamlines, cmap = 'rgb_standard'))
+        #streamlines_actor = actor.line(streamlines, (125,125,125))
 
         # Create the 3D display.
         r = window.Renderer()
@@ -128,10 +128,13 @@ def generateGridSimpleTraindataFromStreamlines(streamlines, dwi, rec_level_spher
     return train_X, train_Y
 
 
-def generatePredictionNetworkTrainingDataFromStreamlines(streamlines, dwi, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3):
+def generatePredictionNetworkTrainingDataFromStreamlines(streamlines, dwi, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, affine = np.eye(4,4)):
     '''
     
     '''
+    # project seed positions into DWI space
+    
+    
     sfa = np.asarray(streamlines)
     np.random.shuffle(sfa)
     dx,dy,dz,dw = dwi.shape
@@ -151,9 +154,10 @@ def generatePredictionNetworkTrainingDataFromStreamlines(streamlines, dwi, rec_l
     ctr = 0
     
     # define spacing of the 3D grid
-    x_ = coordinateScaling * np.linspace(-1., 1., noX)
-    y_ = coordinateScaling * np.linspace(-1., 1., noY)
-    z_ = coordinateScaling * np.linspace(-1., 1., noZ)
+    print("using 8px width for interpolation grid")
+    x_ = coordinateScaling * np.linspace(-4., 4, noX)
+    y_ = coordinateScaling * np.linspace(-4., 4., noY)
+    z_ = coordinateScaling * np.linspace(-4., 4., noZ)
     
     # initialize our supervised training data
     train_Y_1 = np.zeros([len(sl_pos),2*noCrossings,3]) # likely next streamline directions

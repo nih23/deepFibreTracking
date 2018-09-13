@@ -5,6 +5,7 @@ from keras.constraints import nonneg
 from keras import optimizers, losses
 from keras import backend as K
 from keras.utils import multi_gpu_model
+import keras
 
 from src.SelectiveDropout import SelectiveDropout
 import sys, getopt
@@ -12,6 +13,7 @@ import tensorflow as tf
 import h5py
 import numpy as np
 import time
+
 
 
 def normalizeDWI(data):
@@ -192,54 +194,24 @@ def get_msd_plainTracker(inputShape1,inputShape2,noCrossings = 3, depth=5, featu
     return msd_gpu
 
 
-def get_dense_net(inputShape,depth=1,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.5,avPoolSz=8):
-    inputs = Input(inputShape)
+def get_mlp_simpleTracker(inputShapeDWI,depth=1,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.5,avPoolSz=8):
+    inputs = Input(inputShapeDWI)
     layers = [inputs]
-    layers.append(Reshape((np.prod(inputShape), 1), input_shape=inputShape)(layers[-1]))
-    layers.append(Dense(features)(layers[-1]))
-    layers.append(BatchNormalization()(layers[-1]))
-    layers.append(activation_function(layers[-1]))
-   # layers.append(Flatten()(layers[-1]))
-   # layers.append(Lambda(lambda x: [x])(layers[-1]))
-
-    # DOWNSAMPLING STREAM
-    for i in range(1,depth+1):
-        layers.append(Conv1D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
-        layers.append(BatchNormalization()(layers[-1]))
-        layers.append(activation_function(layers[-1]))
-        layers.append(Conv1D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
-        layers.append(BatchNormalization()(layers[-1]))
-        layers.append(activation_function(layers[-1]))
-        layers.append(MaxPooling1D(pool_size=(2))(layers[-1]))
-
-    # ENCODING LAYER
-    layers.append(Conv1D(features, kernelSz, padding='same')(layers[-1]))
-    layers.append(activation_function(layers[-1]))
-    layers.append(Conv1D(features, kernelSz, padding='same')(layers[-1]))
-    layers.append(activation_function(layers[-1]))
-
-    # UPSAMPLING STREAM
-    for i in range(1,depth+1):
-        j = depth+1 - i
-        layers.append(concatenate([UpSampling1D()(layers[-1]), layers[-9*(i-1)*2  -  9 ]]))
-        layers.append(Conv1D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
-        layers.append(BatchNormalization()(layers[-1]))
-        layers.append(activation_function(layers[-1]))
-        layers.append(Conv1D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
-        layers.append(BatchNormalization()(layers[-1]))
-        layers.append(activation_function(layers[-1]))
-
- 
-    # PREDICTION LAYER
-    layers.append(Conv1D(3,1,activation='linear', padding='same')(layers[-1])) 
-    layers.append(MaxPooling1D(pool_size=4)(layers[-1]))
     layers.append(Flatten()(layers[-1]))
+    
+    for i in range(1,depth+1):
+        layers.append(Dense(features)(layers[-1]))
+        #layers.append(BatchNormalization()(layers[-1]))
+        layers.append(activation_function(layers[-1]))
+        layers.append(Dropout(0.5)(layers[-1]))
+        #layers.append(keras.layers.core.Activation('relu')(max_value = 1)(layers[-1]))
+    
     layers.append(Dense(3,activation='linear',name='finalPrediction')(layers[-1]))
 
     optimizer = optimizers.Adam(lr=lr, decay=decayrate)
     u_net = Model(layers[0], outputs=layers[-1])
     
-    u_net.compile(loss=[losses.mean_absolute_error], optimizer=optimizer)
+    u_net.compile(loss=[losses.cosine_proximity], optimizer=optimizer)
 
     return u_net
 
@@ -247,8 +219,8 @@ def get_dense_net(inputShape,depth=1,features=64,activation_function=LeakyReLU(a
 
 def get_3Dunet_simpleTracker(inputShapeDWI,depth=5,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.25,subsampleData=False,avPoolSz=8,poolSz=(2,2,2)):
     '''
-    predict direction of next streamline position and likely directions to all adjacent streamline positions
-    Input: DWI block, last directional vector
+    predict direction of next streamline position
+    Input: DWI block
     '''
     
     inputs = Input(inputShapeDWI)
@@ -262,12 +234,12 @@ def get_3Dunet_simpleTracker(inputShapeDWI,depth=5,features=64,activation_functi
     # DOWNSAMPLING STREAM
     for i in range(1,depth+1):
         layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
-        layers.append(BatchNormalization()(layers[-1]))
+        #layers.append(BatchNormalization()(layers[-1]))
         #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
         layers.append(Dropout(0.5)(layers[-1]))
         layers.append(activation_function(layers[-1]))
         layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
-        layers.append(BatchNormalization()(layers[-1]))
+        #layers.append(BatchNormalization()(layers[-1]))
         #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
         layers.append(Dropout(0.5)(layers[-1]))
         layers.append(activation_function(layers[-1]))
@@ -288,11 +260,11 @@ def get_3Dunet_simpleTracker(inputShapeDWI,depth=5,features=64,activation_functi
         layers.append(concatenate([UpSampling3D(size=poolSz)(layers[-1]), layersEncoding[-i]]))
         #layers.append(UpSampling3D(size=poolSz)(layers[-1]))
         layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
-        layers.append(BatchNormalization()(layers[-1]))
+        #ayers.append(BatchNormalization()(layers[-1]))
         #layers.append(SelectiveDropout(0.5)(layers[-1]))
         layers.append(activation_function(layers[-1]))
         layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
-        layers.append(BatchNormalization()(layers[-1]))
+        #ayers.append(BatchNormalization()(layers[-1]))
         #layers.append(SelectiveDropout(0.5)(layers[-1]))
         layers.append(activation_function(layers[-1]))
 
@@ -301,18 +273,18 @@ def get_3Dunet_simpleTracker(inputShapeDWI,depth=5,features=64,activation_functi
         layers.append(UpSampling3D(size=8)(layers[-1]))
     #layers.append(Conv1D(3,1,activation='sigmoid', padding='same')(layers[-1]))
     layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
-    layers.append(BatchNormalization()(layers[-1]))
+    #ayers.append(BatchNormalization()(layers[-1]))
     #layers.append(SelectiveDropout(0.5)(layers[-1]))
     layers.append(activation_function(layers[-1]))
     layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
-    layers.append(BatchNormalization()(layers[-1]))
+    #ayers.append(BatchNormalization()(layers[-1]))
     #layers.append(SelectiveDropout(0.5)(layers[-1]))
     layers.append(activation_function(layers[-1]))
     
     # align with directional vector
     layers.append(Flatten()(layers[-1]))
-    layers.append(Dense(512,activation='linear')(layers[-1]))
-    layers.append(Dense(3,activation='tanh',name='nextStreamlineDirection')(layers[-1]))
+    #layers.append(Dense(512,activation='linear')(layers[-1]))
+    layers.append(Dense(3,activation='linear',name='nextStreamlineDirection')(layers[-1]))
     o2 = layers[-1]
     
     

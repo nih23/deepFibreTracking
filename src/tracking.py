@@ -147,13 +147,13 @@ def applyTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinate
     
 
 def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.5):
-    x_ = coordinateScaling * np.linspace(-1., 1., noX)
-    y_ = coordinateScaling * np.linspace(-1., 1., noY)
-    z_ = coordinateScaling * np.linspace(-1., 1., noZ)       
+    x_ = coordinateScaling * np.linspace(-4., 4., noX)
+    y_ = coordinateScaling * np.linspace(-4., 4., noY)
+    z_ = coordinateScaling * np.linspace(-4., 4., noZ)       
 
     noSeeds = len(seeds)
     #noSeeds = 50
-    noIterations = 1000
+    noIterations = 100
 
     # initialize streamline positions data
     streamlinePositions = np.zeros([noSeeds,noIterations+1,3])
@@ -167,15 +167,17 @@ def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coor
         # interpolate dwi data for each point of our streamline
         for j in range(0,noSeeds):
             coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + streamlinePositions[j,iter,]
+            #print(str(coordVecs))
             for i in range(0,dw):
                 x[j,:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(data[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
 
+        #print(str(np.min(x)) + '   /   ' + str(np.max(x)) + '   s   ' + str(np.std(x)))
+                
         # predict possible directions
-        x_ext = nn_helper.normalizeDWI(x)
-        lastDirections = streamlinePositions[:,iter,] - streamlinePositions[:,iter-1,]
-        lastDirections = np.expand_dims(lastDirections, axis=1)
-        with tf.device('/cpu:0'):
-            predictedDirection = nn_helper.denormalizeStreamlineOrientation(model.predict([x_ext]))
+        #x_ext = nn_helper.normalizeDWI(x)
+        #lastDirections = streamlinePositions[:,iter,] - streamlinePositions[:,iter-1,]
+        #lastDirections = np.expand_dims(lastDirections, axis=1)
+        predictedDirection = (model.predict([x]))
 
         # normalize prediction
         vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
@@ -184,6 +186,6 @@ def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coor
         # update next streamline position
         for j in range(0,noSeeds):
             streamlinePositions[j,iter+1,] = streamlinePositions[j,iter,] + stepWidth * predictedDirection[j,]
-            print(str(predictedDirection[j,]))
+            #print(str(predictedDirection[j,]))
 
     return streamlinePositions
