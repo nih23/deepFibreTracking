@@ -23,7 +23,7 @@ def visSphere(sphere):
     ren.add(actor.point(sphere.vertices, window.colors.red, point_radius=0.05))
     window.show(ren)
 
-def visStreamlines(streamlines, volume, vol_slice_idx = 40):
+def visStreamlines(streamlines, volume, vol_slice_idx = 40, vol_slice_idx2 = 40):
     '''
     Visualize streamline using vtk
     '''
@@ -33,9 +33,9 @@ def visStreamlines(streamlines, volume, vol_slice_idx = 40):
     if window.have_vtk:
         vol_actor = actor.slicer(volume)
 
-        vol_actor.display(x=vol_slice_idx)
+        vol_actor.display(y=vol_slice_idx)
         vol_actor2 = vol_actor.copy()
-        vol_actor2.display(z=35)
+        vol_actor2.display(z=vol_slice_idx2)
         
         streamlines_actor = actor.line(streamlines, line_colors(streamlines, cmap = 'rgb_standard'))
         #streamlines_actor = actor.line(streamlines, (125,125,125))
@@ -44,6 +44,7 @@ def visStreamlines(streamlines, volume, vol_slice_idx = 40):
         r = window.Renderer()
         r.add(streamlines_actor)
         r.add(vol_actor)
+        r.add(vol_actor2)
         window.record(r, n_frames=1, out_path='deterministic.png', size=(800, 800))
         window.show(r)
     else:
@@ -105,7 +106,7 @@ def generateGridSimpleTraindataFromStreamlines(streamlines, dwi, rec_level_spher
     train_Y = []
     
     for streamlineIndex in range(0,noStreamlines):
-        if((streamlineIndex % 100) == 0):
+        if((streamlineIndex % 10000) == 0):
             print('Streamline ' + str(streamlineIndex) + '/' + str(noStreamlines))
         lengthStreamline = int(len(sfa[streamlineIndex]) / 10)
         for streamlineElementIndex in range(0,lengthStreamline-1):           

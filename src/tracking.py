@@ -153,7 +153,7 @@ def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coor
 
     noSeeds = len(seeds)
     #noSeeds = 50
-    noIterations = 100
+    noIterations = 1000
 
     # initialize streamline positions data
     streamlinePositions = np.zeros([noSeeds,noIterations+1,3])
@@ -177,11 +177,11 @@ def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coor
         #x_ext = nn_helper.normalizeDWI(x)
         #lastDirections = streamlinePositions[:,iter,] - streamlinePositions[:,iter-1,]
         #lastDirections = np.expand_dims(lastDirections, axis=1)
-        predictedDirection = (model.predict([x]))
+        predictedDirection = nn_helper.denormalizeStreamlineOrientation(model.predict([x])) # denormalize the prediction
 
         # normalize prediction
-        vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
-        predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
+        #vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
+        #predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
             
         # update next streamline position
         for j in range(0,noSeeds):

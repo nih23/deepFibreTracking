@@ -15,6 +15,12 @@ import numpy as np
 import time
 
 
+def toUnitVector(x):
+    return x[0] * x[1]
+
+#cross2 = Lambda(toUnitVector, output_shape=input_shape[0])(layers[-1])
+
+#model.add(Lambda(lambda x: x / K.sqrt(K.sum(x ** 2))            )
 
 def normalizeDWI(data):
     data = data - np.min(data)
@@ -194,6 +200,10 @@ def get_msd_plainTracker(inputShape1,inputShape2,noCrossings = 3, depth=5, featu
     return msd_gpu
 
 
+def relu_advanced(x):
+    return K.relu(x, max_value=1)
+
+
 def get_mlp_simpleTracker(inputShapeDWI,depth=1,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.5,avPoolSz=8):
     inputs = Input(inputShapeDWI)
     layers = [inputs]
@@ -204,10 +214,13 @@ def get_mlp_simpleTracker(inputShapeDWI,depth=1,features=64,activation_function=
         #layers.append(BatchNormalization()(layers[-1]))
         layers.append(activation_function(layers[-1]))
         layers.append(Dropout(0.5)(layers[-1]))
-        #layers.append(keras.layers.core.Activation('relu')(max_value = 1)(layers[-1]))
     
-    layers.append(Dense(3,activation='linear',name='finalPrediction')(layers[-1]))
-
+    #layers.append(Dense(3,activation=keras.layers.core.Activation(relu_advanced),name='finalPrediction')
+    layers.append(Dense(3,name='finalPrediction')(layers[-1]))
+    
+    layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
+    
+    
     optimizer = optimizers.Adam(lr=lr, decay=decayrate)
     u_net = Model(layers[0], outputs=layers[-1])
     
@@ -217,7 +230,7 @@ def get_mlp_simpleTracker(inputShapeDWI,depth=1,features=64,activation_function=
 
 
 
-def get_3Dunet_simpleTracker(inputShapeDWI,depth=5,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.25,subsampleData=False,avPoolSz=8,poolSz=(2,2,2)):
+def get_3Dunet_simpleTracker(inputShapeDWI,kernelSz = 3, depth=5,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.25,subsampleData=False,avPoolSz=8,poolSz=(2,2,2)):
     '''
     predict direction of next streamline position
     Input: DWI block
@@ -285,6 +298,7 @@ def get_3Dunet_simpleTracker(inputShapeDWI,depth=5,features=64,activation_functi
     layers.append(Flatten()(layers[-1]))
     #layers.append(Dense(512,activation='linear')(layers[-1]))
     layers.append(Dense(3,activation='linear',name='nextStreamlineDirection')(layers[-1]))
+    layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
     o2 = layers[-1]
     
     
