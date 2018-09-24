@@ -39,7 +39,7 @@ def denormalizeStreamlineOrientation(vecs):
     return 2 * vecs - 1
 
 
-def get_msd_simplified_trackerNetwork(inputShapeDWI,depth=5, features=64, activation_function=PReLU(), lr=1e-4, noGPUs=3, decayrate=0, pDropout=0.25, subsampleData=False, initialDilationOffset = 0):
+def get_msd_simplified_trackerNetwork(inputShapeDWI,depth=5, features=64, activation_function=PReLU(), lr=1e-4, noGPUs=3, decayrate=0, pDropout=0.25, subsampleData=False, initialDilationOffset = 0, kernelSz = 3):
     '''
     predict direction to next streamline point
     Input: DWI block
@@ -298,7 +298,7 @@ def get_3Dunet_simpleTracker(inputShapeDWI,kernelSz = 3, depth=5,features=64,act
     layers.append(Flatten()(layers[-1]))
     #layers.append(Dense(512,activation='linear')(layers[-1]))
     layers.append(Dense(3,activation='linear',name='nextStreamlineDirection')(layers[-1]))
-    layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
+    #layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
     o2 = layers[-1]
     
     
