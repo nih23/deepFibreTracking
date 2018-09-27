@@ -15,6 +15,7 @@ import numpy as np
 import warnings
 
 import src.nn_helper as nn_helper
+import src.dwi_tools as dwi_tools
 
 import tensorflow as tf
 from joblib import Parallel, delayed
@@ -109,12 +110,14 @@ def simpleParallelDeterministicTracking(seeds, data, model, noX=3, noY=3,noZ=3,d
     return streamlinePositions
 
 def applyTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.5):
-    x_ = coordinateScaling * np.linspace(-1., 1., noX)
-    y_ = coordinateScaling * np.linspace(-1., 1., noY)
-    z_ = coordinateScaling * np.linspace(-1., 1., noZ)       
+    #x_ = coordinateScaling * np.linspace(-1., 1., noX)
+    #y_ = coordinateScaling * np.linspace(-1., 1., noY)
+    #z_ = coordinateScaling * np.linspace(-1., 1., noZ)       
 
+    x_,y_,z_ = dwi_tools.getCoordinateGrid(noX,noY,noZ,coordinateScaling)
+    
     noSeeds = len(seeds)
-    noSeeds = 50
+    #noSeeds = 50
     noIterations = 1000
 
     # initialize streamline positions data
@@ -137,22 +140,19 @@ def applyTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinate
         lastDirections = streamlinePositions[:,iter,] - streamlinePositions[:,iter-1,]
         lastDirections = np.expand_dims(lastDirections, axis=1)
         with tf.device('/cpu:0'):
-            likelyDirections, predictedDirection = model.predict([x_ext,lastDirections])
+            predictedDirection = model.predict([x_ext,lastDirections])
 
         # update next streamline position
         for j in range(0,noSeeds):
             streamlinePositions[j,iter+1,] = streamlinePositions[j,iter,] + stepWidth * predictedDirection[j,]
 
     return streamlinePositions
+
+
+def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0):
+    x_,y_,z_ = dwi_tools.getCoordinateGrid(noX,noY,noZ,coordinateScaling)
     
-
-def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.5):
-    x_ = coordinateScaling * np.linspace(-4., 4., noX)
-    y_ = coordinateScaling * np.linspace(-4., 4., noY)
-    z_ = coordinateScaling * np.linspace(-4., 4., noZ)       
-
     noSeeds = len(seeds)
-    #noSeeds = 50
     noIterations = 1000
 
     # initialize streamline positions data
@@ -177,11 +177,14 @@ def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coor
         #x_ext = nn_helper.normalizeDWI(x)
         #lastDirections = streamlinePositions[:,iter,] - streamlinePositions[:,iter-1,]
         #lastDirections = np.expand_dims(lastDirections, axis=1)
-        predictedDirection = nn_helper.denormalizeStreamlineOrientation(model.predict([x])) # denormalize the prediction
+        
+        
+        #predictedDirection = nn_helper.denormalizeStreamlineOrientation(model.predict([x])) # denormalize the prediction
+        predictedDirection = model.predict([x])[nnOutputToUse]
 
         # normalize prediction
-        #vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
-        #predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
+        vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
+        predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
             
         # update next streamline position
         for j in range(0,noSeeds):

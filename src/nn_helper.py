@@ -207,7 +207,9 @@ def relu_advanced(x):
 def get_mlp_simpleTracker(inputShapeDWI,depth=1,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.5,avPoolSz=8):
     inputs = Input(inputShapeDWI)
     layers = [inputs]
+    #layers.append(BatchNormalization()(layers[-1]))
     layers.append(Flatten()(layers[-1]))
+    
     
     for i in range(1,depth+1):
         layers.append(Dense(features)(layers[-1]))
@@ -215,15 +217,46 @@ def get_mlp_simpleTracker(inputShapeDWI,depth=1,features=64,activation_function=
         layers.append(activation_function(layers[-1]))
         layers.append(Dropout(0.5)(layers[-1]))
     
-    #layers.append(Dense(3,activation=keras.layers.core.Activation(relu_advanced),name='finalPrediction')
-    layers.append(Dense(3,name='finalPrediction')(layers[-1]))
+    i1 = layers[-1]
     
-    layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
+    layers.append(Dense(3,name='prevDirection')(i1))
+    layers.append(Dense(3,name='nextDirection')(i1))
+    #layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
     
     
     optimizer = optimizers.Adam(lr=lr, decay=decayrate)
-    u_net = Model(layers[0], outputs=layers[-1])
+    u_net = Model((layers[0]), outputs=(layers[-2],layers[-1]))
+    u_net.compile(loss=[losses.cosine_proximity,losses.cosine_proximity], optimizer=optimizer)
+
+    return u_net
+
+
+def get_mlp_advancedTracker(inputShapeDWI,inputShapeStreamline,depth=1,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.5,avPoolSz=8):
+    inputs = Input(inputShapeDWI)
+    layers = [inputs]
+    layers.append(BatchNormalization()(layers[-1]))
+    layers.append(Flatten()(layers[-1]))
     
+    
+    for i in range(1,depth+1):
+        layers.append(Dense(features)(layers[-1]))
+        layers.append(BatchNormalization()(layers[-1]))
+        layers.append(activation_function(layers[-1]))
+        layers.append(Dropout(0.5)(layers[-1]))
+    
+    #layers.append(Dense(3,activation=keras.layers.core.Activation(relu_advanced),name='finalPrediction')
+    auxiliary_input = Input(shape=((3,)), name='aux_input')
+    x = concatenate([layers[-1], auxiliary_input], axis = 1)
+    layers.append(x)
+    layers.append(Dense(3,name='finalPrediction')(layers[-1]))
+    
+    #layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
+    
+    
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+    u_net = Model((layers[0],auxiliary_input), outputs=layers[-1])
+    #unet_multi_gpu = multi_gpu_model(u_net, gpus=noGPUs)
+    #unet_multi_gpu.compile(loss=[losses.cosine_proximity], optimizer=optimizer)
     u_net.compile(loss=[losses.cosine_proximity], optimizer=optimizer)
 
     return u_net
