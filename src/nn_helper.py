@@ -88,123 +88,38 @@ def get_msd_simplified_trackerNetwork(inputShapeDWI,depth=5, features=64, activa
 
     return msd_gpu
 
-
-def get_msd_advancedTracker(inputShape1,inputShape2,noCrossings = 3, depth=5, features=64, activation_function=PReLU(), lr=1e-4, noGPUs=3, decayrate=0, pDropout=0.25, subsampleData=False, initialDilationOffset = 0):
-    '''
-    predict direction of next streamline position and likely directions to all adjacent streamline positions
-    Input: DWI block, last directional vector
-    '''
-    layersEncoding = []
-    inputs = Input(inputShape1)
-    layers = [inputs]
-    if(subsampleData):
-        layers.append(AveragePooling3D(pool_size=8)(layers[-1]))
-    inLayer = layers[-1]
-    
-    # Mixed-scale Dense ConvNet architecture
-    # Pelt, D. M., & Sethian, J. A. (2018). A mixed-scale dense convolutional neural network for image analysis. Proceedings of the National Academy of Sciences, 115(2), 254–259. https://doi.org/10.1073/pnas.1715832114
-    for i in range(1,depth+1):
-        layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal', dilation_rate = i+initialDilationOffset)(inLayer))
-        layers.append(BatchNormalization()(layers[-1]))
-        #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
-        layers.append(activation_function(layers[-1]))
-        layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal', dilation_rate = i+initialDilationOffset)(layers[-1]))
-        layers.append(BatchNormalization()(layers[-1]))
-        #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
-        layers.append(activation_function(layers[-1]))
-        layersEncoding.append(layers[-1])
-
-    layers.append(concatenate(layersEncoding))
-
-    if(subsampleData):
-        layers.append(UpSampling3D(size=8)(layers[-1]))
-
-        
-    # PREDICT LIKELY DIRECTIONS
-    layers.append(Conv3D(features, kernelSz, padding='same')(layers[-1])) # at this layer we want to have some kind of prediction of likely directions
-    #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
-    layers.append(BatchNormalization()(layers[-1]))
-    layers.append(activation_function(layers[-1]))
-    layers.append(Conv3D(features, kernelSz, padding='same')(layers[-1]))
-    #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
-    layers.append(BatchNormalization()(layers[-1]))
-    layers.append(activation_function(layers[-1]))
-    layers.append(Flatten()(layers[-1]))
-    layers.append(Dense(noCrossings * 2 * 3,activation='linear')(layers[-1]))
-    layers.append(Reshape((2*noCrossings, 3), name = 'sl_all_dir')(layers[-1]))
-    o_likelyDirections = layers[-1]
-    
-    # PREDICT NEXT DIRECTION
-    layers.append(Conv1D(3,1,activation='sigmoid', padding='same')(layers[-1]))
-    auxiliary_input = Input(shape=(inputShape2), name='aux_input')
-    x = concatenate([layers[-1], auxiliary_input], axis = 1)
-    layers.append(x)
-    layers.append(Flatten()(layers[-1]))
-    layers.append(Dense(3,activation='tanh',name='sl_next_dir')(layers[-1]))
-    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
-    msd_serial = Model(inputs=(layers[0],auxiliary_input), outputs=(o_likelyDirections, layers[-1]))
-    msd_gpu = multi_gpu_model(msd_serial, gpus=noGPUs)
-    msd_gpu.compile(loss=[losses.mse,losses.mse], optimizer=optimizer)
-
-    return msd_gpu
-
-
-def get_msd_plainTracker(inputShape1,inputShape2,noCrossings = 3, depth=5, features=64, activation_function=PReLU(), lr=1e-4, noGPUs=3, decayrate=0, pDropout=0.25, subsampleData=False, initialDilationOffset = 0):
-    '''
-    predict likely directions to adjacent streamline positions
-    Input: DWI block
-    '''
-    layersEncoding = []
-    inputs = Input(inputShape1)
-    layers = [inputs]
-    if(subsampleData):
-        layers.append(AveragePooling3D(pool_size=8)(layers[-1]))
-    inLayer = layers[-1]
-    
-    # Mixed-scale Dense ConvNet architecture
-    # Pelt, D. M., & Sethian, J. A. (2018). A mixed-scale dense convolutional neural network for image analysis. Proceedings of the National Academy of Sciences, 115(2), 254–259. https://doi.org/10.1073/pnas.1715832114
-    for i in range(1,depth+1):
-        layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal', dilation_rate = i+initialDilationOffset)(inLayer))
-        layers.append(BatchNormalization()(layers[-1]))
-        #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
-        layers.append(activation_function(layers[-1]))
-        layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal', dilation_rate = i+initialDilationOffset)(layers[-1]))
-        layers.append(BatchNormalization()(layers[-1]))
-        #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
-        layers.append(activation_function(layers[-1]))
-        layersEncoding.append(layers[-1])
-
-    layers.append(concatenate(layersEncoding))
-
-    if(subsampleData):
-        layers.append(UpSampling3D(size=8)(layers[-1]))
-
-        
-    layers.append(Conv3D(features, kernelSz, padding='same')(layers[-1])) # at this layer we want to have some kind of prediction of likely directions
-    #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
-    layers.append(BatchNormalization()(layers[-1]))
-    layers.append(activation_function(layers[-1]))
-    layers.append(Conv3D(features, kernelSz, padding='same')(layers[-1]))
-    #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
-    layers.append(BatchNormalization()(layers[-1]))
-    layers.append(activation_function(layers[-1]))
-    layers.append(Flatten()(layers[-1]))
-    layers.append(Dense(noCrossings * 2 * 3,activation='linear')(layers[-1]))
-    layers.append(Reshape((2*noCrossings, 3), name = 'sl_all_dir')(layers[-1]))
-    o_likelyDirections = layers[-1]
-    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
-    msd_serial = Model(inputs=(layers[0]), outputs=(o_likelyDirections))
-    msd_gpu = multi_gpu_model(msd_serial, gpus=noGPUs)
-    msd_gpu.compile(loss=[losses.mse], optimizer=optimizer)
-
-    return msd_gpu
-
-
 def relu_advanced(x):
     return K.relu(x, max_value=1)
 
 
 def get_mlp_simpleTracker(inputShapeDWI,depth=1,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.5,avPoolSz=8):
+    inputs = Input(inputShapeDWI)
+    layers = [inputs]
+    #layers.append(BatchNormalization()(layers[-1]))
+    layers.append(Flatten()(layers[-1]))
+    
+    
+    for i in range(1,depth+1):
+        layers.append(Dense(features)(layers[-1]))
+        layers.append(BatchNormalization()(layers[-1]))
+        layers.append(activation_function(layers[-1]))
+        layers.append(Dropout(0.5)(layers[-1]))
+    
+    i1 = layers[-1]
+    
+    layers.append(Dense(3,name='prevDirection')(i1))
+    layers.append(Dense(3,name='nextDirection')(i1))
+    #layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
+    
+    
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+    u_net = Model((layers[0]), outputs=(layers[-2],layers[-1]))
+    u_net.compile(loss=[losses.cosine_proximity,losses.cosine_proximity], optimizer=optimizer)
+
+    return u_net
+
+
+def get_mlp_simpleTracker_noBN(inputShapeDWI,depth=1,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.5,avPoolSz=8):
     inputs = Input(inputShapeDWI)
     layers = [inputs]
     #layers.append(BatchNormalization()(layers[-1]))
@@ -229,6 +144,7 @@ def get_mlp_simpleTracker(inputShapeDWI,depth=1,features=64,activation_function=
     u_net.compile(loss=[losses.cosine_proximity,losses.cosine_proximity], optimizer=optimizer)
 
     return u_net
+
 
 
 def get_mlp_advancedTracker(inputShapeDWI,inputShapeStreamline,depth=1,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.5,avPoolSz=8):
@@ -266,7 +182,7 @@ def get_mlp_advancedTracker(inputShapeDWI,inputShapeStreamline,depth=1,features=
 def get_3Dunet_simpleTracker(inputShapeDWI,kernelSz = 3, depth=5,features=64,activation_function=LeakyReLU(alpha=0.3),lr=1e-4,noGPUs=4,decayrate=0,pDropout=0.25,subsampleData=False,avPoolSz=8,poolSz=(2,2,2)):
     '''
     predict direction of next streamline position
-    Input: DWI block
+    Input: partial DWI volume
     '''
     
     inputs = Input(inputShapeDWI)
@@ -282,12 +198,12 @@ def get_3Dunet_simpleTracker(inputShapeDWI,kernelSz = 3, depth=5,features=64,act
         layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
         #layers.append(BatchNormalization()(layers[-1]))
         #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
-        layers.append(Dropout(0.5)(layers[-1]))
+        #layers.append(Dropout(0.5)(layers[-1]))
         layers.append(activation_function(layers[-1]))
         layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
         #layers.append(BatchNormalization()(layers[-1]))
         #layers.append(SelectiveDropout(0.5,dropoutEnabled=1)(layers[-1]))
-        layers.append(Dropout(0.5)(layers[-1]))
+        #layers.append(Dropout(0.5)(layers[-1]))
         layers.append(activation_function(layers[-1]))
         layersEncoding.append(layers[-1])
         layers.append(MaxPooling3D(pool_size=poolSz)(layers[-1]))
@@ -329,16 +245,20 @@ def get_3Dunet_simpleTracker(inputShapeDWI,kernelSz = 3, depth=5,features=64,act
     
     # align with directional vector
     layers.append(Flatten()(layers[-1]))
-    #layers.append(Dense(512,activation='linear')(layers[-1]))
-    layers.append(Dense(3,activation='linear',name='nextStreamlineDirection')(layers[-1]))
-    #layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
+    
+    i1 = layers[-1]
+    
+    layers.append(Dense(3,name='prevDirection')(i1))
+    layers.append(Dense(3,name='nextDirection')(i1))
+
+    
     o2 = layers[-1]
     
     
     optimizer = optimizers.Adam(lr=lr, decay=decayrate)
-    u_net_serial = Model(inputs=(layers[0]), outputs=o2)
+    u_net_serial = Model(inputs=(layers[0]), outputs=(layers[-2],layers[-1]))
     unet_multi_gpu = multi_gpu_model(u_net_serial, gpus=noGPUs)
-    unet_multi_gpu.compile(loss=[losses.cosine_proximity], optimizer=optimizer)
+    unet_multi_gpu.compile(loss=[losses.cosine_proximity,losses.cosine_proximity], optimizer=optimizer)
     
     return unet_multi_gpu
 

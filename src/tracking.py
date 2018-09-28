@@ -42,9 +42,14 @@ def simpleDeterministicTracking(seeds, data, model, rec_level_sphere = 3, noX=3,
                     # interpolate data given these coordinates for each channel
                     x = np.zeros([noX,noY,noZ,dw])
 
-                    coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + streamLinePosition
+#                    coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + streamLinePosition
+#                    for i in range(0,dw):
+#                        x[:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(data[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
+                        
+                    coordVecs = np.vstack(np.meshgrid(x_,y_,z_, indexing='ij')).reshape(3,-1).T + streamLinePosition
                     for i in range(0,dw):
                         x[:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(data[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
+
 
                     lastDirection = streamLinePosition - streamLinePosition_old
 
@@ -149,9 +154,7 @@ def applyTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinate
     return streamlinePositions
 
 
-def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0):
-    x_,y_,z_ = dwi_tools.getCoordinateGrid(noX,noY,noZ,coordinateScaling)
-    
+def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0):   
     noSeeds = len(seeds)
     noIterations = 1000
 
@@ -162,14 +165,13 @@ def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coor
 
     # interpolate data given these coordinates for each channel
     x = np.zeros([noSeeds,noX,noY,noZ,dw])
+    x_,y_,z_ = dwi_tools.getCoordinateGrid(noX,noY,noZ,coordinateScaling)
     
     for iter in range(1,noIterations):
         # interpolate dwi data for each point of our streamline
         for j in range(0,noSeeds):
             coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + streamlinePositions[j,iter,]
-            #print(str(coordVecs))
-            for i in range(0,dw):
-                x[j,:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(data[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
+            x[j,] = dwi_tools.interpolatePartialDWIVolume(data,coordVecs, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
 
         #print(str(np.min(x)) + '   /   ' + str(np.max(x)) + '   s   ' + str(np.std(x)))
                 
@@ -185,7 +187,7 @@ def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coor
         # normalize prediction
         vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
         predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
-            
+
         # update next streamline position
         for j in range(0,noSeeds):
             streamlinePositions[j,iter+1,] = streamlinePositions[j,iter,] + stepWidth * predictedDirection[j,]

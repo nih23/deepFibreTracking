@@ -14,6 +14,40 @@ from dipy.tracking import metrics
 import numpy as np
 import warnings
 
+from joblib import Parallel, delayed
+import multiprocessing
+
+
+def _interpolateVolume(j):
+    global data
+    global coordVecs
+    
+    return vfu.interpolate_scalar_3d(data[:,:,:,j],coordVecs)[0]
+
+
+def interpolatePartialDWIVolume(dwi, centerPosition, x_,y_,z_, noX = 8, noY = 8, noZ = 8, coordinateScaling = 1,):
+    szDWI = dwi.shape
+    coordVecs = np.vstack(np.meshgrid(x_,y_,z_, indexing='ij')).reshape(3,-1).T + centerPosition   
+    x = np.zeros([noX,noY,noZ,szDWI[-1]])
+    #PARALLEL BUT SLOWER VERSION ...
+    #global data
+    #global coordVecs
+    #num_cores = multiprocessing.cpu_count()
+    #data = dwi
+    #results = Parallel(n_jobs=num_cores)(delayed(processInput)(i) for i in range(0,szDWI[-1]))    
+    #pool = multiprocessing.Pool(processes=num_cores)
+    #results = pool.map(_interpolateVolume, range(0,szDWI[-1]))
+    #pool.close()
+    #results = np.swapaxes(results,0,1)
+    #return np.reshape(np.array(results),[noX,noY,noZ,szDWI[-1]])
+    
+    #return results
+    
+    for i in range(0,szDWI[-1]):
+        x[:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(dwi[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
+    return x
+
+
 def visSphere(sphere):
     '''
     Visualize sphere
@@ -35,7 +69,7 @@ def visTwoSetsOfStreamlines(streamlines,streamlines2, volume, vol_slice_idx = 40
 
         vol_actor.display(y=vol_slice_idx)
         vol_actor2 = vol_actor.copy()
-        vol_actor2.display(z=vol_slice_idx2)
+        vol_actor2.display(x=vol_slice_idx2)
         
         hue = [0, 0.5]  # red only
         saturation = [0.0, 1.0]  # black to white
@@ -165,7 +199,7 @@ def generateGridSimpleTraindataFromStreamlines(streamlines, dwi, rec_level_spher
     return train_X, train_Y
 
 def getCoordinateGrid(noX,noY,noZ,coordinateScaling):
-    print("using " + str([noX,noY,noZ]) + "px interpolation grid with coordinateScaling " + str(coordinateScaling))
+    #print("using " + str([noX,noY,noZ]) + "px interpolation grid with coordinateScaling " + str(coordinateScaling))
     x_ = coordinateScaling * np.linspace(-4., 4, noX)
     y_ = coordinateScaling * np.linspace(-4., 4., noY)
     z_ = coordinateScaling * np.linspace(-4., 4., noZ)
@@ -175,11 +209,7 @@ def generatePredictionNetworkTrainingDataFromStreamlines(streamlines, dwi, rec_l
     '''
     
     '''
-    # project seed positions into DWI space
-    
-    
     sfa = np.asarray(streamlines)
-    #np.random.shuffle(sfa)
     dx,dy,dz,dw = dwi.shape
     noStreamlines = min(len(sfa), 1000) # FIXME: spares us some time right now
     noNeighbours = 2*noCrossings + 1
@@ -192,45 +222,35 @@ def generatePredictionNetworkTrainingDataFromStreamlines(streamlines, dwi, rec_l
     kdt = KDTree(sl_pos)
     
     print('Generating training data')
-    ctr = 0
-    
+   
     # define spacing of the 3D grid
     x_,y_,z_ = getCoordinateGrid(noX,noY,noZ,coordinateScaling)
     
     # initialize our supervised training data
     train_Y_1 = np.zeros([len(sl_pos),2*noCrossings,3]) # likely next streamline directions
-    train_Y_2 = np.zeros([len(sl_pos),3]) # next streamline position
+    train_Y_2 = np.zeros([len(sl_pos),3]) # next direction
+    train_X_2 = np.zeros([len(sl_pos),3]) # previous direction
     train_X = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
-    train_X_2 = np.zeros([len(sl_pos),3]) # actual position
+    
     for streamlineIndex in range(0,len(sl_pos)):
+        if((streamlineIndex % 1000) == 0):
+            print(str(streamlineIndex) + "/" + str(len(sl_pos)))
+
         streamlinevec = sl_pos[streamlineIndex]
         streamlinevec_next = sl_pos[min((streamlineIndex+1,len(sl_pos)-1))]
         streamlinevec_prev = sl_pos[max((streamlineIndex-1,0))]
-        d = np.sum( (streamlinevec - streamlinevec_next)**2)
-        i = kdt.query_ball_point(streamlinevec,distToNeighbours) # acquire neighbours within a certain distance
-        i = i[0:2*noCrossings] # limit length to the nearest neighbours
-        n_slv = kdt.data[i] - streamlinevec # direction to nearest streamline position
-        n_slv = np.unique(n_slv, axis = 0) # remove duplicats from our search query
-        noPoints,dimPoints = n_slv.shape
-        train_Y_1[ctr,0:noPoints,] = n_slv
-        train_Y_2[ctr,] = streamlinevec_next - streamlinevec
-        train_Y_2[ctr,] = np.nan_to_num(train_Y_2[ctr,] / np.sqrt(np.sum(train_Y_2[ctr,] ** 2))) # make unit vector
-        train_X_2[ctr,] = streamlinevec_prev - streamlinevec
-        train_X_2[ctr,] = np.nan_to_num(train_X_2[ctr,] / np.sqrt(np.sum(train_X_2[ctr,] ** 2))) # make unit vector
-        
-        
-        if((ctr % 1000) == 0):
-            print(str(ctr) + "/" + str(len(sl_pos)))
-        coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + streamlinevec
-        for i in range(0,dw):
-            train_X[ctr,:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(dwi[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
-#        if(ctr<1):
-#            print("Streamline: " + str(streamlinevec))
-#            print("Streamline_next: " + str(streamlinevec_next))
-#            print("dir_next: " + str(train_Y_2[ctr,]))
-#            print('unit_dir_next: ' + str(train_Y_2[ctr,] / np.sqrt(np.sum(train_Y_2[ctr,] ** 2))))
-#            print("streamline_neighbours: " + str(train_Y_1[ctr,0:noPoints,]))
+        #d = np.sum( (streamlinevec - streamlinevec_next)**2)
+        #i = kdt.query_ball_point(streamlinevec,distToNeighbours) # acquire neighbours within a certain distance
+        #i = i[0:2*noCrossings] # limit length to the nearest neighbours
+        #n_slv = kdt.data[i] - streamlinevec # direction to nearest streamline position
+        #n_slv = np.unique(n_slv, axis = 0) # remove duplicats from our search query
+        #noPoints,dimPoints = n_slv.shape
+        #train_Y_1[streamlineIndex,0:noPoints,] = n_slv
+        train_Y_2[streamlineIndex,] = streamlinevec_next - streamlinevec
+        train_Y_2[streamlineIndex,] = np.nan_to_num(train_Y_2[streamlineIndex,] / np.sqrt(np.sum(train_Y_2[streamlineIndex,] ** 2))) # make unit vector
+        train_X_2[streamlineIndex,] = streamlinevec_prev - streamlinevec
+        train_X_2[streamlineIndex,] = np.nan_to_num(train_X_2[streamlineIndex,] / np.sqrt(np.sum(train_X_2[streamlineIndex,] ** 2))) # make unit vector
+        train_X[streamlineIndex,] = interpolatePartialDWIVolume(dwi,streamlinevec, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
 
-        ctr += 1
         
     return train_X, train_X_2, train_Y_1, train_Y_2
