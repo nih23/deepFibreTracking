@@ -1,3 +1,34 @@
+import time
+import nrrd
+import nibabel as nb
+import numpy as np
+import matplotlib.pyplot as plt
+import h5py
+
+from dipy.tracking.local import LocalTracking, ThresholdTissueClassifier
+from dipy.tracking.utils import random_seeds_from_mask
+from dipy.reconst.dti import TensorModel
+from dipy.reconst.csdeconv import (ConstrainedSphericalDeconvModel,
+                                   auto_response)
+from dipy.reconst.shm import CsaOdfModel
+from dipy.data import default_sphere
+from dipy.direction import peaks_from_model
+from dipy.data import fetch_stanford_hardi, read_stanford_hardi, get_sphere
+from dipy.segment.mask import median_otsu
+from dipy.viz import actor, window
+from dipy.io.image import save_nifti
+from dipy.io import read_bvals_bvecs
+from dipy.core import gradients
+from dipy.tracking.streamline import Streamlines
+from dipy.io import read_bvals_bvecs
+from dipy.core.gradients import gradient_table, gradient_table_from_bvals_bvecs
+from dipy.reconst.dti import fractional_anisotropy
+
+from dipy.tracking import utils
+
+import src.dwi_tools as dwi_tools
+import src.nn_helper as nn_helper
+
 from dipy.tracking.streamline import values_from_volume
 import dipy.align.vector_fields as vfu
 from dipy.core.sphere import Sphere
@@ -14,12 +45,11 @@ from dipy.tracking import metrics
 import numpy as np
 import warnings
 
-import src.nn_helper as nn_helper
-import src.dwi_tools as dwi_tools
-
 import tensorflow as tf
 from joblib import Parallel, delayed
 import multiprocessing
+from keras.models import load_model
+
 
 def simpleDeterministicTracking(seeds, data, model, rec_level_sphere = 3, noX=3, noY=3,noZ=3,dw=288,coordinateSpacing = 0.1, stepWidth = 0.5):
         #with tf.device('/cpu:0'):       
@@ -154,11 +184,12 @@ def applyTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinate
     return streamlinePositions
 
 
-def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0):   
+def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0, useSph = False):   
     noSeeds = len(seeds)
     noIterations = 1000
 
     # initialize streamline positions data
+    vNorms = np.zeros([noSeeds,noIterations+1])
     streamlinePositions = np.zeros([noSeeds,noIterations+1,3])
     streamlinePositions[:,0,] = seeds[0:noSeeds]
     streamlinePositions[:,1,] = seeds[0:noSeeds]
@@ -183,14 +214,17 @@ def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coor
         
         #predictedDirection = nn_helper.denormalizeStreamlineOrientation(model.predict([x])) # denormalize the prediction
         predictedDirection = model.predict([x])[nnOutputToUse]
-
-        # normalize prediction
-        vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
-        predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
-
+        if(useSph == True):
+            predictedDirection = dwi_tools.convAllFromSphToEuclCoords((2*np.pi)*predictedDirection + np.pi)
+            vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
+        else:
+            # normalize prediction
+            vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
+            predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
+        vNorms[:,iter,] = vecNorms
         # update next streamline position
         for j in range(0,noSeeds):
             streamlinePositions[j,iter+1,] = streamlinePositions[j,iter,] + stepWidth * predictedDirection[j,]
             #print(str(predictedDirection[j,]))
 
-    return streamlinePositions
+    return streamlinePositions, vNorms
