@@ -53,7 +53,11 @@ def main():
     dwi_subset, gtab_subset, evals_subset, evecs_subset = dwi_tools.cropDatsetToBValue(1000, bvals, bvecs, dwi)
 
     # compute spherical harmonics
-    data_sh, weights, b0 = dwi_tools.get_spherical_harmonics_coefficients(dwi_subset, bvals=bvals_subset, bvecs=bvecs_subset, sh_order = 8)
+    
+    ### exract the averaged b0.
+    b0_idx = bvals < 10
+    b0 = dwi[..., b0_idx].mean(axis=3)
+    data_sh, weights, b0 = dwi_tools.get_spherical_harmonics_coefficients(dwi_subset, b0=b0, bvals=bvals_subset, bvecs=bvecs_subset, sh_order = 4)
     
     
     # load mask of reference streamlines    
@@ -104,12 +108,8 @@ def main():
     # project streamlines into image coordinate system
     streamlines_imageCS = transform_streamlines(streamlines_filtered, np.linalg.inv(aff)) # project streamlines from RAS into image (voxel) coordinate system
     
-    # normalize DWI
-    print('normalizing dwi dataset')
-    b0_idx = bvals < 10
-    b0 = dwi[..., b0_idx].mean(axis=3)
-
-    # Extract diffusion weights and normalize by the b0.
+    # normalize DWI by b0
+    print('\n normalizing dwi dataset')
     dwi_subset = dwi_tools.normalize_dwi(dwi_subset, b0)
     
     print('\n generating training data')
