@@ -70,6 +70,11 @@ def main():
     runtime = time.time() - start_time
     print('-> runtime ' + str(runtime) + 's\n')
     
+    
+    # create training data consisting of all three tensors and their eigenvalues of that model
+    dataSz = np.append(fit_wls.evecs.shape[0:3],9)
+    data_evecs = np.concatenate((np.reshape(fit_wls.evecs, dataSz), fit_wls.evals), axis=3)
+    
     # extract peaks
     print('extract peaks')
     sphere = get_sphere('symmetric724')
