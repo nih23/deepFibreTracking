@@ -51,140 +51,16 @@ import multiprocessing
 from keras.models import load_model
 
 
-def simpleDeterministicTracking(seeds, data, model, rec_level_sphere = 3, noX=3, noY=3,noZ=3,dw=288,coordinateSpacing = 0.1, stepWidth = 0.5):
-        #with tf.device('/cpu:0'):       
-            streamlines = list()
-            x_ = coordinateSpacing * np.linspace(-1., 1., noX)
-            y_ = coordinateSpacing * np.linspace(-1., 1., noY)
-            z_ = coordinateSpacing * np.linspace(-1., 1., noZ)       
-            
-            noSeeds = 100
 
-            # global tracking loop
-            for seedIndex in range(0,noSeeds):
-                streamLinePosition = seeds[seedIndex]
-                streamLinePosition_old = streamLinePosition
-            
-                curStreamline = []
-                curStreamline.append(streamLinePosition)
-                # tracking loop for a single fibre
-                for i in range(0,500):
-                    # interpolate data given these coordinates for each channel
-                    x = np.zeros([noX,noY,noZ,dw])
-
-#                    coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + streamLinePosition
-#                    for i in range(0,dw):
-#                        x[:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(data[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
-                        
-                    coordVecs = np.vstack(np.meshgrid(x_,y_,z_, indexing='ij')).reshape(3,-1).T + streamLinePosition
-                    for i in range(0,dw):
-                        x[:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(data[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
-
-
-                    lastDirection = streamLinePosition - streamLinePosition_old
-
-                    x = nn_helper.normalize(x)
-                    x_ext = np.expand_dims(x, axis=0)
-                    nextProbableDirections = model.predict(x_ext)
-
-                    # should we terminate?
-                    #TODO: implement me
-
-                    # compute next streamline position
-                    probs = nextProbableDirections.dot(lastDirection / 255)
-                    idx_map = np.argmin(abs(probs))
-                    nextDirection = np.squeeze(nextProbableDirections[:,idx_map,:])
-                    streamLinePosition_old = streamLinePosition
-                    streamLinePosition = streamLinePosition + stepWidth * nextDirection
-                    curStreamline.append(streamLinePosition)
-
-                streamlines.append(curStreamline)
-            return streamlines
-        
-        
-def simpleParallelDeterministicTracking(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateSpacing = 0.1, stepWidth = 0.5):
-    x_ = coordinateSpacing * np.linspace(-1., 1., noX)
-    y_ = coordinateSpacing * np.linspace(-1., 1., noY)
-    z_ = coordinateSpacing * np.linspace(-1., 1., noZ)       
-
-    noSeeds = len(seeds)
-    noSeeds = 50
-    noIterations = 1000
-
-    streamlinePositions = np.zeros([noSeeds,noIterations+1,3])
-    streamlinePositions[:,0,] = seeds[0:noSeeds]
-    streamlinePositions[:,1,] = seeds[0:noSeeds]
-
-
-    # interpolate data given these coordinates for each channel
-    x = np.zeros([noSeeds,noX,noY,noZ,dw])
-    previousDirections = np.zeros([noSeeds,3])
-
-    for iter in range(1,noIterations):
-        #print(str(noIterations))
-        # interpolate dwi data for each point of our streamline
-        for j in range(0,noSeeds):
-            coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + streamlinePositions[j,iter,]
-            for i in range(0,dw):
-                x[j,:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(data[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
-
-        # predict possible directions
-        x_ext = nn_helper.normalize(x)
-        with tf.device('/cpu:0'):
-            nextProbableDirections = model.predict(x_ext, batch_size = 1024)
-
-        # compute next streamline position
-        lastDirections = streamlinePositions[:,iter,] - streamlinePositions[:,iter-1,]
-        for j in range(0,noSeeds):
-            probs = nextProbableDirections[j,].dot(lastDirections[j] / 255)
-            idx_map = np.argmin(abs(probs))
-            nextDirection = np.squeeze(nextProbableDirections[j,idx_map,:])
-
-            streamlinePositions[j,iter+1,] = streamlinePositions[j,iter,] + stepWidth * nextDirection
-
-    return streamlinePositions
-
-def applyTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.5):
-    #x_ = coordinateScaling * np.linspace(-1., 1., noX)
-    #y_ = coordinateScaling * np.linspace(-1., 1., noY)
-    #z_ = coordinateScaling * np.linspace(-1., 1., noZ)       
-
-    x_,y_,z_ = dwi_tools.getCoordinateGrid(noX,noY,noZ,coordinateScaling)
+def start(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0, useSph = False):   
+    '''
+    fibre tracking using neural networks
     
-    noSeeds = len(seeds)
-    #noSeeds = 50
-    noIterations = 1000
-
-    # initialize streamline positions data
-    streamlinePositions = np.zeros([noSeeds,noIterations+1,3])
-    streamlinePositions[:,0,] = seeds[0:noSeeds]
-    streamlinePositions[:,1,] = seeds[0:noSeeds]
-
-    # interpolate data given these coordinates for each channel
-    x = np.zeros([noSeeds,noX,noY,noZ,dw])
+    NOTE/BUG: tracking is done in image coordinate system currently
+    '''    
+    # assume seeds in image coordinate system
+    # TODO: make steps in RAS cs
     
-    for iter in range(1,noIterations):
-        # interpolate dwi data for each point of our streamline
-        for j in range(0,noSeeds):
-            coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + streamlinePositions[j,iter,]
-            for i in range(0,dw):
-                x[j,:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(data[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
-
-        # predict possible directions
-        x_ext = nn_helper.normalize(x)
-        lastDirections = streamlinePositions[:,iter,] - streamlinePositions[:,iter-1,]
-        lastDirections = np.expand_dims(lastDirections, axis=1)
-        with tf.device('/cpu:0'):
-            predictedDirection = model.predict([x_ext,lastDirections])
-
-        # update next streamline position
-        for j in range(0,noSeeds):
-            streamlinePositions[j,iter+1,] = streamlinePositions[j,iter,] + stepWidth * predictedDirection[j,]
-
-    return streamlinePositions
-
-
-def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0, useSph = False):   
     noSeeds = len(seeds)
     noIterations = 1000
 
@@ -204,7 +80,6 @@ def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coor
             coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + streamlinePositions[j,iter,]
             x[j,] = dwi_tools.interpolatePartialDWIVolume(data,coordVecs, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
 
-        #print(str(np.min(x)) + '   /   ' + str(np.max(x)) + '   s   ' + str(np.std(x)))
                 
         # predict possible directions
         #x_ext = nn_helper.normalizeDWI(x)
@@ -212,19 +87,22 @@ def applySimpleTrackerNetwork(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coor
         #lastDirections = np.expand_dims(lastDirections, axis=1)
         
         
-        #predictedDirection = nn_helper.denormalizeStreamlineOrientation(model.predict([x])) # denormalize the prediction
-        predictedDirection = model.predict([x])[nnOutputToUse]
+        predictedDirection = model.predict([x])[nnOutputToUse] # 0 -> previous direction, 1 -> next direction
+        
+        # depending on the coordinates change different de-normalization approach
         if(useSph == True):
             predictedDirection = dwi_tools.convAllFromSphToEuclCoords((2*np.pi)*predictedDirection + np.pi)
-            vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
+            vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1)) # should be unit in this case.. 
         else:
-            # normalize prediction
+            # squash output to unit length
             vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
             predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
         vNorms[:,iter,] = vecNorms
+        
+        
         # update next streamline position
         for j in range(0,noSeeds):
             streamlinePositions[j,iter+1,] = streamlinePositions[j,iter,] + stepWidth * predictedDirection[j,]
-            #print(str(predictedDirection[j,]))
+
 
     return streamlinePositions, vNorms

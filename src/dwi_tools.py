@@ -52,9 +52,9 @@ def normalize_dwi(weights, b0):
     return weights_normed
 
 
-def get_spherical_harmonics_coefficients(dwi, bvals, bvecs, sh_order=8, smooth=0.006, first=False):
+def get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=8, smooth=0.006, first=False):
     """ Compute coefficients of the spherical harmonics basis.
-    source: https://github.com/ppoulin91/learn2track/blob/miccai2017_submission/learn2track/neurotools.py
+    adapted from: https://github.com/ppoulin91/learn2track/blob/miccai2017_submission/learn2track/neurotools.py
     Parameters
     -----------
     dwi : `nibabel.NiftiImage` object
@@ -78,17 +78,10 @@ def get_spherical_harmonics_coefficients(dwi, bvals, bvecs, sh_order=8, smooth=0
     bvecs = np.asarray(bvecs)
     dwi_weights = dwi.astype("float32")
 
-    # Exract the averaged b0.
-    #b0_idx = bvals == 0
-    b0_idx = bvals < 10 # 10/02/18 NH: changed to work with HCP data
-    b0 = dwi_weights[..., b0_idx].mean(axis=3)
+    # normalize by the b0.
+    dwi_weights = normalize_dwi(dwi_weights, b0)
 
-    # Extract diffusion weights and normalize by the b0.
-    bvecs = bvecs[np.logical_not(b0_idx)]
-    weights = dwi_weights[..., np.logical_not(b0_idx)]
-    weights = normalize_dwi(weights, b0)
-
-    # Assuming all directions are on the hemisphere.
+    # Assuming all directions lie on the hemisphere.
     raw_sphere = HemiSphere(xyz=bvecs)
 
     # Fit SH to signal
@@ -96,21 +89,25 @@ def get_spherical_harmonics_coefficients(dwi, bvals, bvecs, sh_order=8, smooth=0
     Ba, m, n = sph_harm_basis(sh_order, raw_sphere.theta, raw_sphere.phi)
     L = -n * (n + 1)
     invB = smooth_pinv(Ba, np.sqrt(smooth) * L)
-    data_sh = np.dot(weights, invB.T)
-    return data_sh, weights, b0
-
-
-
+    data_sh = np.dot(dwi_weights, invB.T)
+    return data_sh, dwi_weights, b0
 
 
 def convertIntoSphericalCoordsAndNormalize(train_prevDirection, train_nextDirection):
+    '''
+    convert euclidean directional vectors of our training set into spherical coordinates and normalize to [0,1]
+    '''
     train_nextDirection_sph = convAllToSphCoords(train_nextDirection)
     train_prevDirection_sph = convAllToSphCoords(train_prevDirection)
     train_nextDirection_sph[:,1] = (train_nextDirection_sph[:,1] + np.pi) / (2 * np.pi)
     train_prevDirection_sph[:,1] = (train_prevDirection_sph[:,1] + np.pi) / (2 * np.pi)
     return train_prevDirection_sph, train_nextDirection_sph
 
-def loadDataset(path):
+
+def loadHCPData(path):
+    '''
+    import HCP dataset
+    '''
     bvals, bvecs = read_bvals_bvecs(path + '/bvals', path + '/bvecs')
     gtab = gradient_table(bvals=bvals, bvecs=bvecs)
     
@@ -125,73 +122,73 @@ def loadDataset(path):
 
 
 def cropDatsetToBValue(bthresh, bvals, bvecs, dwi):
+    '''
+    filter specific b-value measurements from a multi-shell dataset
+    '''
     singleShellIndices = np.where( np.abs(bvals - bthresh)  < 100)[0]
     dwi_subset = dwi[:,:,:,singleShellIndices]
-    gtab_subset = gradient_table(bvals=bvals[singleShellIndices], bvecs=bvecs[singleShellIndices,])
-    return dwi_subset, gtab_subset
+    bvals_subset = bvals[singleShellIndices]
+    bvecs_subset = bvecs[singleShellIndices,]
+    gtab_subset = gradient_table(bvals=bvals_subset, bvecs=bvecs_subset)
+    return dwi_subset, gtab_subset, bvals_subset, bvecs_subset
 
 
 def convAllFromSphToEuclCoords(data):
+    '''
+    convert array of vectors from spherical (polar) coordinate system into euclidean cs
+    assume that all vectors are unit length
+    '''
     euclCoords = np.zeros([len(data),3])
     #print('projecting from spherical to euclidean space. assuming all vector to be of unit lengths.')
     for i in range(len(data)):
-        x,y,z = spheToEuclidean(1, data[i,0],data[i,1])
+        x,y,z = _spheToEuclidean(1, data[i,0],data[i,1])
         euclCoords[i,0] = x
         euclCoords[i,1] = y
         euclCoords[i,2] = z
     return euclCoords
 
 
-
 def convAllToSphCoords(data):
-    sphCoords = np.zeros([len(data),2])
-    #print('converting from euclidean to spherical space. assuming all vector to be of unit lengths.')
+    '''
+    convert array of vectors from euclidean coordinate system into spherical (polar) coordinates
+    assume that all vectors are unit length
+    '''
     #TODO: check for unit lengths or normalize vectors
+    sphCoords = np.zeros([len(data),2])
     for i in range(len(data)):
-        r,t,p = euclToSpherical(data[i,0],data[i,1],data[i,2])
+        r,t,p = _euclToSpherical(data[i,0],data[i,1],data[i,2])
         sphCoords[i,0] = t
         sphCoords[i,1] = p
     return sphCoords
 
 
-def euclToSpherical(x,y,z):
+def _euclToSpherical(x,y,z):
+    '''
+    convert euclidean coordinates into spherical coordinates
+    '''
     r = np.sqrt(x**2 + y ** 2 + z ** 2)
     theta = np.nan_to_num(np.arccos(z / r))
     psi = np.nan_to_num(np.arctan2(y,x))
     return r,theta,psi
 
 
-def spheToEuclidean(r,theta,psi):
+def _spheToEuclidean(r,theta,psi):
+    '''
+    convert spherical coordinates into euclidean coordinates
+    '''
     xx = r * np.sin(theta) * np.cos(psi)
     yy = r * np.sin(theta) * np.sin(psi)
     zz = r * np.cos(theta)
     return xx,yy,zz
 
 
-def _interpolateVolume(j):
-    global data
-    global coordVecs
-    
-    return vfu.interpolate_scalar_3d(data[:,:,:,j],coordVecs)[0]
-
-
 def interpolatePartialDWIVolume(dwi, centerPosition, x_,y_,z_, noX = 8, noY = 8, noZ = 8, coordinateScaling = 1,):
+    '''
+    interpolate a dwi volume at some center position and provided spatial extent
+    '''
     szDWI = dwi.shape
     coordVecs = np.vstack(np.meshgrid(x_,y_,z_, indexing='ij')).reshape(3,-1).T + centerPosition   
     x = np.zeros([noX,noY,noZ,szDWI[-1]])
-    #PARALLEL BUT SLOWER VERSION ...
-    #global data
-    #global coordVecs
-    #num_cores = multiprocessing.cpu_count()
-    #data = dwi
-    #results = Parallel(n_jobs=num_cores)(delayed(processInput)(i) for i in range(0,szDWI[-1]))    
-    #pool = multiprocessing.Pool(processes=num_cores)
-    #results = pool.map(_interpolateVolume, range(0,szDWI[-1]))
-    #pool.close()
-    #results = np.swapaxes(results,0,1)
-    #return np.reshape(np.array(results),[noX,noY,noZ,szDWI[-1]])
-    
-    #return results
     
     for i in range(0,szDWI[-1]):
         x[:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(dwi[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
@@ -200,16 +197,17 @@ def interpolatePartialDWIVolume(dwi, centerPosition, x_,y_,z_, noX = 8, noY = 8,
 
 def visSphere(sphere):
     '''
-    Visualize sphere
+    visualize sphere
     '''
     ren = window.Renderer()
     ren.SetBackground(1, 1, 1)
     ren.add(actor.point(sphere.vertices, window.colors.red, point_radius=0.05))
     window.show(ren)
 
+    
 def visTwoSetsOfStreamlines(streamlines,streamlines2, volume, vol_slice_idx = 40, vol_slice_idx2 = 40):
     '''
-    Visualize streamline using vtk
+    visualize two sets of streamlines with different colors using vtk
     '''
     # Prepare the display objects.
     #color = line_colors(streamlines)
@@ -245,7 +243,7 @@ def visTwoSetsOfStreamlines(streamlines,streamlines2, volume, vol_slice_idx = 40
     
 def visStreamlines(streamlines, volume, vol_slice_idx = 40, vol_slice_idx2 = 40):
     '''
-    Visualize streamline using vtk
+    visualize streamline using vtk
     '''
     # Prepare the display objects.
     #color = line_colors(streamlines)
@@ -263,93 +261,25 @@ def visStreamlines(streamlines, volume, vol_slice_idx = 40, vol_slice_idx2 = 40)
         # Create the 3D display.
         r = window.Renderer()
         r.add(streamlines_actor)
-        #r.add(vol_actor)
+        r.add(vol_actor)
         r.add(vol_actor2)
         window.record(r, n_frames=1, out_path='deterministic.png', size=(800, 800))
         window.show(r)
     else:
         print('we need VTK for proper visualisation of our fibres.')
-        
+
+
 def filterStreamlinesByLength(streamlines, minimumLength = 80):
     '''
-    Removes streamlines that are shorter (in mm) than minimumLength
+    removes streamlines that are shorter than minimumLength (in mm)
     '''
     return [x for x in streamlines if metrics.length(x) > minimumLength]
 
 
-
-def generateSimpleTraindataFromStreamlines(streamlines, dwi, rec_level_sphere = 3):
+def _getCoordinateGrid(noX,noY,noZ,coordinateScaling):
     '''
-    deprecated, dont use
+    generate a grid of provided spatial extent which is used to interpolate data
     '''
-    warnings.warn("deprecated", DeprecationWarning)
-    sfa = np.asarray(streamlines)
-    sph = subdivide_octahedron.create_unit_sphere(recursion_level=rec_level_sphere) # create unit sphere with 4 ** recursion_level + 2 vertices
-    #visSphere(sph)
-    dx,dy,dz,dw = dwi.shape
-    noStreamlines = min(len(sfa), 1000) # FIXME: spares us some time right now
-    train_X = []
-    train_Y = []
-    
-    for streamlineIndex in range(0,noStreamlines):
-        print('Streamline ' + str(streamlineIndex) + '/' + str(noStreamlines))
-        lengthStreamline = len(sfa[streamlineIndex])
-        for streamlineElementIndex in range(0,lengthStreamline-1):
-            # center sphere around current streamline position
-            sph2 = sph.vertices + sfa[streamlineIndex][streamlineElementIndex]
-            sph2 = np.vstack((sph2,sfa[streamlineIndex][streamlineElementIndex]))
-            
-            # interpolate data given these coordinates for each channel
-            x = np.zeros([4**rec_level_sphere+2+1,dw])
-            for i in range(0,dw):
-                x[:,i] = vfu.interpolate_scalar_3d(dwi[:,:,:,i],sph2)[0]
-            train_X.append(x)
-            
-            old_y = sfa[streamlineIndex][streamlineElementIndex+1]
-            nextStreamlineDirection = sfa[streamlineIndex][streamlineElementIndex] - sfa[streamlineIndex][streamlineElementIndex+1]
-            
-            train_Y.append(nextStreamlineDirection) # dont store absolute value but relative displacement
-    train_X = np.asarray(train_X)
-    train_Y = np.asarray(train_Y)
-    return train_X, train_Y
-
-
-def generateGridSimpleTraindataFromStreamlines(streamlines, dwi, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1):
-    '''
-    deprecated, dont use
-    '''
-    warnings.warn("deprecated", DeprecationWarning)
-    sfa = np.asarray(streamlines)
-    dx,dy,dz,dw = dwi.shape
-    noStreamlines = min(len(sfa), 1000) # FIXME: spares us some time right now
-    train_X = []
-    train_Y = []
-    
-    for streamlineIndex in range(0,noStreamlines):
-        if((streamlineIndex % 10000) == 0):
-            print('Streamline ' + str(streamlineIndex) + '/' + str(noStreamlines))
-        lengthStreamline = int(len(sfa[streamlineIndex]) / 10)
-        for streamlineElementIndex in range(0,lengthStreamline-1):           
-            x_ = coordinateScaling * np.linspace(-1., 1., noX)
-            y_ = coordinateScaling * np.linspace(-1., 1., noY)
-            z_ = coordinateScaling * np.linspace(-1., 1., noZ)
-            coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + sfa[streamlineIndex][streamlineElementIndex]
-            
-            # interpolate data given these coordinates for each channel
-            x = np.zeros([noX,noY,noZ,dw])
-            for i in range(0,dw):
-                x[:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(dwi[:,:,:,i],coordVecs)[0], [noX,noY,noZ])
-            train_X.append(x)
-            old_y = sfa[streamlineIndex][streamlineElementIndex+1]
-            nextStreamlineDirection = sfa[streamlineIndex][streamlineElementIndex] - sfa[streamlineIndex][streamlineElementIndex+1]
-            
-            train_Y.append(nextStreamlineDirection) # dont store absolute value but relative displacement
-    train_X = np.asarray(train_X)
-    train_Y = np.asarray(train_Y)
-    return train_X, train_Y
-
-def getCoordinateGrid(noX,noY,noZ,coordinateScaling):
-    #print("using " + str([noX,noY,noZ]) + "px interpolation grid with coordinateScaling " + str(coordinateScaling))
     x_ = coordinateScaling * np.linspace(-4., 4, noX)
     y_ = coordinateScaling * np.linspace(-4., 4., noY)
     z_ = coordinateScaling * np.linspace(-4., 4., noZ)
@@ -370,15 +300,15 @@ def getCoordinateGrid(noX,noY,noZ,coordinateScaling):
     
     return x_,y_,z_
 
-def generatePredictionNetworkTrainingDataFromStreamlines(streamlines, dwi, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, affine = np.eye(4,4)):
+def generateTrainingData(streamlines, dwi, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, affine = np.eye(4,4)):
     '''
     
     '''
     sfa = np.asarray(streamlines)
     dx,dy,dz,dw = dwi.shape
-    noStreamlines = min(len(sfa), 1000) # FIXME: spares us some time right now
     noNeighbours = 2*noCrossings + 1
     sl_pos = sfa[0]
+    
     # Build kd-tree of streamline positions. This significantly increases subsequent lookup times.
     for streamlineIndex in range(0,noStreamlines):
         lengthStreamline = int(len(sfa[streamlineIndex]) / 10)
@@ -389,13 +319,13 @@ def generatePredictionNetworkTrainingDataFromStreamlines(streamlines, dwi, rec_l
     print('Generating training data')
    
     # define spacing of the 3D grid
-    x_,y_,z_ = getCoordinateGrid(noX,noY,noZ,coordinateScaling)
+    x_,y_,z_ = _getCoordinateGrid(noX,noY,noZ,coordinateScaling)
     
     # initialize our supervised training data
-    train_Y_1 = np.zeros([len(sl_pos),2*noCrossings,3]) # likely next streamline directions
-    train_Y_2 = np.zeros([len(sl_pos),3]) # next direction
-    train_X_2 = np.zeros([len(sl_pos),3]) # previous direction
-    train_X = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
+    directionsToAdjacentStreamlines = np.zeros([len(sl_pos),2*noCrossings,3]) # likely next streamline directions
+    directionToNextStreamlinePoint = np.zeros([len(sl_pos),3]) # next direction
+    directionToPreviousStreamlinePoint = np.zeros([len(sl_pos),3]) # previous direction
+    interpolatedDWISubvolume = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
     
     for streamlineIndex in range(0,len(sl_pos)):
         if((streamlineIndex % 1000) == 0):
@@ -404,18 +334,24 @@ def generatePredictionNetworkTrainingDataFromStreamlines(streamlines, dwi, rec_l
         streamlinevec = sl_pos[streamlineIndex]
         streamlinevec_next = sl_pos[min((streamlineIndex+1,len(sl_pos)-1))]
         streamlinevec_prev = sl_pos[max((streamlineIndex-1,0))]
+        
+        ### COMMENTED OUT AS ITS CURRENTLY NOT IN USE AND SLOWS DOWN DATASET CREATION
         #d = np.sum( (streamlinevec - streamlinevec_next)**2)
         #i = kdt.query_ball_point(streamlinevec,distToNeighbours) # acquire neighbours within a certain distance
         #i = i[0:2*noCrossings] # limit length to the nearest neighbours
         #n_slv = kdt.data[i] - streamlinevec # direction to nearest streamline position
         #n_slv = np.unique(n_slv, axis = 0) # remove duplicats from our search query
         #noPoints,dimPoints = n_slv.shape
-        #train_Y_1[streamlineIndex,0:noPoints,] = n_slv
-        train_Y_2[streamlineIndex,] = streamlinevec_next - streamlinevec
-        train_Y_2[streamlineIndex,] = np.nan_to_num(train_Y_2[streamlineIndex,] / np.sqrt(np.sum(train_Y_2[streamlineIndex,] ** 2))) # make unit vector
-        train_X_2[streamlineIndex,] = streamlinevec_prev - streamlinevec
-        train_X_2[streamlineIndex,] = np.nan_to_num(train_X_2[streamlineIndex,] / np.sqrt(np.sum(train_X_2[streamlineIndex,] ** 2))) # make unit vector
-        train_X[streamlineIndex,] = interpolatePartialDWIVolume(dwi,streamlinevec, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
+        #directionsToAdjacentStreamlines[streamlineIndex,0:noPoints,] = n_slv
+        
+        
+        directionToNextStreamlinePoint[streamlineIndex,] = streamlinevec_next - streamlinevec
+        directionToNextStreamlinePoint[streamlineIndex,] = np.nan_to_num(train_Y_2[streamlineIndex,] / np.sqrt(np.sum(train_Y_2[streamlineIndex,] ** 2))) # make unit vector
+        
+        directionToPreviousStreamlinePoint[streamlineIndex,] = streamlinevec_prev - streamlinevec
+        directionToPreviousStreamlinePoint[streamlineIndex,] = np.nan_to_num(train_X_2[streamlineIndex,] / np.sqrt(np.sum(train_X_2[streamlineIndex,] ** 2))) # make unit vector
+        
+        interpolatedDWISubvolume[streamlineIndex,] = interpolatePartialDWIVolume(dwi,streamlinevec, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
 
         
-    return train_X, train_X_2, train_Y_1, train_Y_2
+    return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionsToAdjacentStreamlines, directionsToAdjacentStreamlines
