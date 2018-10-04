@@ -92,7 +92,6 @@ def main():
     from dipy.tracking.local import BinaryTissueClassifier
     #classifier = ThresholdTissueClassifier(dtipeaks.gfa, .01)
     binary_classifier = BinaryTissueClassifier(binarymask == 1) # streamlines need to touch gray matter
-    #streamlines_generator = LocalTracking(dtipeaks, classifier, ccseeds, np.identity(4), step_size=.1)
     streamlines_generator = LocalTracking(dtipeaks, binary_classifier, ccseeds, aff, step_size=.1)
     streamlines = Streamlines(streamlines_generator)
     streamlines_filtered = dwi_tools.filterStreamlinesByLength(streamlines, 40)
@@ -113,7 +112,7 @@ def main():
     #rawData = data_sh
 
     start_time = time.time()
-    train_DWI,train_prevDirection, train_LikelyFibreDirections, train_nextDirection = dwi_tools.generatePredictionNetworkTrainingDataFromStreamlines(streamlines_imageCS, rawData, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossings)
+    train_DWI,train_prevDirection, train_LikelyFibreDirections, train_nextDirection = dwi_tools.generateTrainingData(streamlines_imageCS, rawData, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossings)
     runtime = time.time() - start_time
     print('-> runtime ' + str(runtime) + ' s\n')
     
