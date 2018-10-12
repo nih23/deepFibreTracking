@@ -7,7 +7,7 @@ import h5py
 
 from dipy.tracking.local import LocalTracking, ThresholdTissueClassifier
 from dipy.tracking.utils import random_seeds_from_mask
-from dipy.reconst.dti import TensorModel
+from dipy.reconst.dti import TensorModel, quantize_evecs
 from dipy.reconst.csdeconv import (ConstrainedSphericalDeconvModel,
                                    auto_response)
 from dipy.reconst.shm import CsaOdfModel
@@ -52,7 +52,7 @@ from keras.models import load_model
 
 
 
-def start(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0, useSph = False):   
+def start(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0, useSph = False):   
     '''
     fibre tracking using neural networks
     
@@ -72,12 +72,22 @@ def start(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1,
 
     # interpolate data given these coordinates for each channel
     x = np.zeros([noSeeds,noX,noY,noZ,dw])
-    x_,y_,z_ = dwi_tools.getCoordinateGrid(noX,noY,noZ,coordinateScaling)
+    x_,y_,z_ = dwi_tools._getCoordinateGrid(noX,noY,noZ,coordinateScaling)
+
+    aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
+    M = aff_ras_ijk[:3, :3]
+    abc = aff_ras_ijk[:3, 3]
+    abc = abc[:,None]
     
     for iter in range(1,noIterations):
-        # interpolate dwi data for each point of our streamline
+        # interpolate dwi data at each point of our streamline
         for j in range(0,noSeeds):
-            coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + streamlinePositions[j,iter,]
+            # project from RAS to image coordinate system
+            curStreamlinePos_ras = streamlinePositions[j,iter,]
+            curStreamlinePos_ras = curStreamlinePos_ras[:,None]
+            curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
+            
+            coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + curStreamlinePos_ijk
             x[j,] = dwi_tools.interpolatePartialDWIVolume(data,coordVecs, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
 
                 
@@ -96,7 +106,7 @@ def start(seeds, data, model, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1,
         else:
             # squash output to unit length
             vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
-            predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
+            #predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
         vNorms[:,iter,] = vecNorms
         
         

@@ -22,9 +22,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import h5py
 
+
 def normalize_dwi(weights, b0):
-    """ Normalize dwi by the first b0.
-    source: https://github.com/ppoulin91/learn2track/blob/miccai2017_submission/learn2track/neurotools.py
+    """ Normalize dwi by average b0 data
+    adapted from: https://github.com/ppoulin91/learn2track/blob/miccai2017_submission/learn2track/neurotools.py
     Parameters:
     -----------
     weights : ndarray of shape (X, Y, Z, #gradients)
@@ -41,12 +42,17 @@ def normalize_dwi(weights, b0):
     # Make sure in every voxels weights are lower than ones from the b0.
     # Should not happen, but with the noise we never know!
     nb_erroneous_voxels = np.sum(weights > b0)
+    nb_valid_voxels = np.sum(weights <= b0)
     if nb_erroneous_voxels != 0:
-        print ("Nb. erroneous voxels: {}".format(nb_erroneous_voxels))
+        print ("Percentage erroneous voxels: %.2f" % ( nb_erroneous_voxels / (nb_erroneous_voxels + nb_valid_voxels) ) )
         weights = np.minimum(weights, b0)
 
     # Normalize dwi using the b0.
-    weights_normed = weights / b0
+    weights_normed = (weights / b0)
+    
+    # take the log (Fan's idea)
+    #weights_normed = -1 * np.log(weights_normed)
+    
     weights_normed[np.logical_not(np.isfinite(weights_normed))] = 0.
 
     return weights_normed
@@ -300,7 +306,7 @@ def _getCoordinateGrid(noX,noY,noZ,coordinateScaling):
     
     return x_,y_,z_
 
-def generateTrainingData(streamlines, dwi, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, affine = np.eye(4,4)):
+def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3):
     '''
     
     '''
@@ -308,15 +314,16 @@ def generateTrainingData(streamlines, dwi, rec_level_sphere = 3, noX=3, noY=3,no
     dx,dy,dz,dw = dwi.shape
     noNeighbours = 2*noCrossings + 1
     sl_pos = sfa[0]
+    noStreamlines = len(streamlines)
     
-    # Build kd-tree of streamline positions. This significantly increases subsequent lookup times.
-    for streamlineIndex in range(0,noStreamlines):
-        lengthStreamline = int(len(sfa[streamlineIndex]) / 10)
+    # Build kd-tree of streamline positions. This significantly decreases subsequent lookup times.
+    for streamlineIndex in range(1,noStreamlines):
+        lengthStreamline = len(sfa[streamlineIndex])
         sl_pos = np.concatenate([sl_pos, sfa[streamlineIndex][0:lengthStreamline]], axis=0) # dont store absolute value but relative displacement
     
     kdt = KDTree(sl_pos)
     
-    print('Generating training data')
+    print('Processing streamlines')
    
     # define spacing of the 3D grid
     x_,y_,z_ = _getCoordinateGrid(noX,noY,noZ,coordinateScaling)
@@ -327,31 +334,51 @@ def generateTrainingData(streamlines, dwi, rec_level_sphere = 3, noX=3, noY=3,no
     directionToPreviousStreamlinePoint = np.zeros([len(sl_pos),3]) # previous direction
     interpolatedDWISubvolume = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
     
-    for streamlineIndex in range(0,len(sl_pos)):
-        if((streamlineIndex % 1000) == 0):
-            print(str(streamlineIndex) + "/" + str(len(sl_pos)))
+    # projections
+    aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
+    M = aff_ras_ijk[:3, :3]
+    abc = aff_ras_ijk[:3, 3]
+    abc = abc[:,None]
+    
+    ctr = 0
+    for streamlineIndex in range(0,noStreamlines):
+        if((streamlineIndex % 100) == 0):
+                print(str(streamlineIndex) + "/" + str(noStreamlines))
+        lengthStreamline = len(streamlines[streamlineIndex])
+        for streamlinePoint in range(0,lengthStreamline):
 
-        streamlinevec = sl_pos[streamlineIndex]
-        streamlinevec_next = sl_pos[min((streamlineIndex+1,len(sl_pos)-1))]
-        streamlinevec_prev = sl_pos[max((streamlineIndex-1,0))]
-        
-        ### COMMENTED OUT AS ITS CURRENTLY NOT IN USE AND SLOWS DOWN DATASET CREATION
-        #d = np.sum( (streamlinevec - streamlinevec_next)**2)
-        #i = kdt.query_ball_point(streamlinevec,distToNeighbours) # acquire neighbours within a certain distance
-        #i = i[0:2*noCrossings] # limit length to the nearest neighbours
-        #n_slv = kdt.data[i] - streamlinevec # direction to nearest streamline position
-        #n_slv = np.unique(n_slv, axis = 0) # remove duplicats from our search query
-        #noPoints,dimPoints = n_slv.shape
-        #directionsToAdjacentStreamlines[streamlineIndex,0:noPoints,] = n_slv
-        
-        
-        directionToNextStreamlinePoint[streamlineIndex,] = streamlinevec_next - streamlinevec
-        directionToNextStreamlinePoint[streamlineIndex,] = np.nan_to_num(train_Y_2[streamlineIndex,] / np.sqrt(np.sum(train_Y_2[streamlineIndex,] ** 2))) # make unit vector
-        
-        directionToPreviousStreamlinePoint[streamlineIndex,] = streamlinevec_prev - streamlinevec
-        directionToPreviousStreamlinePoint[streamlineIndex,] = np.nan_to_num(train_X_2[streamlineIndex,] / np.sqrt(np.sum(train_X_2[streamlineIndex,] ** 2))) # make unit vector
-        
-        interpolatedDWISubvolume[streamlineIndex,] = interpolatePartialDWIVolume(dwi,streamlinevec, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
+            streamlinevec = streamlines[streamlineIndex][streamlinePoint]
+            streamlinevec_next = streamlines[streamlineIndex][min(streamlinePoint+1,lengthStreamline-1)]
+            streamlinevec_prev = streamlines[streamlineIndex][max(streamlinePoint-1,0)]
 
-        
-    return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionsToAdjacentStreamlines, directionsToAdjacentStreamlines
+
+            #streamlinevec_next = sl_pos[min((streamlineIndex+1,len(sl_pos)-1))]
+            #streamlinevec_prev = sl_pos[max((streamlineIndex-1,0))]
+
+            ### COMMENTED OUT AS ITS CURRENTLY NOT IN USE AND SLOWS DOWN DATASET CREATION
+            #d = np.sum( (streamlinevec - streamlinevec_next)**2)
+            #i = kdt.query_ball_point(streamlinevec,distToNeighbours) # acquire neighbours within a certain distance
+            #i = i[0:2*noCrossings] # limit length to the nearest neighbours
+            #n_slv = kdt.data[i] - streamlinevec # direction to nearest streamline position
+            #n_slv = np.unique(n_slv, axis = 0) # remove duplicats from our search query
+            #noPoints,dimPoints = n_slv.shape
+            #directionsToAdjacentStreamlines[streamlineIndex,0:noPoints,] = n_slv
+
+
+            directionToNextStreamlinePoint[ctr,] = streamlinevec_next - streamlinevec
+            directionToNextStreamlinePoint[streamlineIndex,] = np.nan_to_num(directionToNextStreamlinePoint[streamlineIndex,] / np.sqrt(np.sum(directionToNextStreamlinePoint[streamlineIndex,] ** 2))) # unit vector
+
+            directionToPreviousStreamlinePoint[ctr,] = streamlinevec_prev - streamlinevec
+            directionToPreviousStreamlinePoint[streamlineIndex,] = np.nan_to_num(directionToPreviousStreamlinePoint[streamlineIndex,] / np.sqrt(np.sum(directionToPreviousStreamlinePoint[streamlineIndex,] ** 2))) # unit vector
+
+            #DEBUG project from RAS to image coordinate system
+            curStreamlinePos_ras = streamlinevec
+            curStreamlinePos_ras = curStreamlinePos_ras[:,None]
+            curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
+
+            interpolatedDWISubvolume[ctr,] = interpolatePartialDWIVolume(dwi,curStreamlinePos_ijk, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
+            
+            ctr += 1
+
+    print("-> " + str(ctr))
+    return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionsToAdjacentStreamlines, directionToNextStreamlinePoint
