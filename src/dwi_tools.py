@@ -22,6 +22,27 @@ import numpy as np
 import matplotlib.pyplot as plt
 import h5py
 
+import vtk
+
+
+def loadVTKstreamlines(pStreamlines):
+    reader = vtk.vtkPolyDataReader()
+    reader.SetFileName(pStreamlines)
+    reader.Update()
+
+    polydata = reader.GetOutput()
+    streamlines = []
+    
+    for i in range(polydata.GetNumberOfCells()):
+        if((i % 10000) == 0):
+            print(str(i) + "/" + str(polydata.GetNumberOfCells()))
+        c = polydata.GetCell(i)
+        p = c.GetPoints()
+        streamlines.append(np.array(p.GetData()))
+
+    return streamlines
+    
+
 
 def normalize_dwi(weights, b0):
     """ Normalize dwi by average b0 data
@@ -85,7 +106,7 @@ def get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=8, smoo
     dwi_weights = dwi.astype("float32")
 
     # normalize by the b0.
-    dwi_weights = normalize_dwi(dwi_weights, b0)
+    #dwi_weights = normalize_dwi(dwi_weights, b0)
 
     # Assuming all directions lie on the hemisphere.
     raw_sphere = HemiSphere(xyz=bvecs)
@@ -96,7 +117,7 @@ def get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=8, smoo
     L = -n * (n + 1)
     invB = smooth_pinv(Ba, np.sqrt(smooth) * L)
     data_sh = np.dot(dwi_weights, invB.T)
-    return data_sh, dwi_weights, b0
+    return data_sh
 
 
 def convertIntoSphericalCoordsAndNormalize(train_prevDirection, train_nextDirection):
@@ -232,8 +253,8 @@ def visTwoSetsOfStreamlines(streamlines,streamlines2, volume, vol_slice_idx = 40
         hue_range=hue,
         saturation_range=saturation)
 
-        streamlines_actor = actor.line(streamlines, (125,125,125))
-        streamlines_actor2 = actor.line(streamlines2, lookup_colormap= lut_cmap) #(1., 0.5, 0))
+        streamlines_actor = actor.line(streamlines, np.ones([len(streamlines)]))  # red
+        streamlines_actor2 = actor.line(streamlines2, 0.5 * np.ones([len(streamlines2)])) # green
 
         # Create the 3D display.
         r = window.Renderer()
@@ -263,6 +284,8 @@ def visStreamlines(streamlines, volume, vol_slice_idx = 40, vol_slice_idx2 = 40)
         
         streamlines_actor = actor.line(streamlines, line_colors(streamlines, cmap = 'rgb_standard'))
         #streamlines_actor = actor.line(streamlines, (125,125,125))
+        
+        #streamlines_actor = actor.line(streamlines, np.ones([len(streamlines)]))  # red
 
         # Create the 3D display.
         r = window.Renderer()

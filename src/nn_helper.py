@@ -56,7 +56,9 @@ def get_mlp_simpleTracker(inputShapeDWI, outputShape = 3, depth=1, features=64, 
     i1 = layers[-1]
     
     layers.append(Dense(outputShape, kernel_initializer = 'he_normal', name='prevDirection')(layers[-1]))
-    layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
+    
+    if(outputShape == 3): # euclidean coordinates
+        layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector 
     layerPrevDirection = layers[-1]
     
     layers.append( Lambda(lambda x:  -1 * x)(layers[-1]) ) # invert prediction such that the output points towards the next streamline direction
@@ -144,7 +146,8 @@ def get_3Dunet_simpleTracker(inputShapeDWI,outputShape = 3, kernelSz = 3, depth=
     i1 = layers[-1]
     
     layers.append(Dense(outputShape, kernel_initializer = 'he_normal', name='prevDirection')(layers[-1]))
-    layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
+    if(outputShape == 3): # euclidean coordinates
+        layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector
     layerPrevDirection = layers[-1]
     
     layers.append( Lambda(lambda x:  -1 * x)(layers[-1]) ) # invert prediction such that the output points towards the next streamline direction
