@@ -65,7 +65,7 @@ def normalize_dwi(weights, b0):
     nb_erroneous_voxels = np.sum(weights > b0)
     nb_valid_voxels = np.sum(weights <= b0)
     if nb_erroneous_voxels != 0:
-        print ("Percentage erroneous voxels: %.2f" % ( nb_erroneous_voxels / (nb_erroneous_voxels + nb_valid_voxels) ) )
+        print ("Percentage erroneous voxels: %.2f" % ( 100 * nb_erroneous_voxels / (nb_erroneous_voxels + nb_valid_voxels) ) )
         weights = np.minimum(weights, b0)
 
     # Normalize dwi using the b0.
