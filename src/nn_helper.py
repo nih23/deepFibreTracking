@@ -33,7 +33,7 @@ def relu_advanced(x):
     return K.relu(x, max_value=1)
 
 
-def get_mlp_simpleTracker(inputShapeDWI, outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5):
+def get_mlp_singleOutput(inputShapeDWI, outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5):
     '''
     predict direction of past/next streamline position using simple MLP architecture
     Input: DWI subvolume centered at current streamline position
@@ -43,7 +43,7 @@ def get_mlp_simpleTracker(inputShapeDWI, outputShape = 3, depth=1, features=64, 
     layers.append(Flatten()(layers[-1]))
     
     for i in range(1,depth+1):
-        layers.append(Dense(features)(layers[-1]))
+        layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
         
         if(useBN):
             layers.append(BatchNormalization()(layers[-1]))
@@ -55,13 +55,50 @@ def get_mlp_simpleTracker(inputShapeDWI, outputShape = 3, depth=1, features=64, 
     
     i1 = layers[-1]
     
-    layers.append(Dense(outputShape, kernel_initializer = 'he_normal', name='prevDirection')(layers[-1]))
+    layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
     
     if(outputShape == 3): # euclidean coordinates
-        layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)))(layers[-1]) ) # normalize output to unit vector 
+        layers.append( Lambda(lambda x: tf.div(x, K.expand_dims( K.sqrt(K.sum(x ** 2, axis = 1)))  ), name='nextDirection')(layers[-1]) ) # normalize output to unit vector 
+    layerNextDirection = layers[-1]
+        
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+
+    mlp = Model((layers[0]), outputs=(layerNextDirection))
+    mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+   # mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer) # use in case of directional vectors
+    
+    return mlp
+
+
+def get_mlp_doubleOutput(inputShapeDWI, outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5):
+    '''
+    predict direction of past/next streamline position using simple MLP architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    inputs = Input(inputShapeDWI)
+    layers = [inputs]
+    layers.append(Flatten()(layers[-1]))
+    
+    for i in range(1,depth+1):
+        layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
+        
+        if(useBN):
+            layers.append(BatchNormalization()(layers[-1]))
+        
+        layers.append(activation_function(layers[-1]))
+        
+        if(useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+    
+    i1 = layers[-1]
+    
+    layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
+    
+    if(outputShape == 3): # euclidean coordinates
+        layers.append( Lambda(lambda x: x / K.sqrt(K.sum(x ** 2)), name='prevDirection')(layers[-1]) ) # normalize output to unit vector 
     layerPrevDirection = layers[-1]
     
-    layers.append( Lambda(lambda x:  -1 * x)(layers[-1]) ) # invert prediction such that the output points towards the next streamline direction
+    layers.append( Lambda(lambda x:  -1 * x, name = 'nextDirection')(layers[-1]) ) # invert prediction such that the output points towards the next streamline direction
     layerNextDirection = layers[-1]
         
     optimizer = optimizers.Adam(lr=lr, decay=decayrate)
