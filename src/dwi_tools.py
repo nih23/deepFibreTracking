@@ -282,10 +282,10 @@ def visStreamlines(streamlines, volume, vol_slice_idx = 40, vol_slice_idx2 = 40)
         vol_actor2 = vol_actor.copy()
         vol_actor2.display(z=vol_slice_idx2)
         
-        streamlines_actor = actor.line(streamlines, line_colors(streamlines, cmap = 'rgb_standard'))
+        #streamlines_actor = actor.line(streamlines, line_colors(streamlines, cmap = 'rgb_standard'))
         #streamlines_actor = actor.line(streamlines, (125,125,125))
         
-        #streamlines_actor = actor.line(streamlines, np.ones([len(streamlines)]))  # red
+        streamlines_actor = actor.line(streamlines, np.ones([len(streamlines)]))  # red
 
         # Create the 3D display.
         r = window.Renderer()
@@ -344,7 +344,7 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, 
         lengthStreamline = len(sfa[streamlineIndex])
         sl_pos = np.concatenate([sl_pos, sfa[streamlineIndex][0:lengthStreamline]], axis=0) # dont store absolute value but relative displacement
     
-    kdt = KDTree(sl_pos)
+    #kdt = KDTree(sl_pos)
     
     print('Processing streamlines')
    
@@ -352,7 +352,7 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, 
     x_,y_,z_ = _getCoordinateGrid(noX,noY,noZ,coordinateScaling)
     
     # initialize our supervised training data
-    directionsToAdjacentStreamlines = np.zeros([len(sl_pos),2*noCrossings,3]) # likely next streamline directions
+    #directionsToAdjacentStreamlines = np.zeros([len(sl_pos),2*noCrossings,3]) # likely next streamline directions
     directionToNextStreamlinePoint = np.zeros([len(sl_pos),3]) # next direction
     directionToPreviousStreamlinePoint = np.zeros([len(sl_pos),3]) # previous direction
     interpolatedDWISubvolume = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
@@ -387,12 +387,11 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, 
             #noPoints,dimPoints = n_slv.shape
             #directionsToAdjacentStreamlines[streamlineIndex,0:noPoints,] = n_slv
 
-
             directionToNextStreamlinePoint[ctr,] = streamlinevec_next - streamlinevec
-            directionToNextStreamlinePoint[streamlineIndex,] = np.nan_to_num(directionToNextStreamlinePoint[streamlineIndex,] / np.sqrt(np.sum(directionToNextStreamlinePoint[streamlineIndex,] ** 2))) # unit vector
+            directionToNextStreamlinePoint[ctr,] = np.nan_to_num(directionToNextStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToNextStreamlinePoint[ctr,] ** 2))) # unit vector
 
             directionToPreviousStreamlinePoint[ctr,] = streamlinevec_prev - streamlinevec
-            directionToPreviousStreamlinePoint[streamlineIndex,] = np.nan_to_num(directionToPreviousStreamlinePoint[streamlineIndex,] / np.sqrt(np.sum(directionToPreviousStreamlinePoint[streamlineIndex,] ** 2))) # unit vector
+            directionToPreviousStreamlinePoint[ctr,] = np.nan_to_num(directionToPreviousStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToPreviousStreamlinePoint[ctr,] ** 2))) # unit vector
 
             #DEBUG project from RAS to image coordinate system
             curStreamlinePos_ras = streamlinevec
@@ -404,4 +403,4 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, 
             ctr += 1
 
     print("-> " + str(ctr))
-    return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionsToAdjacentStreamlines, directionToNextStreamlinePoint
+    return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint
