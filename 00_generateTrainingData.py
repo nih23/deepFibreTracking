@@ -31,9 +31,6 @@ from keras.layers.advanced_activations import LeakyReLU
 from keras.layers import Activation
 from keras.callbacks import TensorBoard
 
-pTrainData_fibrePrediction = 'train_prediction_grid_normalized_dti_cs1_wholebrain.h5'
-pTrainData_fibreTracking = 'train_tracking_grid_normalized_dti_cs1_wholebrain.h5'
-pTrainInput = 'train_input_normalized_dti_cs1_wholebrain_'
 noCrossings = 3
 
 
@@ -42,21 +39,35 @@ def main():
     generate training data
     '''
     
+    anatomicalArea = 'wholeBrain' # or 'CorpusCallosum'
+    tensorModel = 'dti'
+    
     # spatial extent of training data
     noX = 1
     noY = 1
     noZ = 1
     coordinateScaling = 1
+    stepWidth = 0.1
+    bval = 1000
+    
+    pTrainData = "train_%s_%s_b%d_sw%.1f_dx%d_dy%d_dz%d_cs%.1f.h5" % (anatomicalArea,tensorModel,bval,stepWidth,noX,noY,noZ,coordinateScaling)
+    pStreamlinesRaw = 'streamlines_%s_%s_b%d_sw%.1f.npy' % (anatomicalArea, tensorModel, bval, stepWidth)
     
     # load HCP data
+    print('load HCP data (b=%d)' % (bval))
     bvals,bvecs,gtab,dwi,aff,t1,binarymask = dwi_tools.loadHCPData('100307')
-    dwi_subset, gtab_subset, evals_subset, evecs_subset = dwi_tools.cropDatsetToBValue(1000, bvals, bvecs, dwi)
+    dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(bval, bvals, bvecs, dwi)
 
-    # compute spherical harmonics
-    
     ### exract the averaged b0.
     b0_idx = bvals < 10
     b0 = dwi[..., b0_idx].mean(axis=3)
+        
+    # normalize DWI by b0
+    print('\n normalizing dwi dataset')
+    dwi_subset_norm = dwi_tools.normalize_dwi(dwi_subset, b0)
+    
+    # compute spherical harmonics
+    print('compute spherical harmonics')
     data_sh, weights, b0 = dwi_tools.get_spherical_harmonics_coefficients(dwi_subset, b0=b0, bvals=bvals_subset, bvecs=bvecs_subset, sh_order = 4)
     
     
@@ -64,9 +75,10 @@ def main():
     ccmask, options = nrrd.read('100307/100307-ccSegmentation.nrrd')
     ccseeds = seeds_from_mask(ccmask, affine=aff)
     validationSeeds = ccseeds[45:48] # three reference streamlines
+    #rndseeds = random_seeds_from_mask(binarymask, seeds_count=4000, seed_count_per_voxel=False, affine=aff)
     
     # single tensor model
-    print('fitting tensor model')
+    print('fitting single tensor model (WLS)')
     import dipy.reconst.dti as dti
     start_time = time.time()
     dti_wls = dti.TensorModel(gtab_subset)
@@ -75,7 +87,7 @@ def main():
     print('-> runtime ' + str(runtime) + 's\n')
     
     
-    # create training data consisting of all three tensors and their eigenvalues of that model
+    # create training data consisting of all three eigenvectors and their eigenvalues of that model
     dataSz = np.append(fit_wls.evecs.shape[0:3],9)
     data_evecs = np.concatenate((np.reshape(fit_wls.evecs, dataSz), fit_wls.evals), axis=3)
     
@@ -92,41 +104,55 @@ def main():
                                 return_odf=False,
                                 parallel=True,
                                 normalize_peaks=False,
-                                nbr_processes=12
+                                nbr_processes=24
                                )
     runtime = time.time() - start_time
     print('-> runtime ' + str(runtime) + 's\n')
     
     # reconstruct streamlines
+    print('tracking')
     from dipy.tracking.local import BinaryTissueClassifier
     #classifier = ThresholdTissueClassifier(dtipeaks.gfa, .01)
+    start_time = time.time()
     binary_classifier = BinaryTissueClassifier(binarymask == 1) # streamlines need to touch gray matter
-    streamlines_generator = LocalTracking(dtipeaks, binary_classifier, ccseeds, aff, step_size=.1)
+    ##streamlines_generator = LocalTracking(dtipeaks, binary_classifier, ccseeds, aff, step_size=.1)
+    streamlines_generator = LocalTracking(dtipeaks, binary_classifier, rndseeds, aff, step_size=.1)
     streamlines = Streamlines(streamlines_generator)
     streamlines_filtered = dwi_tools.filterStreamlinesByLength(streamlines, 40)
+    runtime = time.time() - start_time
+    print(str(len(streamlines_filtered)) + ' streamlines')
+    print('-> runtime ' + str(runtime) + 's\n')
     
-    # project streamlines into image coordinate system
-    streamlines_imageCS = transform_streamlines(streamlines_filtered, np.linalg.inv(aff)) # project streamlines from RAS into image (voxel) coordinate system
-    
-    # normalize DWI by b0
-    print('\n normalizing dwi dataset')
-    dwi_subset = dwi_tools.normalize_dwi(dwi_subset, b0)
-    
+    print('Saving raw streamlines to ' + pStreamlinesRaw)
+    start_time = time.time()
+    np.save(pStreamlinesRaw,streamlines_filtered)
+    runtime = time.time() - start_time
+    print('-> runtime ' + str(runtime) + 's\n')
+      
     print('\n generating training data')
-    rawData = data_evecs
-    #rawData = data_sh
+    rawData = data_sh
 
     start_time = time.time()
-    train_DWI,train_prevDirection, train_LikelyFibreDirections, train_nextDirection = dwi_tools.generateTrainingData(streamlines_imageCS, rawData, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossings)
+    train_DWI,train_prevDirection, train_LikelyFibreDirections, train_nextDirection = dwi_tools.generateTrainingData(streamlines_filtered, rawData, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling, distToNeighbours=1, noCrossings = noCrossings, affine=aff)
     runtime = time.time() - start_time
     print('-> runtime ' + str(runtime) + ' s\n')
     
-    print('storing data')
-    with h5py.File(pTrainData_fibrePrediction,"w") as f:
-        f.create_dataset('train_DWI',data=train_DWI)
-        f.create_dataset('train_curPosition',data=train_prevDirection)   
-        f.create_dataset('train_LikelyFibreDirections',data=train_LikelyFibreDirections)   
-        f.create_dataset('train_NextFibreDirection',data=train_nextDirection)   
+    print('Saving data to ' + pTrainData)
+    with h5py.File(pTrainData,"w") as f:
+        f.create_dataset('dwi_raw',data=dwi_subset)
+        f.create_dataset('dwi_sh',data=data_sh)
+        f.create_dataset('affine',data=aff
+                        )
+        f.create_dataset('coordinateScaling',data=coordinateScaling)
+        f.create_dataset('noCrossings',data=noCrossings)
+        f.create_dataset('noX',data=noX)
+        f.create_dataset('noY',data=noY)
+        f.create_dataset('noZ',data=noZ)
+        f.create_dataset('dwi',data=train_DWI)
+        
+        f.create_dataset('prevDirection',data=train_prevDirection)   
+        f.create_dataset('nextDirection',data=train_nextDirection)   
+        f.create_dataset('seeds',data=rndseeds)
     
     
 if __name__ == "__main__":
