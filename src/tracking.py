@@ -52,7 +52,7 @@ from keras.models import load_model
 
 
 
-def start(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0, useSph = False):   
+def start___deprecated(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0, useSph = False):   
     '''
     fibre tracking using neural networks
     
@@ -117,21 +117,17 @@ def start(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScalin
 
     return streamlinePositions, vNorms
 
-def start_singleTracker(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, useSph = False,inverseDirection = False):   
+def start(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, useSph = False,inverseDirection = False, bitracker = False):   
     '''
     fibre tracking using neural networks
-    
-    NOTE/BUG: tracking is done in image coordinate system currently
     '''    
-    # assume seeds in image coordinate system
-    # TODO: make steps in RAS cs
-    
+    # the stepDirection is currently employed to track fibre's into the predicted as well as its opposite direction
     stepDirection = 1
     if(inverseDirection):
         stepDirection = -1
     
     noSeeds = len(seeds)
-    noIterations = 1000
+    noIterations = 100 #TODO: DONT HARDCODE THE NO OF ITERATIONS, IMPLEMENT STOPPING CRITERIA
 
     # initialize streamline positions data
     vNorms = np.zeros([noSeeds,noIterations+1])
@@ -143,6 +139,7 @@ def start_singleTracker(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,co
     x = np.zeros([noSeeds,noX,noY,noZ,dw])
     x_,y_,z_ = dwi_tools._getCoordinateGrid(noX,noY,noZ,coordinateScaling)
 
+    # prepare transformations to project a streamline point from IJK into RAS coordinate system to interpolate DWI data
     aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
     M = aff_ras_ijk[:3, :3]
     abc = aff_ras_ijk[:3, 3]
@@ -159,18 +156,18 @@ def start_singleTracker(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,co
             coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + curStreamlinePos_ijk
             x[j,] = dwi_tools.interpolatePartialDWIVolume(data,coordVecs, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
 
-                
-        # predict possible directions
-        #x_ext = nn_helper.normalizeDWI(x)
-        #lastDirections = streamlinePositions[:,iter,] - streamlinePositions[:,iter-1,]
-        #lastDirections = np.expand_dims(lastDirections, axis=1)
-        
-        
-        predictedDirection = model.predict([x])
+        lastDirections = (streamlinePositions[:,iter-1,] - streamlinePositions[:,iter,]) # previousPosition - currentPosition
+        vecNorms = np.sqrt(np.sum(lastDirections ** 2 , axis = 1)) # make unit vector
+        lastDirections = np.nan_to_num(lastDirections / vecNorms[:,None])
+            
+        if(bitracker):
+            predictedDirection = model.predict([x, lastDirections])
+        else:
+            predictedDirection = model.predict([x])
         
         # depending on the coordinates change different de-normalization approach
         if(useSph == True):
-            predictedDirection = dwi_tools.convAllFromSphToEuclCoords((2*np.pi)*predictedDirection + np.pi)
+            #predictedDirection = dwi_tools.convAllFromSphToEuclCoords((2*np.pi)*predictedDirection + np.pi)
             vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1)) # should be unit in this case.. 
         else:
             # squash output to unit length
@@ -178,10 +175,16 @@ def start_singleTracker(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,co
             #predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
         vNorms[:,iter,] = vecNorms
         
-        
         # update next streamline position
         for j in range(0,noSeeds):
-            streamlinePositions[j,iter+1,] = streamlinePositions[j,iter,] + stepDirection * stepWidth * predictedDirection[j,]
-
+            lv1 = predictedDirection[j,]
+            pv1 = lastDirections[j,]
+            theta = np.arcsin(np.dot(pv1,lv1) / (np.linalg.norm(pv1)*np.linalg.norm(lv1)))            
+            if(theta < 0 and iter>1):
+                predictedDirection[j,] = -predictedDirection[j,]
+            
+            streamlinePositions[j,iter+1,] = streamlinePositions[j,iter,] - stepDirection * stepWidth * predictedDirection[j,]
+        
+        stepDirection = 1
 
     return streamlinePositions, vNorms
