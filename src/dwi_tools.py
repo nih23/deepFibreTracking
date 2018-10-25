@@ -41,7 +41,40 @@ def loadVTKstreamlines(pStreamlines):
         streamlines.append(np.array(p.GetData()))
 
     return streamlines
+
+
+def saveVTKstreamlines(streamlines, pStreamlines):
+    polydata = vtk.vtkPolyData()
+
+    lines = vtk.vtkCellArray()
+    points = vtk.vtkPoints()
     
+    ptCtr = 0
+    
+    for i in range(0,len(streamlines)):
+        if((i % 100) == 0):
+                print(str(i) + "/" + str(polydata.GetNumberOfCells()))
+        
+        
+        line = vtk.vtkLine()
+        line.GetPointIds().SetNumberOfIds(len(streamlines[i]))
+        for j in range(0,len(streamlines[i])):
+            points.InsertNextPoint(streamlines[i][j])
+            linePts = line.GetPointIds()
+            #print('(%d,%d)' % (j,ptCtr))
+            linePts.SetId(j,ptCtr)
+            
+            ptCtr += 1
+            
+        lines.InsertNextCell(line)
+            
+    polydata.SetLines(lines)
+    polydata.SetPoints(points)
+    
+    writer = vtk.vtkPolyDataWriter()
+    writer.SetFileName(pStreamlines)
+    writer.SetInputData(polydata)
+    writer.Write()
 
 
 def normalize_dwi(weights, b0):
@@ -282,17 +315,17 @@ def visStreamlines(streamlines, volume, vol_slice_idx = 40, vol_slice_idx2 = 40)
         vol_actor2 = vol_actor.copy()
         vol_actor2.display(z=vol_slice_idx2)
         
-        #streamlines_actor = actor.line(streamlines, line_colors(streamlines, cmap = 'rgb_standard'))
+        streamlines_actor = actor.line(streamlines, line_colors(streamlines, cmap = 'rgb_standard'))
         #streamlines_actor = actor.line(streamlines, (125,125,125))
         
-        streamlines_actor = actor.line(streamlines, np.ones([len(streamlines)]))  # red
+        #streamlines_actor = actor.line(streamlines, np.ones([len(streamlines)]))  # red
 
         # Create the 3D display.
         r = window.Renderer()
         r.add(streamlines_actor)
         r.add(vol_actor)
         r.add(vol_actor2)
-        window.record(r, n_frames=1, out_path='deterministic.png', size=(800, 800))
+        #window.record(r, n_frames=1, out_path='deterministic.png', size=(800, 800))
         window.show(r)
     else:
         print('we need VTK for proper visualisation of our fibres.')
