@@ -50,10 +50,10 @@ def saveVTKstreamlines(streamlines, pStreamlines):
     points = vtk.vtkPoints()
     
     ptCtr = 0
-    
+       
     for i in range(0,len(streamlines)):
-        if((i % 100) == 0):
-                print(str(i) + "/" + str(polydata.GetNumberOfCells()))
+        if((i % 1000) == 0):
+                print(str(i) + "/" + str(len(streamlines)))
         
         
         line = vtk.vtkLine()
@@ -61,13 +61,12 @@ def saveVTKstreamlines(streamlines, pStreamlines):
         for j in range(0,len(streamlines[i])):
             points.InsertNextPoint(streamlines[i][j])
             linePts = line.GetPointIds()
-            #print('(%d,%d)' % (j,ptCtr))
             linePts.SetId(j,ptCtr)
             
             ptCtr += 1
             
         lines.InsertNextCell(line)
-            
+                   
     polydata.SetLines(lines)
     polydata.SetPoints(points)
     
@@ -75,6 +74,8 @@ def saveVTKstreamlines(streamlines, pStreamlines):
     writer.SetFileName(pStreamlines)
     writer.SetInputData(polydata)
     writer.Write()
+    
+    print("Wrote streamlines to " + writer.GetFileName())
 
 
 def normalize_dwi(weights, b0):
@@ -362,7 +363,7 @@ def _getCoordinateGrid(noX,noY,noZ,coordinateScaling):
     
     return x_,y_,z_
 
-def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3):
+def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1):
     '''
     
     '''
@@ -401,7 +402,7 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, 
         if((streamlineIndex % 100) == 0):
                 print(str(streamlineIndex) + "/" + str(noStreamlines))
         lengthStreamline = len(streamlines[streamlineIndex])
-        for streamlinePoint in range(0,lengthStreamline):
+        for streamlinePoint in range(0,lengthStreamline,step):
 
             streamlinevec = streamlines[streamlineIndex][streamlinePoint]
             streamlinevec_next = streamlines[streamlineIndex][min(streamlinePoint+1,lengthStreamline-1)]
