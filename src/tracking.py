@@ -40,6 +40,7 @@ from dipy.tracking.local import LocalTracking
 from dipy.viz import window, actor
 from dipy.viz.colormap import line_colors
 from dipy.tracking.streamline import Streamlines
+
 from dipy.tracking import metrics
 
 import numpy as np
@@ -49,73 +50,6 @@ import tensorflow as tf
 from joblib import Parallel, delayed
 import multiprocessing
 from keras.models import load_model
-
-
-
-def start___deprecated(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, nnOutputToUse = 0, useSph = False):   
-    '''
-    fibre tracking using neural networks
-    
-    NOTE/BUG: tracking is done in image coordinate system currently
-    '''    
-    # assume seeds in image coordinate system
-    # TODO: make steps in RAS cs
-    
-    noSeeds = len(seeds)
-    noIterations = 1000
-
-    # initialize streamline positions data
-    vNorms = np.zeros([noSeeds,noIterations+1])
-    streamlinePositions = np.zeros([noSeeds,noIterations+1,3])
-    streamlinePositions[:,0,] = seeds[0:noSeeds]
-    streamlinePositions[:,1,] = seeds[0:noSeeds]
-
-    # interpolate data given these coordinates for each channel
-    x = np.zeros([noSeeds,noX,noY,noZ,dw])
-    x_,y_,z_ = dwi_tools._getCoordinateGrid(noX,noY,noZ,coordinateScaling)
-
-    aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
-    M = aff_ras_ijk[:3, :3]
-    abc = aff_ras_ijk[:3, 3]
-    abc = abc[:,None]
-    
-    for iter in range(1,noIterations):
-        # interpolate dwi data at each point of our streamline
-        for j in range(0,noSeeds):
-            # project from RAS to image coordinate system
-            curStreamlinePos_ras = streamlinePositions[j,iter,]
-            curStreamlinePos_ras = curStreamlinePos_ras[:,None]
-            curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
-            
-            coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + curStreamlinePos_ijk
-            x[j,] = dwi_tools.interpolatePartialDWIVolume(data,coordVecs, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
-
-                
-        # predict possible directions
-        #x_ext = nn_helper.normalizeDWI(x)
-        #lastDirections = streamlinePositions[:,iter,] - streamlinePositions[:,iter-1,]
-        #lastDirections = np.expand_dims(lastDirections, axis=1)
-        
-        
-        predictedDirection = model.predict([x])[nnOutputToUse] # 0 -> previous direction, 1 -> next direction
-        
-        # depending on the coordinates change different de-normalization approach
-        if(useSph == True):
-            predictedDirection = dwi_tools.convAllFromSphToEuclCoords((2*np.pi)*predictedDirection + np.pi)
-            vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1)) # should be unit in this case.. 
-        else:
-            # squash output to unit length
-            vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
-            #predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
-        vNorms[:,iter,] = vecNorms
-        
-        
-        # update next streamline position
-        for j in range(0,noSeeds):
-            streamlinePositions[j,iter+1,] = streamlinePositions[j,iter,] + stepWidth * predictedDirection[j,]
-
-
-    return streamlinePositions, vNorms
 
 def start(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, useSph = False,inverseDirection = False, bitracker = False):   
     '''
@@ -188,3 +122,125 @@ def start(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScalin
         stepDirection = 1
 
     return streamlinePositions, vNorms
+
+
+def joinTwoAlignedStreamlineLists(streamlines_left,streamlines_right):
+    assert(len(streamlines_left) == len(streamlines_right), "The two lists of streamlines need to have the same number of elements.")
+    
+    streamlines_joined = []
+    
+    for i in range(0,len(streamlines_left)):
+        sl_l = np.flipud(streamlines_left[i])
+        sl_r = streamlines_right[i]
+        streamlines_joined.append(np.concatenate([sl_l, sl_r]))
+        
+    return streamlines_joined
+
+
+def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, useSph = False,inverseDirection = False, bitracker = False):   
+    '''
+    fibre tracking using neural networks
+    '''    
+    # the stepDirection is currently employed to track fibre's into the predicted as well as its opposite direction
+    mask = mask.astype(np.float)
+    stepDirection = 1
+    if(inverseDirection):
+        stepDirection = -1
+    
+    noSeeds = len(seeds)
+    noIterations = 100 #TODO: DONT HARDCODE THE NO OF ITERATIONS, IMPLEMENT STOPPING CRITERIA
+
+    # initialize streamline positions data
+    vNorms = np.zeros([noSeeds,noIterations+1])
+    streamlinePositions = np.zeros([noSeeds,noIterations+1,3])
+    streamlinePositions[:,0,] = seeds[0:noSeeds]
+    streamlinePositions[:,1,] = seeds[0:noSeeds]
+    indexLastStreamlinePosition = noIterations * np.ones([noSeeds], dtype=np.intp)
+    
+    # interpolate data given these coordinates for each channel
+    x = np.zeros([noSeeds,noX,noY,noZ,dw])
+    x_,y_,z_ = dwi_tools._getCoordinateGrid(noX,noY,noZ,coordinateScaling)
+
+    # prepare transformations to project a streamline point from IJK into RAS coordinate system to interpolate DWI data
+    aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
+    M = aff_ras_ijk[:3, :3]
+    abc = aff_ras_ijk[:3, 3]
+    abc = abc[:,None]
+    
+    
+    
+    for iter in range(1,noIterations):
+        # interpolate dwi data at each point of our streamline
+        for j in range(0,noSeeds):
+            # project from RAS to image coordinate system
+            curStreamlinePos_ras = streamlinePositions[j,iter,]
+            curStreamlinePos_ras = curStreamlinePos_ras[:,None]
+            curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
+            
+            coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + curStreamlinePos_ijk
+            x[j,] = dwi_tools.interpolatePartialDWIVolume(data,coordVecs, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
+
+        lastDirections = (streamlinePositions[:,iter-1,] - streamlinePositions[:,iter,]) # previousPosition - currentPosition
+        vecNorms = np.sqrt(np.sum(lastDirections ** 2 , axis = 1)) # make unit vector
+        lastDirections = np.nan_to_num(lastDirections / vecNorms[:,None])
+            
+        if(bitracker):
+            predictedDirection = model.predict([x, lastDirections])
+        else:
+            predictedDirection = model.predict([x])
+        
+        # depending on the coordinates change different de-normalization approach
+        if(useSph == True):
+            #predictedDirection = dwi_tools.convAllFromSphToEuclCoords((2*np.pi)*predictedDirection + np.pi)
+            vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1)) # should be unit in this case.. 
+        else:
+            # squash output to unit length
+            vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
+            #predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
+        vNorms[:,iter,] = vecNorms
+        
+        # update next streamline position
+        for j in range(0,noSeeds):
+            lv1 = predictedDirection[j,]
+            pv1 = lastDirections[j,]
+            theta = np.arcsin(np.dot(pv1,lv1) / (np.linalg.norm(pv1)*np.linalg.norm(lv1)))            
+            if(theta < 0 and iter>1):
+                predictedDirection[j,] = -predictedDirection[j,]
+            
+            candidatePosition = streamlinePositions[j,iter,] - stepDirection * stepWidth * predictedDirection[j,]
+            candidatePosition_ijk = projectRAStoIJK(candidatePosition,M,abc)
+            
+            if(isVoxelValidStreamlinePoint(candidatePosition_ijk, mask, fa, fa_threshold)):
+                streamlinePositions[j,iter+1,] = candidatePosition
+            else:
+                indexLastStreamlinePosition[j] = np.min((indexLastStreamlinePosition[j],iter))
+        
+        stepDirection = 1
+        
+        
+        
+    streamlinePositions = streamlinePositions.tolist()
+    
+    for seedIdx in range(0,noSeeds):
+        currentStreamline = np.array(streamlinePositions[seedIdx])
+        currentStreamline = currentStreamline[0:indexLastStreamlinePosition[seedIdx],]
+        streamlinePositions[seedIdx] = currentStreamline
+        
+
+    return streamlinePositions, vNorms
+
+
+def isVoxelValidStreamlinePoint(nextCandidatePosition_ijk,mask,fa,fa_threshold):
+    
+    if(vfu.interpolate_scalar_3d(mask,nextCandidatePosition_ijk)[0] == 0):
+        return False
+
+    if(vfu.interpolate_scalar_3d(fa,nextCandidatePosition_ijk)[0] < fa_threshold):
+        return False
+    
+    return True
+
+
+def projectRAStoIJK(coordinateRAS, M, abc):
+    coordinateRAS = coordinateRAS[:,None]
+    return (M.dot(coordinateRAS) + abc).T

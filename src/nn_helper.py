@@ -16,16 +16,6 @@ import time
 from keras import backend as K
 
 
-def squared_cosine_proximity(y_true, y_pred):
-    '''
-    squares cosine loss function (variant 1 - broken?)
-    This loss function allows the network to be invariant wrt. to the streamline orientation. The direction of a vector v_i (forward OR backward (-v_i)) doesn't affect the loss.
-    '''
-    y_true = K.l2_normalize(y_true, axis=-1)
-    y_pred = K.l2_normalize(y_pred, axis=-1)
-    return -K.sum(K.pow(y_true * y_pred, 2), axis=-1)
-
-
 def squared_cosine_proximity_2(y_true, y_pred):
     '''
     squares cosine loss function (variant 2)
@@ -80,6 +70,45 @@ def cropped_relu(x):
     '''
     return K.relu(x, max_value=1)
 
+def get_mlp_multiInput_detectEndingStreamlines(inputShapeDWI, inputShapeVector, loss='mse', depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5):
+    '''
+    predict direction of past/next streamline position using simple MLP architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    i1 = Input(inputShapeDWI)
+    layers = [i1]
+    layers.append(Flatten()(layers[-1]))
+    
+    i2 = Input(inputShapeVector)
+    
+    layers.append(concatenate(  [layers[-1], i2], axis = -1))
+    
+    for i in range(1,depth+1):
+        layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
+        
+        if(useBN):
+            layers.append(BatchNormalization()(layers[-1]))
+        
+        layers.append(activation_function(layers[-1]))
+        
+        if(useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+    
+    i1 = layers[-1]
+    
+    layers.append(Dense(1, kernel_initializer = 'he_normal', activation='sigmoid')(layers[-1]))
+    
+    layerPredictStopping = layers[-1]
+        
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+
+    mlp = Model([layers[0],i2], outputs=[layerPredictStopping])
+    
+    if(loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    
+    return mlp
+
 
 def get_mlp_multiInput_singleOutput(inputShapeDWI, inputShapeVector, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5):
     '''
@@ -121,8 +150,6 @@ def get_mlp_multiInput_singleOutput(inputShapeDWI, inputShapeVector, loss='mse',
         mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
     elif(loss == 'cos'):
         mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer) # use in case of directional vectors
-    elif(loss == 'sqCos'):
-        mlp.compile(loss=[squared_cosine_proximity], optimizer=optimizer)
     elif(loss == 'sqCos2'):
         mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
     
