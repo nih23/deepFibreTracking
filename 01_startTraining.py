@@ -1,9 +1,12 @@
 import time
 import nrrd
+import os
 import nibabel as nb
 import numpy as np
 import matplotlib.pyplot as plt
 import h5py
+
+import warnings
 
 from keras.callbacks import ModelCheckpoint, CSVLogger, ReduceLROnPlateau, EarlyStopping
 from dipy.tracking.local import LocalTracking, ThresholdTissueClassifier
@@ -27,18 +30,12 @@ from dipy.tracking import utils
 import src.dwi_tools as dwi_tools
 import src.nn_helper as nn_helper
 
+from src.nn_helper import swish
+
 from keras.layers.advanced_activations import LeakyReLU, ReLU
 from keras.layers import Activation
-from keras.callbacks import TensorBoard
-
-pTrainData_fibrePrediction = 'train_prediction_grid_normalized_dti_cs1_wholebrain.h5'
-pTrainData_fibreTracking = 'train_tracking_grid_normalized_dti_cs1_wholebrain.h5'
-pTrainInput = 'train_input_normalized_dti_cs1_wholebrain_'
-noCrossings = 3
-
-
-
-
+from keras.callbacks import TensorBoard, ReduceLROnPlateau
+from keras.models import load_model
 
 def main():
     '''
@@ -47,24 +44,61 @@ def main():
     #bvals,bvecs,gtab,dwi,aff,t1,binarymask = dwi_tools.loadDataset('100307')
     #dwi_subset, gtab_subset = dwi_tools.cropDatsetToBValue(1000, bvals, bvecs, dwi)
     
+  
+    modelToUse = 'mlp_doubleIn_single' #'mlp_single' # 'mlp_double', '3dunet'
+    #modelToUse = 'mlp_single'
+    
+    #modelToUse = 'endTracking_doubleIn_single'
+    
+    anatomicReagion = 'wb' 
+    #anatomicReagion = 'cc' 
+    
+    #loss = 'cos'
+    #loss = 'mse'
+    loss = 'sqCos2'
+    
+    useSphericalCoordinates = False
+    
+    if(anatomicReagion == 'wb'):
+        # whole brain tractography
+        pTrainData = 'data/train_OLDsh4_step0.6_wholeBrain_b3k_csd_1x1x1.h5'
+    elif(anatomicReagion == 'cc'):
+        # corpus callosum
+        pTrainData = '102218_train_OLDsh4_step06_corpusCallosum_b1k.h5'
+        pTrainData = '102218_train_OLDsh4_step06_corpusCallosum_b1k_3x3.h5'
+    
+    pModelOutput = pTrainData.replace('.h5','').replace('data/','')
+    
     # training parameters
     noGPUs = 1
-    batch_size = 2**8
-    epochs = 2000
-    lr = 3e-3
-    useDropout = False
+    batch_size = 2**12
+    epochs = 10000
+    #lr = 3e-3
+    #lr = 1e-5
+    lr = 1e-4
+    useDropout = True
     useBatchNormalization = False
-    noFeatures = 2500
+    
+    usePretrainedModel = False
+    pPretrainedModel = 'models/mlp_newdata_dx_1_dy_1_dz_1_dd_15_ReLU_feat_512_depth_3_output_3_lr_0.0001_dropout_1_bn_0_508-0.005047.h5'
+    
+    noFeatures = 512 
     depth = 3
-    #activation_function = ReLU()
-    activation_function = LeakyReLU()
-
+    activation_function = ReLU()
+    #activation_function = LeakyReLU()
+    #activation_function = Activation(swish)
+ 
+    
+    if(useSphericalCoordinates == True):
+        noOutputNeurons = 2 # spherical coordinates
+    else:
+        noOutputNeurons = 3 # euclidean coordinates
     
     # load training data
-    f = h5py.File(pTrainData_fibrePrediction, "r")
+    f = h5py.File(pTrainData, "r")
     train_DWI = np.array(f["train_DWI"].value)
     train_prevDirection = np.array(f["train_curPosition"].value)
-    train_likelyDirections = np.array(f["train_LikelyFibreDirections"].value)
+    #train_likelyDirections = np.array(f["train_LikelyFibreDirections"].value)
     train_nextDirection = np.array(f["train_NextFibreDirection"].value)
     f.close()
     
@@ -73,22 +107,76 @@ def main():
     print('\n**************')
     print('** Training **')
     print('**************\n')
+    print('model ' + str(modelToUse) + ' loss ' + loss)
     print('dx ' + str(noX) + ' dy ' + str(noY) + ' dz  ' + str(noZ) + ' dd ' + str(noD))
-    print('features ' + str(noFeatures) + ' depth ' + str(depth) + ' lr ' + str(lr) + '\n dropout ' + str(useDropout) + ' bn  ' + str(useBatchNormalization) + ' batch size ' + str(batch_size))
-    
-    # normalize data
-    print('-> projecting dependent value into spherical coordinates')
-    train_prevDirection_sph, train_nextDirection_sph = dwi_tools.convertIntoSphericalCoordsAndNormalize(train_prevDirection, train_nextDirection)
-    
+    print('features ' + str(noFeatures) + ' depth ' + str(depth) + ' lr ' + str(lr) + '\ndropout ' + str(useDropout) + ' bn  ' + str(useBatchNormalization) + ' batch size ' + str(batch_size))
+    print('dataset  (' + anatomicReagion + ') ' + str(pTrainData))
     print('**************\n')
     
    
     # train simple MLP
-    params = "%s_dx_%d_dy_%d_dz_%d_dd_%d_feat_%d_depth_%d_lr_%.3f_dropout_%d_bn_%d" % (activation_function.__class__.__name__,noX,noY,noZ,noD,noFeatures, depth,lr,useDropout,useBatchNormalization)
-    pModel = "models/mlp_" + params + "_{epoch:02d}-{val_loss:.6f}.h5"
+    params = "doubleIn_noInputRepetition_%s_%s_%s_dx_%d_dy_%d_dz_%d_dd_%d_%s_feat_%d_depth_%d_output_%d_lr_%.4f_dropout_%d_bn_%d_pt_%d" % (modelToUse,loss,anatomicReagion,noX,noY,noZ,noD,activation_function.__class__.__name__,noFeatures, depth,noOutputNeurons,lr,useDropout,useBatchNormalization,usePretrainedModel)
+    pModel = "results/" + pModelOutput + '/models/' + params + "_{epoch:02d}-{val_loss:.6f}.h5"
+    pCSVLog = "results/" + pModelOutput + '/logs/' + params + ".csv"
+    
+    newpath = r'results/' + pModelOutput + '/models/'
+    if not os.path.exists(newpath):
+        os.makedirs(newpath)
+        
+    newpath = r'results/' + pModelOutput + '/logs/'
+    if not os.path.exists(newpath):
+        os.makedirs(newpath)
+    
+    if(noOutputNeurons == 2):
+        # spherical coordinates
+        warnings.warn('conversion into spherical coordinates seems to be flawed atm')
+        
+        print('-> projecting dependent value into spherical coordinates')
+        train_prevDirection, train_nextDirection = dwi_tools.convertIntoSphericalCoordsAndNormalize(train_prevDirection, train_nextDirection)    
+    
+    if (usePretrainedModel):
+        checkpoint = ModelCheckpoint(pModel, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
+        csv_logger = CSVLogger(pCSVLog)
+        ptmodel = load_model(pPretrainedModel)
+        ptmodel.fit([train_DWI], [train_prevDirection, train_nextDirection], batch_size=batch_size, epochs=epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+        return
+    
     checkpoint = ModelCheckpoint(pModel, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-    mlp_simple = nn_helper.get_mlp_simpleTracker(lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=train_DWI.shape[1:5], outputShape = 2, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)
-    mlp_simple.fit([train_DWI], [train_prevDirection_sph,train_nextDirection_sph], batch_size=batch_size, epochs=epochs, verbose=0,validation_split=0.2, callbacks=[checkpoint])
+    csv_logger = CSVLogger(pCSVLog)
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2,
+                              patience=5, min_lr=1e-5, verbose=1)
+
+    ### mirror input/output to enable tracking in two directions ###
+    #tensionInput = np.concatenate( (train_prevDirection, train_nextDirection) )
+    #tensionOutput = np.concatenate( (train_nextDirection, train_prevDirection) )
+    #train_DWI_repeated = np.concatenate((train_DWI,train_DWI) )
+    
+    ### train model ###
+    if (modelToUse == 'mlp_double'):
+        mlp_simple = nn_helper.get_mlp_doubleOutput(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=train_DWI.shape[1:5], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)       
+        mlp_simple.fit([train_DWI], [train_prevDirection, train_nextDirection], batch_size=batch_size, epochs=epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+    ###
+    elif (modelToUse == 'mlp_doubleIn_single'):
+        mlp_simple = nn_helper.get_mlp_multiInput_singleOutput(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=train_DWI.shape[1:5], inputShapeVector=(3,), outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)       
+        #mlp_simple.fit([train_DWI_repeated, tensionInput], [tensionOutput], batch_size=batch_size, epochs=epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+        mlp_simple.fit([train_DWI, train_prevDirection], [train_nextDirection], batch_size=batch_size, epochs=epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+    ###
+    elif (modelToUse == 'mlp_single'):
+        mlp_simple = nn_helper.get_mlp_singleOutput(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=train_DWI.shape[1:5], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)       
+        mlp_simple.fit([train_DWI], [train_nextDirection], batch_size=batch_size, epochs=epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+    ###
+    elif (modelToUse == 'unet'):
+        cnn_simple = nn_helper.get_3Dunet_simpleTracker(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=train_DWI.shape[1:5], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)       
+        cnn_simple.fit([train_DWI], [train_prevDirection, train_nextDirection], batch_size=batch_size, epochs=epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+    
+    elif (modelToUse == 'endTracking_doubleIn_single'):
+        idxNotracking = np.where(  (train_nextDirection == [0,0,0]).all(axis=1)  )[0]
+        stopTracking = np.zeros(len(train_nextDirection))
+        stopTracking[idxNotracking] = 1
+        
+        endTracking = nn_helper.get_mlp_multiInput_detectEndingStreamlines(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=train_DWI.shape[1:5], features = noFeatures, depth = depth, noGPUs=noGPUs)       
+        endTracking.fit([train_DWI, train_prevDirection], [stopTracking], batch_size=batch_size, epochs=epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+    ###
     
     
 if __name__ == "__main__":
