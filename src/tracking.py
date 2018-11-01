@@ -95,9 +95,9 @@ def start(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScalin
         lastDirections = np.nan_to_num(lastDirections / vecNorms[:,None])
             
         if(bitracker):
-            predictedDirection = model.predict([x, lastDirections])
+            predictedDirection = model.predict([x, lastDirections], batch_size = 2**12)
         else:
-            predictedDirection = model.predict([x])
+            predictedDirection = model.predict([x],  batch_size = 2**12)
         
         # depending on the coordinates change different de-normalization approach
         if(useSph == True):
@@ -171,6 +171,7 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
     
     for iter in range(1,noIterations):
         # interpolate dwi data at each point of our streamline
+        coordVecs = coordVecs
         for j in range(0,noSeeds):
             # project from RAS to image coordinate system
             curStreamlinePos_ras = streamlinePositions[j,iter,]
@@ -185,9 +186,9 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
         lastDirections = np.nan_to_num(lastDirections / vecNorms[:,None])
             
         if(bitracker):
-            predictedDirection = model.predict([x, lastDirections])
+            predictedDirection = model.predict([x, lastDirections], batch_size = 2**12)
         else:
-            predictedDirection = model.predict([x])
+            predictedDirection = model.predict([x], batch_size = 2**12)
         
         # depending on the coordinates change different de-normalization approach
         if(useSph == True):
