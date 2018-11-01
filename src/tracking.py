@@ -170,25 +170,18 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
     
     
     for iter in range(1,noIterations):
-        # interpolate dwi data at each point of our streamline
-        coordVecs = coordVecs
-        for j in range(0,noSeeds):
-            # project from RAS to image coordinate system
-            curStreamlinePos_ras = streamlinePositions[j,iter,]
-            curStreamlinePos_ras = curStreamlinePos_ras[:,None]
-            curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
+        curStreamlinePos_ras = streamlinePositions[:,iter,].T
+        curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
+        x = dwi_tools.interpolateDWIVolume(data, curStreamlinePos_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ)
             
-            coordVecs = np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + curStreamlinePos_ijk
-            x[j,] = dwi_tools.interpolatePartialDWIVolume(data,coordVecs, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
-
         lastDirections = (streamlinePositions[:,iter-1,] - streamlinePositions[:,iter,]) # previousPosition - currentPosition
         vecNorms = np.sqrt(np.sum(lastDirections ** 2 , axis = 1)) # make unit vector
         lastDirections = np.nan_to_num(lastDirections / vecNorms[:,None])
             
         if(bitracker):
-            predictedDirection = model.predict([x, lastDirections], batch_size = 2**12)
+            predictedDirection = model.predict([x, lastDirections], batch_size = 2**16)
         else:
-            predictedDirection = model.predict([x], batch_size = 2**12)
+            predictedDirection = model.predict([x], batch_size = 2**16)
         
         # depending on the coordinates change different de-normalization approach
         if(useSph == True):
@@ -208,16 +201,17 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
             if(theta < 0 and iter>1):
                 predictedDirection[j,] = -predictedDirection[j,]
             
-            candidatePosition = streamlinePositions[j,iter,] - stepDirection * stepWidth * predictedDirection[j,]
-            candidatePosition_ijk = projectRAStoIJK(candidatePosition,M,abc)
-            
-            if(isVoxelValidStreamlinePoint(candidatePosition_ijk, mask, fa, fa_threshold)):
-                streamlinePositions[j,iter+1,] = candidatePosition
+        candidatePosition = streamlinePositions[:,iter,] - stepDirection * stepWidth * predictedDirection
+        candidatePosition_ijk = (M.dot(candidatePosition.T) + abc).T   #projectRAStoIJK(candidatePosition,M,abc)
+        validPoints = areVoxelsValidStreamlinePoints(candidatePosition_ijk, mask, fa, fa_threshold)
+        
+        for j in range(0,noSeeds):
+            if(validPoints[j]):
+                streamlinePositions[j,iter+1,] = candidatePosition[j,]
             else:
                 indexLastStreamlinePosition[j] = np.min((indexLastStreamlinePosition[j],iter))
         
         stepDirection = 1
-        
         
         
     streamlinePositions = streamlinePositions.tolist()
@@ -231,7 +225,14 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
     return streamlinePositions, vNorms
 
 
+def areVoxelsValidStreamlinePoints(nextCandidatePositions_ijk,mask,fa,fa_threshold):
+    return np.logical_and( np.greater(vfu.interpolate_scalar_3d(mask,nextCandidatePositions_ijk)[0], 0), np.greater(vfu.interpolate_scalar_3d(fa,nextCandidatePositions_ijk)[0], fa_threshold)  )
+    #return (vfu.interpolate_scalar_3d(mask,nextCandidatePositions_ijk)[0] == 0) and (vfu.interpolate_scalar_3d(fa,nextCandidatePositions_ijk)[0] < fa_threshold)
+    
+
 def isVoxelValidStreamlinePoint(nextCandidatePosition_ijk,mask,fa,fa_threshold):
+    
+    
     
     if(vfu.interpolate_scalar_3d(mask,nextCandidatePosition_ijk)[0] == 0):
         return False
