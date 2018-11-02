@@ -170,12 +170,13 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
     
     start_time = time.time()    
     for iter in range(1,noIterations):
-        if((iter % 10) == 0):
-            print(str(iter) + "/" + str(noIterations) + "[" + str(time.time() - start_time) + "s]")
+        #if((iter % 10) == 0):
+        print(str(iter-1) + "/" + str(noIterations) + " [" + str(time.time() - start_time) + "s]")
         curStreamlinePos_ras = streamlinePositions[:,iter,].T
         curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
         x = dwi_tools.interpolateDWIVolume(data, curStreamlinePos_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ)
             
+        print(" -> 1 " + str(time.time() - start_time) + "s]")
         lastDirections = (streamlinePositions[:,iter-1,] - streamlinePositions[:,iter,]) # previousPosition - currentPosition
         vecNorms = np.sqrt(np.sum(lastDirections ** 2 , axis = 1)) # make unit vector
         lastDirections = np.nan_to_num(lastDirections / vecNorms[:,None])
@@ -185,6 +186,7 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
         else:
             predictedDirection = model.predict([x], batch_size = 2**16)
         
+        print(" -> 2 " + str(time.time() - start_time) + "s]")
         # depending on the coordinates change different de-normalization approach
         if(useSph == True):
             #predictedDirection = dwi_tools.convAllFromSphToEuclCoords((2*np.pi)*predictedDirection + np.pi)
@@ -195,6 +197,7 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
             #predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
         vNorms[:,iter,] = vecNorms
         
+        print(" -> 3 " + str(time.time() - start_time) + "s]")
         # update next streamline position
         for j in range(0,noSeeds):
             lv1 = predictedDirection[j,]
@@ -203,10 +206,11 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
             if(theta < 0 and iter>1):
                 predictedDirection[j,] = -predictedDirection[j,]
             
+        print(" -> 4 " + str(time.time() - start_time) + "s]")
         candidatePosition = streamlinePositions[:,iter,] - stepDirection * stepWidth * predictedDirection
         candidatePosition_ijk = (M.dot(candidatePosition.T) + abc).T   #projectRAStoIJK(candidatePosition,M,abc)
         validPoints = areVoxelsValidStreamlinePoints(candidatePosition_ijk, mask, fa, fa_threshold)
-        
+        print(" -> 5 " + str(time.time() - start_time) + "s]")
         for j in range(0,noSeeds):
             if(validPoints[j]):
                 streamlinePositions[j,iter+1,] = candidatePosition[j,]

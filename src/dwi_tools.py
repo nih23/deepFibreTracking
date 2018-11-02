@@ -282,15 +282,20 @@ def interpolateDWIVolume(dwi, positions, x_,y_,z_, noX = 8, noY = 8, noZ = 8):
     szDWI = dwi.shape
     noPositions = len(positions)
     #print('pos: ' + str(positions.shape))
-    cvF = (np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + positions[0,])
+    start_time = time.time()
+    cvF = np.ones([noPositions*noX*noY*noZ,3])
+    #cvF = (np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + positions[0,])
     #print('cvf: ' + str(cvF.shape))
-    for j in range(1,noPositions):
-        coordVecs = (np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + positions[j,])
+    noElem = noX * noZ * noY
+    grid = np.array(np.meshgrid(x_,y_,z_)).reshape(3,-1).T
+    for j in range(0,noPositions):
+        coordVecs = grid + positions[j,]
         
         #print('coordVecs: ' + str(coordVecs.shape))
-        
-        cvF = np.concatenate([cvF, coordVecs])
-        
+        il = j * noElem
+        ir = (j+1) * noElem 
+        cvF[il:ir] = coordVecs
+        #cvF = np.concatenate([cvF, coordVecs])
     x = np.zeros([noPositions,noX,noY,noZ,szDWI[-1]])
     
     for i in range(0,szDWI[-1]):
