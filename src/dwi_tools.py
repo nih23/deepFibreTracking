@@ -76,6 +76,40 @@ def saveVTKstreamlines(streamlines, pStreamlines):
     writer.Write()
     
     print("Wrote streamlines to " + writer.GetFileName())
+    
+def saveVTKstreamlinesWithData(streamlines, data, pStreamlines):
+    polydata = vtk.vtkPolyData()
+
+    lines = vtk.vtkCellArray()
+    points = vtk.vtkPoints()
+    
+    ptCtr = 0
+       
+    for i in range(0,len(streamlines)):
+        if((i % 1000) == 0):
+                print(str(i) + "/" + str(len(streamlines)))
+        
+        
+        line = vtk.vtkLine()
+        line.GetPointIds().SetNumberOfIds(len(streamlines[i]))
+        for j in range(0,len(streamlines[i])):
+            points.InsertNextPoint(streamlines[i][j])
+            linePts = line.GetPointIds()
+            linePts.SetId(j,ptCtr)
+            
+            ptCtr += 1
+            
+        lines.InsertNextCell(line)
+                   
+    polydata.SetLines(lines)
+    polydata.SetPoints(points)
+    
+    writer = vtk.vtkPolyDataWriter()
+    writer.SetFileName(pStreamlines)
+    writer.SetInputData(polydata)
+    writer.Write()
+    
+    print("Wrote streamlines to " + writer.GetFileName())
 
 
 def normalize_dwi(weights, b0):
@@ -243,7 +277,29 @@ def _spheToEuclidean(r,theta,psi):
     return xx,yy,zz
 
 
-def interpolatePartialDWIVolume(dwi, centerPosition, x_,y_,z_, noX = 8, noY = 8, noZ = 8, coordinateScaling = 1,):
+def interpolateDWIVolume(dwi, positions, x_,y_,z_, noX = 8, noY = 8, noZ = 8):
+    
+    szDWI = dwi.shape
+    noPositions = len(positions)
+    #print('pos: ' + str(positions.shape))
+    cvF = (np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + positions[0,])
+    #print('cvf: ' + str(cvF.shape))
+    for j in range(1,noPositions):
+        coordVecs = (np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + positions[j,])
+        
+        #print('coordVecs: ' + str(coordVecs.shape))
+        
+        cvF = np.concatenate([cvF, coordVecs])
+        
+    x = np.zeros([noPositions,noX,noY,noZ,szDWI[-1]])
+    
+    for i in range(0,szDWI[-1]):
+        x[:,:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(dwi[:,:,:,i],cvF)[0], [noPositions,noX,noY,noZ])
+        
+    return x
+
+
+def interpolatePartialDWIVolume(dwi, centerPosition, x_,y_,z_, noX = 8, noY = 8, noZ = 8):
     '''
     interpolate a dwi volume at some center position and provided spatial extent
     '''

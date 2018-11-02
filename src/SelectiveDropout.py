@@ -29,9 +29,9 @@ class SelectiveDropout(Layer):
 
 
     def _getDropoutEnabled(self):
-      with tf.variable_scope("model", reuse=tf.AUTO_REUSE):
-        v = tf.get_variable("dropoutEnabled",shape=[1],dtype=tf.int32)
-      return v
+        with tf.variable_scope("model", reuse=tf.AUTO_REUSE):
+            v = tf.get_variable("dropoutEnabled",shape=[1],dtype=tf.int32)
+        return v
 #     # workaround for old tensorflow versions that dont know AUTO_REUSE
 #      try:
 #         with tf.variable_scope("model"):

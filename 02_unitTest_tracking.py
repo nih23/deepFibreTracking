@@ -72,14 +72,18 @@ def main():
     
     pCaseID = '100307'
     pModel = 'results/train_OLDsh4_step0.6_wholeBrain_b1k_csd_1x1x1/models/doubleIn_noInputRepetition_mlp_doubleIn_single_sqCos2_wb_dx_1_dy_1_dz_1_dd_15_ReLU_feat_512_depth_3_output_3_lr_0.0001_dropout_1_bn_1_pt_0_467--0.977036.h5'
+    pModel = 'results/train_OLDsh4_step0.6_wholeBrain_b3000_2_csd_1x1x1/models/doubleIn_noInputRepetition_mlp_single_sqCos2_wb_dx_1_dy_1_dz_1_dd_15_ReLU_feat_512_depth_3_output_3_lr_0.0001_dropout_1_bn_0_pt_0_899--0.926069.h5'
     pResult = pModel.replace('.h5','').replace('/models/','_') + '-prediction'
     
     tracker = load_model(pModel , custom_objects={'tf':tf, 'swish':Activation(swish), 'squared_cosine_proximity': squared_cosine_proximity_2, 'squared_cosine_proximity_2': squared_cosine_proximity_2})
-    noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)[0]
-    #tracker.summary()
     useBitracker = True
 
-    
+    if(pModel.find("mlp_single")):
+       useBitracker = False
+   
+    noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)
+    if(useBitracker): 
+       noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)[0]
     print('Loaded model with  (dx %d, dy %d, dz %d) and %d channels' % (noX, noY, noZ, noC))
 
     # load DWI data
@@ -124,7 +128,8 @@ def main():
     ccseeds = seeds_from_mask(ccmask, affine=aff)
     # whole brain seeds
     wholebrainseeds = seeds_from_mask(binarymask, affine=aff)
-    
+   
+    seedsToUse = wholebrainseeds 
     
     start_time = time.time()
     streamlines_mlp_simple_sc,vNorms = tracking.startWithStopping(mask=binarymask,fa=dti_fit.fa, bitracker=useBitracker, inverseDirection=False, seeds=ccseeds, data=tracking_data, affine=aff, model=tracker, noX=noX, noY=noY, noZ=noZ, dw = noC, stepWidth = 0.6, coordinateScaling = coordinateScaling)
@@ -143,7 +148,7 @@ def main():
 
     dwi_tools.saveVTKstreamlines(streamlines_joined_sc_imageCS,pResult + '.vtk')
     
-    dwi_tools.visStreamlines(streamlines_joined_sc_imageCS,t1, vol_slice_idx = 75)
+    #dwi_tools.visStreamlines(streamlines_joined_sc_imageCS,t1, vol_slice_idx = 75)
 
 if __name__ == "__main__":
     main()

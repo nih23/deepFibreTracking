@@ -168,8 +168,10 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
     abc = abc[:,None]
     
     
-    
+    start_time = time.time()    
     for iter in range(1,noIterations):
+        if((iter % 10) == 0):
+            print(str(iter) + "/" + str(noIterations) + "[" + str(time.time() - start_time) + "s]")
         curStreamlinePos_ras = streamlinePositions[:,iter,].T
         curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
         x = dwi_tools.interpolateDWIVolume(data, curStreamlinePos_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ)
