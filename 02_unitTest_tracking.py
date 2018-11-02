@@ -78,7 +78,7 @@ def main():
     tracker = load_model(pModel , custom_objects={'tf':tf, 'swish':Activation(swish), 'squared_cosine_proximity': squared_cosine_proximity_2, 'squared_cosine_proximity_2': squared_cosine_proximity_2})
     useBitracker = True
 
-    if(pModel.find("mlp_single")):
+    if(pModel.find("mlp_single")>=0):
        useBitracker = False
    
     noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)
