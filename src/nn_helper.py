@@ -110,6 +110,65 @@ def get_mlp_multiInput_detectEndingStreamlines(inputShapeDWI, inputShapeVector, 
     return mlp
 
 
+def get_cnn_multiInput_singleOutput(inputShapeDWI, inputShapeVector, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, kernelSz=3):
+    '''
+    predict direction of past/next streamline position using simple MLP architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    i1 = Input(inputShapeDWI)
+    layers = [i1]
+    layers.append(Flatten()(layers[-1]))
+    
+    i2 = Input(inputShapeVector)
+    
+    layers.append(concatenate(  [layers[-1], i2], axis = -1))
+    
+    # learn a meaningful spatial representation of the data and reshape to 6x6x1 patch
+    layers.append(Dense(36, kernel_initializer = 'he_normal')(layers[-1]))
+    layers.append(activation_function(layers[-1]))
+    layers.append(Reshape((6, 6, 1))(layers[-1]))
+    
+    # apply CNN to patch
+    layers.append(Conv2D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+    if(useBN):
+        layers.append(BatchNormalization()(layers[-1]))
+    layers.append(activation_function(layers[-1]))
+    if(useDropout):
+        layers.append(Dropout(0.5)(layers[-1]))
+
+    layers.append(Conv2D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+    if(useBN):
+        layers.append(BatchNormalization()(layers[-1]))
+    layers.append(activation_function(layers[-1]))
+    if(useDropout):
+        layers.append(Dropout(0.5)(layers[-1]))
+    
+    layers.append(Flatten()(layers[-1]))
+    layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
+    if(useBN):
+        layers.append(BatchNormalization()(layers[-1]))
+    layers.append(activation_function(layers[-1]))
+
+    layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
+    
+    if(outputShape == 3): # euclidean coordinates
+        layers.append( Lambda(lambda x: tf.div(x, K.expand_dims( K.sqrt(K.sum(x ** 2, axis = 1)))  ), name='nextDirection')(layers[-1]) ) # normalize output to unit vector 
+    layerNextDirection = layers[-1]
+        
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+
+    mlp = Model([layers[0],i2], outputs=[layerNextDirection])
+    
+    if(loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    elif(loss == 'cos'):
+        mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer) # use in case of directional vectors
+    elif(loss == 'sqCos2'):
+        mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+    
+    return mlp
+
+
 def get_mlp_multiInput_singleOutput(inputShapeDWI, inputShapeVector, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5):
     '''
     predict direction of past/next streamline position using simple MLP architecture
@@ -200,7 +259,56 @@ def get_mlp_singleOutput(inputShapeDWI, loss='mse', outputShape = 3, depth=1, fe
     return mlp
 
 
-def get_mlp_singleOutput_bayesian(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5):
+### APPROXIMATE BAYESIAN DEEP LEARNING MODELS
+
+def get_mlp_multiInput_singleOutput_bayesian(inputShapeDWI, inputShapeVector, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, pDropout=0.5):
+    '''
+    predict direction of past/next streamline position using simple MLP architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    i1 = Input(inputShapeDWI)
+    layers = [i1]
+    layers.append(Flatten()(layers[-1]))
+    
+    i2 = Input(inputShapeVector)
+    
+    layers.append(concatenate(  [layers[-1], i2], axis = -1))
+    
+    for i in range(1,depth+1):
+        layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
+        
+        if(useBN):
+            layers.append(BatchNormalization()(layers[-1]))
+        
+        layers.append(activation_function(layers[-1]))
+        
+        layers.append(SelectiveDropout(0.5, dropoutEnabled = 1)(layers[-1]))
+    
+    i1 = layers[-1]
+    
+    layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
+    
+    if(outputShape == 3): # euclidean coordinates
+        layers.append( Lambda(lambda x: tf.div(x, K.expand_dims( K.sqrt(K.sum(x ** 2, axis = 1)))  ), name='nextDirection')(layers[-1]) ) # normalize output to unit vector 
+    layerNextDirection = layers[-1]
+        
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+
+    mlp = Model([layers[0],i2], outputs=[layerNextDirection])
+    
+    if(loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    elif(loss == 'cos'):
+        mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer) # use in case of directional vectors
+    elif(loss == 'sqCos2'):
+        mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+    
+    return mlp
+
+
+
+
+def get_mlp_singleOutput_bayesian(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, pDropout=0.5):
     '''
     predict direction of past/next streamline position using simple MLP architecture
     Input: DWI subvolume centered at current streamline position
@@ -217,8 +325,7 @@ def get_mlp_singleOutput_bayesian(inputShapeDWI, loss='mse', outputShape = 3, de
         
         layers.append(activation_function(layers[-1]))
         
-        if(useDropout):
-            layers.append(SelectiveDropout(0.5)(layers[-1]))
+        layers.append(SelectiveDropout(0.5, dropoutEnabled = 1)(layers[-1]))
     
     i1 = layers[-1]
     
@@ -240,48 +347,6 @@ def get_mlp_singleOutput_bayesian(inputShapeDWI, loss='mse', outputShape = 3, de
         mlp.compile(loss=[squared_cosine_proximity], optimizer=optimizer)
     elif(loss == 'sqCos2'):
         mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
-    
-    return mlp
-
-
-def get_mlp_doubleOutput(inputShapeDWI,loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5):
-    '''
-    predict direction of past/next streamline position using simple MLP architecture
-    Input: DWI subvolume centered at current streamline position
-    '''
-    inputs = Input(inputShapeDWI)
-    layers = [inputs]
-    layers.append(Flatten()(layers[-1]))
-    
-    for i in range(1,depth+1):
-        layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
-        
-        if(useBN):
-            layers.append(BatchNormalization()(layers[-1]))
-        
-        layers.append(activation_function(layers[-1]))
-        
-        if(useDropout):
-            layers.append(Dropout(0.5)(layers[-1]))
-    
-    i1 = layers[-1]
-    
-    layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
-    
-    if(outputShape == 3): # euclidean coordinates
-        layers.append( Lambda(lambda x: tf.div(x, K.expand_dims( K.sqrt(K.sum(x ** 2, axis = 1)))  ), name='prevDirection')(layers[-1]) ) # normalize output to unit vector 
-    layerPrevDirection = layers[-1]
-    
-    layers.append( Lambda(lambda x:  -1 * x, name = 'nextDirection')(layers[-1]) ) # invert prediction such that the output points towards the next streamline direction
-    layerNextDirection = layers[-1]
-        
-    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
-    #mlp = Model((layers[0]), outputs=(layerNextDirection))
-    #mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
-    
-    mlp = Model((layers[0]), outputs=(layerPrevDirection,layerNextDirection))
-    mlp.compile(loss=[losses.mse,losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
-   # mlp.compile(loss=[losses.cosine_proximity,losses.cosine_proximity], optimizer=optimizer) # use in case of directional vectors
     
     return mlp
 
@@ -316,7 +381,7 @@ def get_3Dunet_simpleTracker(inputShapeDWI,loss='mse', outputShape = 3, kernelSz
         
         
         layersEncoding.append(layers[-1])
-        #layers.append(MaxPooling3D(pool_size=poolSz)(layers[-1]))
+        layers.append(MaxPooling3D(pool_size=poolSz)(layers[-1]))
 
     # ENCODING LAYER
     layers.append(Conv3D(features, kernelSz, padding='same')(layers[-1]))
