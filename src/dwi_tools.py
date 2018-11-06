@@ -77,6 +77,49 @@ def saveVTKstreamlines(streamlines, pStreamlines):
     
     print("Wrote streamlines to " + writer.GetFileName())
     
+def saveVTKstreamlinesWithPointdata(streamlines, pStreamlines, pointdata, normalizationFactor = 1):
+    polydata = vtk.vtkPolyData()
+
+    lines = vtk.vtkCellArray()
+    points = vtk.vtkPoints()
+    
+    ptCtr = 0
+    
+    
+    scalars = vtk.vtkFloatArray()
+    scalars.SetName("empirical uncertainty")
+
+    
+       
+    for i in range(0,len(streamlines)):
+        if((i % 1000) == 0):
+                print(str(i) + "/" + str(len(streamlines)))
+        
+        
+        line = vtk.vtkLine()
+        line.GetPointIds().SetNumberOfIds(len(streamlines[i]))
+        for j in range(0,len(streamlines[i])):
+            points.InsertNextPoint(streamlines[i][j])
+            linePts = line.GetPointIds()
+            linePts.SetId(j,ptCtr)
+            
+            scalars.InsertNextValue(pointdata[i][j] / normalizationFactor)
+            
+            ptCtr += 1
+            
+        lines.InsertNextCell(line)
+                   
+    polydata.SetLines(lines)
+    polydata.SetPoints(points)
+    polydata.GetPointData().AddArray(scalars)
+    
+    writer = vtk.vtkPolyDataWriter()
+    writer.SetFileName(pStreamlines)
+    writer.SetInputData(polydata)
+    writer.Write()
+    
+    print("Wrote streamlines to " + writer.GetFileName())
+    
 def saveVTKstreamlinesWithData(streamlines, data, pStreamlines):
     polydata = vtk.vtkPolyData()
 
@@ -86,8 +129,8 @@ def saveVTKstreamlinesWithData(streamlines, data, pStreamlines):
     ptCtr = 0
        
     for i in range(0,len(streamlines)):
-        if((i % 1000) == 0):
-                print(str(i) + "/" + str(len(streamlines)))
+        if((i % 50000) == 0):
+            print(str(i) + "/" + str(len(streamlines)))
         
         
         line = vtk.vtkLine()
@@ -493,7 +536,7 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, 
             curStreamlinePos_ras = curStreamlinePos_ras[:,None]
             curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
 
-            interpolatedDWISubvolume[ctr,] = interpolatePartialDWIVolume(dwi,curStreamlinePos_ijk, noX = noX, noY = noY, noZ = noZ, coordinateScaling = coordinateScaling,x_ = x_,y_ = y_,z_ = z_)
+            interpolatedDWISubvolume[ctr,] = interpolatePartialDWIVolume(dwi,curStreamlinePos_ijk, noX = noX, noY = noY, noZ = noZ,x_ = x_,y_ = y_,z_ = z_)
             
             ctr += 1
 
