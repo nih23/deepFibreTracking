@@ -28,6 +28,7 @@ from dipy.tracking import utils
 
 import src.dwi_tools as dwi_tools
 import src.nn_helper as nn_helper
+import src.SelectiveDropout as SelectiveDropout
 
 from dipy.tracking.streamline import values_from_volume
 import dipy.align.vector_fields as vfu
@@ -92,7 +93,7 @@ def start(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScalin
 
         lastDirections = (streamlinePositions[:,iter-1,] - streamlinePositions[:,iter,]) # previousPosition - currentPosition
         vecNorms = np.sqrt(np.sum(lastDirections ** 2 , axis = 1)) # make unit vector
-        lastDirections = np.nan_to_num(lastDirections / vecNorms[:,None])
+        lastDirections = -1 * np.nan_to_num(lastDirections / vecNorms[:,None])
             
         if(bitracker):
             predictedDirection = model.predict([x, lastDirections], batch_size = 2**12)
@@ -130,14 +131,14 @@ def joinTwoAlignedStreamlineLists(streamlines_left,streamlines_right):
     streamlines_joined = []
     
     for i in range(0,len(streamlines_left)):
-        sl_l = np.flipud(streamlines_left[i])
-        sl_r = streamlines_right[i]
+        sl_l = np.flipud(streamlines_left[i][2:])
+        sl_r = streamlines_right[i][1:]
         streamlines_joined.append(np.concatenate([sl_l, sl_r]))
         
     return streamlines_joined
 
 
-def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, useSph = False,inverseDirection = False, bitracker = False):   
+def startWithStopping(seeds, data, model, affine, mask, fa, printProgress = False, fa_threshold = 0.2, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, useSph = False,inverseDirection = False, bitracker = False, bayesianModel = False):   
     '''
     fibre tracking using neural networks
     '''    
@@ -171,7 +172,8 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
     start_time = time.time()    
     for iter in range(1,noIterations):
         #if((iter % 10) == 0):
-        print(str(iter-1) + "/" + str(noIterations) + " [" + str(time.time() - start_time) + "s]")
+        if(printProgress):
+            print(str(iter-1) + "/" + str(noIterations) + " [" + str(time.time() - start_time) + "s]")
         curStreamlinePos_ras = streamlinePositions[:,iter,].T
         curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
         x = dwi_tools.interpolateDWIVolume(data, curStreamlinePos_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ)
@@ -180,11 +182,39 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
         lastDirections = (streamlinePositions[:,iter-1,] - streamlinePositions[:,iter,]) # previousPosition - currentPosition
         vecNorms = np.sqrt(np.sum(lastDirections ** 2 , axis = 1)) # make unit vector
         lastDirections = np.nan_to_num(lastDirections / vecNorms[:,None])
-            
+        
+        if(bayesianModel):
+            szX = lastDirections.shape
+            noRepetitions = 50
+            x = np.repeat(x,noRepetitions,axis=0)
+            lastDirections = np.repeat(lastDirections,noRepetitions,axis=0)
+        
         if(bitracker):
             predictedDirection = model.predict([x, lastDirections], batch_size = 2**16)
         else:
             predictedDirection = model.predict([x], batch_size = 2**16)
+            
+        if(bayesianModel):
+            bayesianDirections = np.reshape(predictedDirection, [ int(szX[0]), noRepetitions, szX[1] ] )
+            
+            for j in range(0,noSeeds):
+                
+                pv1 = lastDirections[j,]
+                norm_pv1 = np.linalg.norm(pv1)
+                
+                for i in range(0,noRepetitions):
+                    lv1 = bayesianDirections[j,i,]
+                    theta = np.arcsin(np.dot(pv1,lv1) / (norm_pv1*np.linalg.norm(lv1)))            
+                    if(theta < 0 and iter>1):
+                        bayesianDirections[j,i,] = -bayesianDirections[j,i,]
+            
+            predictedDirection = np.mean(bayesianDirections,axis=1)
+            
+            vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
+            predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
+            # renormalize direction
+            
+            predictedDirectionStd = np.sum(np.std(bayesianDirections,axis=1),axis=1) / 3
         
         print(" -> 2 " + str(time.time() - start_time) + "s]")
         # depending on the coordinates change different de-normalization approach
@@ -197,15 +227,21 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
             #predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])   
         vNorms[:,iter,] = vecNorms
         
+        if(bayesianModel):
+            vNorms[:,iter,] = predictedDirectionStd
+        
         print(" -> 3 " + str(time.time() - start_time) + "s]")
-        # update next streamline position
+        # update next streamline position, SLOWEST PART COMES HERE:
         for j in range(0,noSeeds):
             lv1 = predictedDirection[j,]
             pv1 = lastDirections[j,]
-            theta = np.arcsin(np.dot(pv1,lv1) / (np.linalg.norm(pv1)*np.linalg.norm(lv1)))            
+            #theta = np.arcsin(np.dot(pv1,lv1) / (np.linalg.norm(pv1)*np.linalg.norm(lv1)))   
+            
+            theta = np.dot(pv1,lv1)
+            
             if(theta < 0 and iter>1):
                 predictedDirection[j,] = -predictedDirection[j,]
-            
+        # SLOWEST PART ENDS HERE    
         print(" -> 4 " + str(time.time() - start_time) + "s]")
         candidatePosition = streamlinePositions[:,iter,] - stepDirection * stepWidth * predictedDirection
         candidatePosition_ijk = (M.dot(candidatePosition.T) + abc).T   #projectRAStoIJK(candidatePosition,M,abc)
@@ -222,10 +258,17 @@ def startWithStopping(seeds, data, model, affine, mask, fa, fa_threshold = 0.2, 
         
     streamlinePositions = streamlinePositions.tolist()
     
+    vNorms = vNorms.tolist()
+    
     for seedIdx in range(0,noSeeds):
         currentStreamline = np.array(streamlinePositions[seedIdx])
         currentStreamline = currentStreamline[0:indexLastStreamlinePosition[seedIdx],]
+        
+        currentNorm = np.array(vNorms[seedIdx])
+        currentNorm = currentNorm[0:indexLastStreamlinePosition[seedIdx],]
+        
         streamlinePositions[seedIdx] = currentStreamline
+        vNorms[seedIdx] = currentNorm
         
 
     return streamlinePositions, vNorms
