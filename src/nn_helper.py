@@ -16,6 +16,19 @@ import time
 from keras import backend as K
 
 
+def setAllDropoutLayers(m, value):
+    ll = [item for item in m.layers if type(item) is SelectiveDropout]
+    for ditLayer in ll:
+        ditLayer.setDropoutEnabled(value)
+        
+        
+def printDropoutLayersState(m):
+    ll = [item for item in m.layers if type(item) is SelectiveDropout]
+    for ditLayer in ll:
+        print(ditLayer._getDropoutEnabled())
+
+
+
 def squared_cosine_proximity_2(y_true, y_pred):
     '''
     squares cosine loss function (variant 2)
@@ -70,6 +83,7 @@ def cropped_relu(x):
     '''
     return K.relu(x, max_value=1)
 
+
 def get_mlp_multiInput_detectEndingStreamlines(inputShapeDWI, inputShapeVector, loss='mse', depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5):
     '''
     predict direction of past/next streamline position using simple MLP architecture
@@ -109,7 +123,7 @@ def get_mlp_multiInput_detectEndingStreamlines(inputShapeDWI, inputShapeVector, 
     
     return mlp
 
-
+# the cnn multi input architecture leads to some ambiguities.. 
 def get_cnn_multiInput_singleOutput(inputShapeDWI, inputShapeVector, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, kernelSz=3):
     '''
     predict direction of past/next streamline position using simple MLP architecture

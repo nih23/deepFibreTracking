@@ -62,7 +62,7 @@ def start(seeds, data, model, affine, noX=3, noY=3,noZ=3,dw=288,coordinateScalin
         stepDirection = -1
     
     noSeeds = len(seeds)
-    noIterations = 100 #TODO: DONT HARDCODE THE NO OF ITERATIONS, IMPLEMENT STOPPING CRITERIA
+    noIterations = 200 #TODO: DONT HARDCODE THE NO OF ITERATIONS, IMPLEMENT STOPPING CRITERIA
 
     # initialize streamline positions data
     vNorms = np.zeros([noSeeds,noIterations+1])
@@ -138,7 +138,7 @@ def joinTwoAlignedStreamlineLists(streamlines_left,streamlines_right):
     return streamlines_joined
 
 
-def startWithStopping(seeds, data, model, affine, mask, fa, printProgress = False, fa_threshold = 0.2, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, useSph = False,inverseDirection = False, bitracker = False, bayesianModel = False):   
+def startWithStopping(seeds, data, model, affine, mask, fa, printProgress = False, fa_threshold = 0.2, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, useSph = False,inverseDirection = False, bitracker = False, bayesianModel = False, printfProfiling = False):   
     '''
     fibre tracking using neural networks
     '''    
@@ -149,7 +149,7 @@ def startWithStopping(seeds, data, model, affine, mask, fa, printProgress = Fals
         stepDirection = -1
     
     noSeeds = len(seeds)
-    noIterations = 100 #TODO: DONT HARDCODE THE NO OF ITERATIONS, IMPLEMENT STOPPING CRITERIA
+    noIterations = 200 #TODO: DONT HARDCODE THE NO OF ITERATIONS, IMPLEMENT STOPPING CRITERIA
 
     # initialize streamline positions data
     vNorms = np.zeros([noSeeds,noIterations+1])
@@ -177,8 +177,8 @@ def startWithStopping(seeds, data, model, affine, mask, fa, printProgress = Fals
         curStreamlinePos_ras = streamlinePositions[:,iter,].T
         curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
         x = dwi_tools.interpolateDWIVolume(data, curStreamlinePos_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ)
-            
-        print(" -> 1 " + str(time.time() - start_time) + "s]")
+        if(printfProfiling):
+            print(" -> 1 " + str(time.time() - start_time) + "s]")
         lastDirections = (streamlinePositions[:,iter-1,] - streamlinePositions[:,iter,]) # previousPosition - currentPosition
         vecNorms = np.sqrt(np.sum(lastDirections ** 2 , axis = 1)) # make unit vector
         lastDirections = np.nan_to_num(lastDirections / vecNorms[:,None])
@@ -216,7 +216,8 @@ def startWithStopping(seeds, data, model, affine, mask, fa, printProgress = Fals
             
             predictedDirectionStd = np.sum(np.std(bayesianDirections,axis=1),axis=1) / 3
         
-        print(" -> 2 " + str(time.time() - start_time) + "s]")
+        if(printfProfiling):
+            print(" -> 2 " + str(time.time() - start_time) + "s]")
         # depending on the coordinates change different de-normalization approach
         if(useSph == True):
             #predictedDirection = dwi_tools.convAllFromSphToEuclCoords((2*np.pi)*predictedDirection + np.pi)
@@ -230,7 +231,8 @@ def startWithStopping(seeds, data, model, affine, mask, fa, printProgress = Fals
         if(bayesianModel):
             vNorms[:,iter,] = predictedDirectionStd
         
-        print(" -> 3 " + str(time.time() - start_time) + "s]")
+        if(printfProfiling):
+            print(" -> 3 " + str(time.time() - start_time) + "s]")
         # update next streamline position, SLOWEST PART COMES HERE:
         for j in range(0,noSeeds):
             lv1 = predictedDirection[j,]
@@ -242,11 +244,14 @@ def startWithStopping(seeds, data, model, affine, mask, fa, printProgress = Fals
             if(theta < 0 and iter>1):
                 predictedDirection[j,] = -predictedDirection[j,]
         # SLOWEST PART ENDS HERE    
-        print(" -> 4 " + str(time.time() - start_time) + "s]")
+        if(printfProfiling):
+            print(" -> 4 " + str(time.time() - start_time) + "s]")
         candidatePosition = streamlinePositions[:,iter,] - stepDirection * stepWidth * predictedDirection
         candidatePosition_ijk = (M.dot(candidatePosition.T) + abc).T   #projectRAStoIJK(candidatePosition,M,abc)
         validPoints = areVoxelsValidStreamlinePoints(candidatePosition_ijk, mask, fa, fa_threshold)
-        print(" -> 5 " + str(time.time() - start_time) + "s]")
+        print("valid ratio %d / %d (%.2f)" % (sum(validPoints), noSeeds, float(sum(validPoints)) / float(noSeeds)))
+        if(printfProfiling):
+            print(" -> 5 " + str(time.time() - start_time) + "s]")
         for j in range(0,noSeeds):
             if(validPoints[j]):
                 streamlinePositions[j,iter+1,] = candidatePosition[j,]
@@ -276,13 +281,9 @@ def startWithStopping(seeds, data, model, affine, mask, fa, printProgress = Fals
 
 def areVoxelsValidStreamlinePoints(nextCandidatePositions_ijk,mask,fa,fa_threshold):
     return np.logical_and( np.greater(vfu.interpolate_scalar_3d(mask,nextCandidatePositions_ijk)[0], 0), np.greater(vfu.interpolate_scalar_3d(fa,nextCandidatePositions_ijk)[0], fa_threshold)  )
-    #return (vfu.interpolate_scalar_3d(mask,nextCandidatePositions_ijk)[0] == 0) and (vfu.interpolate_scalar_3d(fa,nextCandidatePositions_ijk)[0] < fa_threshold)
     
 
-def isVoxelValidStreamlinePoint(nextCandidatePosition_ijk,mask,fa,fa_threshold):
-    
-    
-    
+def isVoxelValidStreamlinePoint(nextCandidatePosition_ijk,mask,fa,fa_threshold):  
     if(vfu.interpolate_scalar_3d(mask,nextCandidatePosition_ijk)[0] == 0):
         return False
 

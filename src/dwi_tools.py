@@ -25,8 +25,18 @@ import h5py
 import vtk
 
 
+from dipy.data import get_sphere
+
+
 def loadVTKstreamlines(pStreamlines):
-    reader = vtk.vtkPolyDataReader()
+    
+    if(pStreamlines[-4:] == '.vtk'):
+        print('PDR')
+        reader = vtk.vtkPolyDataReader()
+    elif (pStreamlines[-4:] == '.vtp'):
+        print('xmlPDR')
+        reader = vtk.vtkXMLPolyDataReader()
+    
     reader.SetFileName(pStreamlines)
     reader.Update()
 
@@ -154,6 +164,53 @@ def saveVTKstreamlinesWithData(streamlines, data, pStreamlines):
     
     print("Wrote streamlines to " + writer.GetFileName())
 
+    
+def resample_dwi(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0.006, mean_centering=True):
+    """ Resamples a diffusion signal according to a set of directions using spherical harmonics.
+    source: https://github.com/ppoulin91/learn2track/blob/miccai2017_submission/learn2track/neurotools.py
+    Parameters
+    -----------
+    dwi : `nibabel.NiftiImage` object
+        Diffusion signal as weighted images (4D).
+    bvals : ndarray shape (N,)
+        B-values used with each direction.
+    bvecs : ndarray shape (N, 3)
+        Directions of the diffusion signal. Directions are
+        assumed to be only on the hemisphere.
+    directions : `dipy.core.sphere.Sphere` object, optional
+        Directions the diffusion signal will be resampled to. Directions are
+        assumed to be on the whole sphere, not the hemisphere like bvecs.
+        If omitted, 100 directions evenly distributed on the sphere will be used.
+    sh_order : int, optional
+        SH order. Default: 8
+    smooth : float, optional
+        Lambda-regularization in the SH fit. Default: 0.006.
+    mean_centering : bool
+        If True, signal will have zero mean in each direction for all nonzero voxels
+    Returns
+    -------
+    ndarray
+        Diffusion weights resampled according to `sphere`.
+    """
+    data_sh = get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=sh_order, smooth=smooth)
+
+    sphere = get_sphere('repulsion100')
+    # sphere = get_sphere('repulsion724')
+    if directions is not None:
+        sphere = Sphere(xyz=bvecs[1:])
+
+    sph_harm_basis = sph_harm_lookup.get('mrtrix')
+    Ba, m, n = sph_harm_basis(sh_order, sphere.theta, sphere.phi)
+    data_resampled = np.dot(data_sh, Ba.T)
+
+    if mean_centering:
+        # Normalization in each direction (zero mean)
+        idx = data_resampled.sum(axis=-1).nonzero()
+        means = data_resampled[idx].mean(axis=0)
+        data_resampled[idx] -= means
+
+    return data_resampled
+    
 
 def normalize_dwi(weights, b0):
     """ Normalize dwi by average b0 data
@@ -190,7 +247,7 @@ def normalize_dwi(weights, b0):
     return weights_normed
 
 
-def get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=8, smooth=0.006, first=False):
+def get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=8, smooth=0.006):
     """ Compute coefficients of the spherical harmonics basis.
     adapted from: https://github.com/ppoulin91/learn2track/blob/miccai2017_submission/learn2track/neurotools.py
     Parameters
@@ -220,7 +277,7 @@ def get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=8, smoo
     #dwi_weights = normalize_dwi(dwi_weights, b0)
 
     # Assuming all directions lie on the hemisphere.
-    raw_sphere = HemiSphere(xyz=bvecs)
+    raw_sphere = HemiSphere(xyz=bvecs) ### CHANGED 11/09/2018 FROM HEMISPHERE TO SPHERE AS OUR HCP DATA DOESNT JUST HAVE GRADIENTS ON A SPHERE
 
     # Fit SH to signal
     sph_harm_basis = sph_harm_lookup.get('mrtrix')
