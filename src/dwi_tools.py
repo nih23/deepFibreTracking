@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import h5py
 
 import vtk
-
+from scipy.interpolate import griddata
 
 from dipy.data import get_sphere
 
@@ -38,12 +38,15 @@ def loadVTKstreamlines(pStreamlines):
         reader = vtk.vtkXMLPolyDataReader()
     
     reader.SetFileName(pStreamlines)
+    reader.ReadAllVectorsOn()
+    reader.ReadAllScalarsOn()
     reader.Update()
 
     polydata = reader.GetOutput()
     streamlines = []
     
     for i in range(polydata.GetNumberOfCells()):
+    #for i in range(0,100):
         if((i % 10000) == 0):
             print(str(i) + "/" + str(polydata.GetNumberOfCells()))
         c = polydata.GetCell(i)
@@ -69,7 +72,7 @@ def saveVTKstreamlines(streamlines, pStreamlines):
         line = vtk.vtkLine()
         line.GetPointIds().SetNumberOfIds(len(streamlines[i]))
         for j in range(0,len(streamlines[i])):
-            points.InsertNextPoint(streamlines[i][j])
+            points.InsertNextPoint(np.nan_to_num(streamlines[i][j]))
             linePts = line.GetPointIds()
             linePts.SetId(j,ptCtr)
             
@@ -109,11 +112,11 @@ def saveVTKstreamlinesWithPointdata(streamlines, pStreamlines, pointdata, normal
         line = vtk.vtkLine()
         line.GetPointIds().SetNumberOfIds(len(streamlines[i]))
         for j in range(0,len(streamlines[i])):
-            points.InsertNextPoint(streamlines[i][j])
+            points.InsertNextPoint(np.nan_to_num(streamlines[i][j]))
             linePts = line.GetPointIds()
             linePts.SetId(j,ptCtr)
             
-            scalars.InsertNextValue(pointdata[i][j] / normalizationFactor)
+            scalars.InsertNextValue(pointdata[i][j,0] / normalizationFactor)
             
             ptCtr += 1
             
@@ -130,40 +133,6 @@ def saveVTKstreamlinesWithPointdata(streamlines, pStreamlines, pointdata, normal
     
     print("Wrote streamlines to " + writer.GetFileName())
     
-def saveVTKstreamlinesWithData(streamlines, data, pStreamlines):
-    polydata = vtk.vtkPolyData()
-
-    lines = vtk.vtkCellArray()
-    points = vtk.vtkPoints()
-    
-    ptCtr = 0
-       
-    for i in range(0,len(streamlines)):
-        if((i % 50000) == 0):
-            print(str(i) + "/" + str(len(streamlines)))
-        
-        
-        line = vtk.vtkLine()
-        line.GetPointIds().SetNumberOfIds(len(streamlines[i]))
-        for j in range(0,len(streamlines[i])):
-            points.InsertNextPoint(streamlines[i][j])
-            linePts = line.GetPointIds()
-            linePts.SetId(j,ptCtr)
-            
-            ptCtr += 1
-            
-        lines.InsertNextCell(line)
-                   
-    polydata.SetLines(lines)
-    polydata.SetPoints(points)
-    
-    writer = vtk.vtkPolyDataWriter()
-    writer.SetFileName(pStreamlines)
-    writer.SetInputData(polydata)
-    writer.Write()
-    
-    print("Wrote streamlines to " + writer.GetFileName())
-
     
 def resample_dwi(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0.006, mean_centering=True):
     """ Resamples a diffusion signal according to a set of directions using spherical harmonics.
@@ -196,6 +165,7 @@ def resample_dwi(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0.00
 
     sphere = get_sphere('repulsion100')
     # sphere = get_sphere('repulsion724')
+    
     if directions is not None:
         sphere = Sphere(xyz=bvecs[1:])
 
@@ -209,7 +179,7 @@ def resample_dwi(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0.00
         means = data_resampled[idx].mean(axis=0)
         data_resampled[idx] -= means
 
-    return data_resampled
+    return data_resampled, sphere
     
 
 def normalize_dwi(weights, b0):
@@ -274,7 +244,7 @@ def get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=8, smoo
     dwi_weights = dwi.astype("float32")
 
     # normalize by the b0.
-    #dwi_weights = normalize_dwi(dwi_weights, b0)
+    dwi_weights = normalize_dwi(dwi_weights, b0)
 
     # Assuming all directions lie on the hemisphere.
     raw_sphere = HemiSphere(xyz=bvecs) ### CHANGED 11/09/2018 FROM HEMISPHERE TO SPHERE AS OUR HCP DATA DOESNT JUST HAVE GRADIENTS ON A SPHERE
@@ -286,6 +256,19 @@ def get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=8, smoo
     invB = smooth_pinv(Ba, np.sqrt(smooth) * L)
     data_sh = np.dot(dwi_weights, invB.T)
     return data_sh
+
+
+def projectGradientsOntoGrid(sphere, z, factor = 0.25):
+    xi = np.arange(np.min(sphere.theta),np.max(sphere.theta),np.max(sphere.theta) / (factor * len(sphere.theta))) # theta
+    yi = np.arange(np.min(sphere.phi),np.max(sphere.phi),(np.abs(np.min(sphere.phi)) + np.max(sphere.phi)) / (factor * len(sphere.phi))) # phi
+    xi,yi = np.meshgrid(xi,yi)
+    zi = griddata((sphere.theta,sphere.phi),np.squeeze(z),(xi,yi),method='linear')
+    
+    dx,dy = zi.shape
+    if(dx == 25):
+        zi = zi[1:,]
+    
+    return zi
 
 
 def convertIntoSphericalCoordsAndNormalize(train_prevDirection, train_nextDirection):
@@ -492,7 +475,7 @@ def visStreamlines(streamlines, volume, vol_slice_idx = 40, vol_slice_idx2 = 40)
     else:
         print('we need VTK for proper visualisation of our fibres.')
 
-
+        
 def filterStreamlinesByLength(streamlines, minimumLength = 80):
     '''
     removes streamlines that are shorter than minimumLength (in mm)
@@ -594,6 +577,83 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, 
             curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
 
             interpolatedDWISubvolume[ctr,] = interpolatePartialDWIVolume(dwi,curStreamlinePos_ijk, noX = noX, noY = noY, noZ = noZ,x_ = x_,y_ = y_,z_ = z_)
+            
+            ctr += 1
+
+    print("-> " + str(ctr))
+    return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint
+
+
+def generate2DUnrolledTrainingData(streamlines, dwi, affine, resamplingSphere, coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 0.6):
+    '''
+    
+    '''
+    sfa = np.asarray(streamlines)
+    dx,dy,dz,dw = dwi.shape
+    noNeighbours = 2*noCrossings + 1
+    sl_pos = sfa[0]
+    noStreamlines = len(streamlines)
+    
+    # Build kd-tree of streamline positions. This significantly decreases subsequent lookup times.
+    for streamlineIndex in range(1,noStreamlines):
+        lengthStreamline = len(sfa[streamlineIndex])
+        sl_pos = np.concatenate([sl_pos, sfa[streamlineIndex][0:lengthStreamline]], axis=0) # dont store absolute value but relative displacement
+    
+    #kdt = KDTree(sl_pos)
+    
+    print('Processing streamlines')
+   
+    # define spacing of the 3D grid
+    x_,y_,z_ = _getCoordinateGrid(1,1,1,coordinateScaling)
+    
+    # initialize our supervised training data
+    #directionsToAdjacentStreamlines = np.zeros([len(sl_pos),2*noCrossings,3]) # likely next streamline directions
+    directionToNextStreamlinePoint = np.zeros([len(sl_pos),3]) # next direction
+    directionToPreviousStreamlinePoint = np.zeros([len(sl_pos),3]) # previous direction
+    interpolatedDWISubvolume = np.zeros([len(sl_pos),24,24]) # interpolated dwi dataset for each streamline position
+    
+    # projections
+    aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
+    M = aff_ras_ijk[:3, :3]
+    abc = aff_ras_ijk[:3, 3]
+    abc = abc[:,None]
+    
+    ctr = 0
+    for streamlineIndex in range(0,noStreamlines):
+        if((streamlineIndex % 100) == 0):
+                print(str(streamlineIndex) + "/" + str(noStreamlines))
+        lengthStreamline = len(streamlines[streamlineIndex])
+        for streamlinePoint in range(0,lengthStreamline,step):
+
+            streamlinevec = streamlines[streamlineIndex][streamlinePoint]
+            streamlinevec_next = streamlines[streamlineIndex][min(streamlinePoint+1,lengthStreamline-1)]
+            streamlinevec_prev = streamlines[streamlineIndex][max(streamlinePoint-1,0)]
+
+
+            #streamlinevec_next = sl_pos[min((streamlineIndex+1,len(sl_pos)-1))]
+            #streamlinevec_prev = sl_pos[max((streamlineIndex-1,0))]
+
+            ### COMMENTED OUT AS ITS CURRENTLY NOT IN USE AND SLOWS DOWN DATASET CREATION
+            #d = np.sum( (streamlinevec - streamlinevec_next)**2)
+            #i = kdt.query_ball_point(streamlinevec,distToNeighbours) # acquire neighbours within a certain distance
+            #i = i[0:2*noCrossings] # limit length to the nearest neighbours
+            #n_slv = kdt.data[i] - streamlinevec # direction to nearest streamline position
+            #n_slv = np.unique(n_slv, axis = 0) # remove duplicats from our search query
+            #noPoints,dimPoints = n_slv.shape
+            #directionsToAdjacentStreamlines[streamlineIndex,0:noPoints,] = n_slv
+
+            directionToNextStreamlinePoint[ctr,] = streamlinevec_next - streamlinevec
+            directionToNextStreamlinePoint[ctr,] = np.nan_to_num(directionToNextStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToNextStreamlinePoint[ctr,] ** 2))) # unit vector
+
+            directionToPreviousStreamlinePoint[ctr,] = streamlinevec_prev - streamlinevec
+            directionToPreviousStreamlinePoint[ctr,] = np.nan_to_num(directionToPreviousStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToPreviousStreamlinePoint[ctr,] ** 2))) # unit vector
+
+            #DEBUG project from RAS to image coordinate system
+            curStreamlinePos_ras = streamlinevec
+            curStreamlinePos_ras = curStreamlinePos_ras[:,None]
+            curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
+
+            interpolatedDWISubvolume[ctr,] = projectGradientsOntoGrid(resamplingSphere, interpolatePartialDWIVolume(dwi,curStreamlinePos_ijk, noX = 1, noY = 1, noZ = 1,x_ = x_,y_ = y_,z_ = z_))
             
             ctr += 1
 
