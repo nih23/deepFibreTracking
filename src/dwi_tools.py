@@ -22,24 +22,31 @@ import numpy as np
 import matplotlib.pyplot as plt
 import h5py
 
+from dipy.denoise.localpca import localpca
+from dipy.denoise.pca_noise_estimate import pca_noise_estimate
+
+
 import vtk
 from scipy.interpolate import griddata
 
 from dipy.data import get_sphere
 
+from dipy.align.reslice import reslice
 
-def loadVTKstreamlines(pStreamlines):
-    
+
+def loadVTKstreamlines(pStreamlines, reportProgress = True):
+    isPDR = False
     if(pStreamlines[-4:] == '.vtk'):
-        print('PDR')
+        isPDR = True
         reader = vtk.vtkPolyDataReader()
     elif (pStreamlines[-4:] == '.vtp'):
-        print('xmlPDR')
+        isPDR = False
         reader = vtk.vtkXMLPolyDataReader()
     
     reader.SetFileName(pStreamlines)
-    reader.ReadAllVectorsOn()
-    reader.ReadAllScalarsOn()
+    if(isPDR):
+        reader.ReadAllVectorsOn()
+        reader.ReadAllScalarsOn()
     reader.Update()
 
     polydata = reader.GetOutput()
@@ -47,7 +54,7 @@ def loadVTKstreamlines(pStreamlines):
     
     for i in range(polydata.GetNumberOfCells()):
     #for i in range(0,100):
-        if((i % 10000) == 0):
+        if(reportProgress and ((i % 10000) == 0)):
             print(str(i) + "/" + str(polydata.GetNumberOfCells()))
         c = polydata.GetCell(i)
         p = c.GetPoints()
@@ -72,7 +79,7 @@ def saveVTKstreamlines(streamlines, pStreamlines):
         line = vtk.vtkLine()
         line.GetPointIds().SetNumberOfIds(len(streamlines[i]))
         for j in range(0,len(streamlines[i])):
-            points.InsertNextPoint(np.nan_to_num(streamlines[i][j]))
+            points.InsertNextPoint(streamlines[i][j])
             linePts = line.GetPointIds()
             linePts.SetId(j,ptCtr)
             
@@ -165,9 +172,72 @@ def resample_dwi(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0.00
 
     sphere = get_sphere('repulsion100')
     # sphere = get_sphere('repulsion724')
-    
+       
     if directions is not None:
         sphere = Sphere(xyz=bvecs[1:])
+
+    sph_harm_basis = sph_harm_lookup.get('mrtrix')
+    Ba, m, n = sph_harm_basis(sh_order, sphere.theta, sphere.phi)
+    data_resampled = np.dot(data_sh, Ba.T)
+
+    if mean_centering:
+        # Normalization in each direction (zero mean)
+        idx = data_resampled.sum(axis=-1).nonzero()
+        means = data_resampled[idx].mean(axis=0)
+        data_resampled[idx] -= means
+
+    return data_resampled, sphere
+
+def resample_dwi_forunet(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0.006, mean_centering=True):
+    """ Resamples a diffusion signal according to a set of directions using spherical harmonics.
+    source: https://github.com/ppoulin91/learn2track/blob/miccai2017_submission/learn2track/neurotools.py
+    Parameters
+    -----------
+    dwi : `nibabel.NiftiImage` object
+        Diffusion signal as weighted images (4D).
+    bvals : ndarray shape (N,)
+        B-values used with each direction.
+    bvecs : ndarray shape (N, 3)
+        Directions of the diffusion signal. Directions are
+        assumed to be only on the hemisphere.
+    directions : `dipy.core.sphere.Sphere` object, optional
+        Directions the diffusion signal will be resampled to. Directions are
+        assumed to be on the whole sphere, not the hemisphere like bvecs.
+        If omitted, 100 directions evenly distributed on the sphere will be used.
+    sh_order : int, optional
+        SH order. Default: 8
+    smooth : float, optional
+        Lambda-regularization in the SH fit. Default: 0.006.
+    mean_centering : bool
+        If True, signal will have zero mean in each direction for all nonzero voxels
+    Returns
+    -------
+    ndarray
+        Diffusion weights resampled according to `sphere`.
+    """
+    data_sh = get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=sh_order, smooth=smooth)
+
+    # sphere = get_sphere('repulsion100')
+    # sphere = get_sphere('repulsion724')
+    
+    noThetas = 10
+    noPhis = 10
+
+    xi = np.arange(0,np.pi, (np.pi) / noThetas) # theta
+    yi = np.arange(-np.pi,np.pi,2 * (np.pi) / noPhis) # phi
+
+    orderedBasis = np.ones([len(xi)*len(yi,), 2])
+
+    ctr = 0
+    for i in range(len(xi)):
+        for j in range(len(yi)):
+            orderedBasis[ctr,] = [xi[i], yi[j]]
+            ctr+=1
+    
+    sphere = Sphere(theta=orderedBasis[:,0],phi=orderedBasis[:,1])
+    
+    if directions is not None:
+        sphere = directions
 
     sph_harm_basis = sph_harm_lookup.get('mrtrix')
     Ba, m, n = sph_harm_basis(sh_order, sphere.theta, sphere.phi)
@@ -263,7 +333,7 @@ def projectGradientsOntoGrid(sphere, z, factor = 0.25):
     yi = np.arange(np.min(sphere.phi),np.max(sphere.phi),(np.abs(np.min(sphere.phi)) + np.max(sphere.phi)) / (factor * len(sphere.phi))) # phi
     xi,yi = np.meshgrid(xi,yi)
     zi = griddata((sphere.theta,sphere.phi),np.squeeze(z),(xi,yi),method='linear')
-    
+    zi = np.nan_to_num(zi)
     dx,dy = zi.shape
     if(dx == 25):
         zi = zi[1:,]
@@ -280,6 +350,41 @@ def convertIntoSphericalCoordsAndNormalize(train_prevDirection, train_nextDirect
     train_nextDirection_sph[:,1] = (train_nextDirection_sph[:,1] + np.pi) / (2 * np.pi)
     train_prevDirection_sph[:,1] = (train_prevDirection_sph[:,1] + np.pi) / (2 * np.pi)
     return train_prevDirection_sph, train_nextDirection_sph
+
+
+def loadISMRMData(path, resliceToHCPDimensions=True, denoiseData=False):
+    '''
+    import HCP dataset
+    '''
+    bvals, bvecs = read_bvals_bvecs(path + '/Diffusion.bvals', path + '/Diffusion.bvecs')
+    gtab = gradient_table(bvals=bvals, bvecs=bvecs)
+    
+    img = nb.load(path + '/Diffusion.nii.gz')
+    dwi = img.get_data()
+    #dwi = dwi[:,::-1,:,:] # some orientation as HCP
+    aff = img.affine
+    #aff[2,2] = -1 * aff[2,2]
+    
+    if(denoiseData):
+        print("Denoising")
+        t = time.time()
+        sigma = pca_noise_estimate(dwi, gtab, correct_bias=True, smooth=3)
+        print("Sigma estimation time", time.time() - t)
+
+        dwi = localpca(dwi, sigma=sigma, patch_radius=2)
+
+        print("Time taken for local PCA (slow)", time.time() - t)
+    
+    
+    zooms = img.header.get_zooms()[:3]
+    img = nb.load(path + '/T1.nii.gz')
+    t1 = img.get_data()
+    if(resliceToHCPDimensions):
+        print("Reslicing")
+        new_zooms = (1.25, 1.25, 1.25) # similar to HCP
+        dwi, aff = reslice(dwi, aff, zooms, new_zooms)
+    
+    return bvals,bvecs,gtab,dwi,aff,t1
 
 
 def loadHCPData(path):
@@ -446,31 +551,33 @@ def visTwoSetsOfStreamlines(streamlines,streamlines2, volume, vol_slice_idx = 40
         print('we need VTK for proper visualisation of our fibres.')
     
     
-def visStreamlines(streamlines, volume, vol_slice_idx = 40, vol_slice_idx2 = 40):
+def visStreamlines(streamlines, volume=None, vol_slice_idx = 40, vol_slice_idx2 = 40):
     '''
     visualize streamline using vtk
     '''
     # Prepare the display objects.
     #color = line_colors(streamlines)
-
+    
+    print("Lsl:" + str(len(streamlines)))
+    
     if window.have_vtk:
-        vol_actor = actor.slicer(volume)
-
-        vol_actor.display(y=vol_slice_idx)
-        vol_actor2 = vol_actor.copy()
-        vol_actor2.display(z=vol_slice_idx2)
+        r = window.Renderer()
         
-        streamlines_actor = actor.line(streamlines, line_colors(streamlines, cmap = 'rgb_standard'))
-        #streamlines_actor = actor.line(streamlines, (125,125,125))
+        if volume is not None:
+            vol_actor = actor.slicer(volume)
+            vol_actor.display(y=vol_slice_idx)
+            vol_actor2 = vol_actor.copy()
+            vol_actor2.display(z=vol_slice_idx2)
+            r.add(vol_actor)
+            r.add(vol_actor2)
         
-        #streamlines_actor = actor.line(streamlines, np.ones([len(streamlines)]))  # red
+        #streamlines_actor = actor.line(streamlines, line_colors(streamlines))
+        streamlines_actor = actor.line(streamlines)
 
         # Create the 3D display.
-        r = window.Renderer()
+        
         r.add(streamlines_actor)
-        r.add(vol_actor)
-        r.add(vol_actor2)
-        #window.record(r, n_frames=1, out_path='deterministic.png', size=(800, 800))
+
         window.show(r)
     else:
         print('we need VTK for proper visualisation of our fibres.')
@@ -507,7 +614,7 @@ def _getCoordinateGrid(noX,noY,noZ,coordinateScaling):
     
     return x_,y_,z_
 
-def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1):
+def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1, unitTension = True):
     '''
     
     '''
@@ -554,7 +661,7 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, 
 
 
             #streamlinevec_next = sl_pos[min((streamlineIndex+1,len(sl_pos)-1))]
-            #streamlinevec_prev = sl_pos[max((streamlineIndex-1,0))]
+            #streamlinevec_prev = sl_p os[max((streamlineIndex-1,0))]
 
             ### COMMENTED OUT AS ITS CURRENTLY NOT IN USE AND SLOWS DOWN DATASET CREATION
             #d = np.sum( (streamlinevec - streamlinevec_next)**2)
@@ -566,10 +673,13 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, 
             #directionsToAdjacentStreamlines[streamlineIndex,0:noPoints,] = n_slv
 
             directionToNextStreamlinePoint[ctr,] = streamlinevec_next - streamlinevec
-            directionToNextStreamlinePoint[ctr,] = np.nan_to_num(directionToNextStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToNextStreamlinePoint[ctr,] ** 2))) # unit vector
+            if(unitTension):
+                directionToNextStreamlinePoint[ctr,] = np.nan_to_num(directionToNextStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToNextStreamlinePoint[ctr,] ** 2))) # unit vector
 
             directionToPreviousStreamlinePoint[ctr,] = streamlinevec_prev - streamlinevec
-            directionToPreviousStreamlinePoint[ctr,] = np.nan_to_num(directionToPreviousStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToPreviousStreamlinePoint[ctr,] ** 2))) # unit vector
+            
+            if(unitTension):
+                directionToPreviousStreamlinePoint[ctr,] = np.nan_to_num(directionToPreviousStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToPreviousStreamlinePoint[ctr,] ** 2))) # unit vector
 
             #DEBUG project from RAS to image coordinate system
             curStreamlinePos_ras = streamlinevec
@@ -610,7 +720,7 @@ def generate2DUnrolledTrainingData(streamlines, dwi, affine, resamplingSphere, c
     #directionsToAdjacentStreamlines = np.zeros([len(sl_pos),2*noCrossings,3]) # likely next streamline directions
     directionToNextStreamlinePoint = np.zeros([len(sl_pos),3]) # next direction
     directionToPreviousStreamlinePoint = np.zeros([len(sl_pos),3]) # previous direction
-    interpolatedDWISubvolume = np.zeros([len(sl_pos),24,24]) # interpolated dwi dataset for each streamline position
+    interpolatedDWISubvolume = np.zeros([len(sl_pos),10,10]) # interpolated dwi dataset for each streamline position
     
     # projections
     aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
@@ -653,7 +763,7 @@ def generate2DUnrolledTrainingData(streamlines, dwi, affine, resamplingSphere, c
             curStreamlinePos_ras = curStreamlinePos_ras[:,None]
             curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
 
-            interpolatedDWISubvolume[ctr,] = projectGradientsOntoGrid(resamplingSphere, interpolatePartialDWIVolume(dwi,curStreamlinePos_ijk, noX = 1, noY = 1, noZ = 1,x_ = x_,y_ = y_,z_ = z_))
+            interpolatedDWISubvolume[ctr,] = np.reshape(interpolatePartialDWIVolume(dwi,curStreamlinePos_ijk, noX = 1, noY = 1, noZ = 1,x_ = x_,y_ = y_,z_ = z_), [10,10])
             
             ctr += 1
 
