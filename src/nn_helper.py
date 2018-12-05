@@ -7,6 +7,8 @@ from keras import backend as K
 from keras.utils import multi_gpu_model
 import keras
 
+from src.tied_layers1d import Convolution2D_tied
+
 from src.SelectiveDropout import SelectiveDropout
 import sys, getopt
 import tensorflow as tf
@@ -14,7 +16,7 @@ import h5py
 import numpy as np
 import time
 from keras import backend as K
-
+from keras.layers.merge import add
 
 def setAllDropoutLayers(m, value):
     ll = [item for item in m.layers if type(item) is SelectiveDropout]
@@ -132,6 +134,184 @@ def get_mlp_multiInput_detectEndingStreamlines(inputShapeDWI, inputShapeVector, 
         mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
     
     return mlp
+
+
+# the cnn multi input architecture leads to some ambiguities.. 
+def get_cnn_singleOutput(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, kernelSz=3, poolSz = (2,2)):
+    '''
+    predict direction of past/next streamline position using simple CNN architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    i1 = Input(inputShapeDWI)
+    layers = [i1]
+    
+    layersEncoding = []
+    
+    # DOWNSAMPLING STREAM
+    for i in range(1,depth+1):
+        layers.append(Conv2D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+        if(useBN):
+            layers.append(BatchNormalization()(layers[-1]))
+        if(useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+        layers.append(activation_function(layers[-1]))
+        
+        layers.append(Conv2D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+        if(useBN):
+            layers.append(BatchNormalization()(layers[-1]))
+        if(useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+
+        layersEncoding.append(layers[-1])
+        layers.append(MaxPooling2D(pool_size=poolSz)(layers[-1]))
+
+    # ENCODING LAYER
+    layers.append(Conv2D(features, kernelSz, padding='same')(layers[-1]))
+    if(useBN):
+        layers.append(BatchNormalization()(layers[-1]))
+    if(useDropout):
+        layers.append(Dropout(0.5)(layers[-1]))
+    layers.append(activation_function(layers[-1]))
+    
+    layers.append(Conv2D(features, kernelSz, padding='same')(layers[-1]))
+    if(useBN):
+        layers.append(BatchNormalization()(layers[-1]))    
+    if(useDropout):
+        layers.append(Dropout(0.5)(layers[-1]))
+    layers.append(activation_function(layers[-1]))
+    
+    # UPSAMPLING STREAM
+    for i in range(1,depth+1):
+        layers.append(concatenate([UpSampling2D(size=poolSz)(layers[-1]), layersEncoding[-i]]))
+
+        layers.append(Conv2D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+        layers.append(activation_function(layers[-1]))
+
+        layers.append(Conv2D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+        layers.append(activation_function(layers[-1]))
+    
+    layers.append(Conv2D(1, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+    layers.append(activation_function(layers[-1]))
+    
+    # final prediction layer w/ previous input
+    layers.append(Flatten()(layers[-1]))
+    
+    layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
+    if(useBN):
+        layers.append(BatchNormalization()(layers[-1]))
+    layers.append(activation_function(layers[-1]))
+
+    layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
+    
+#    if(outputShape == 3): # euclidean coordinates
+#        layers.append( Lambda(lambda x: tf.div(x, K.expand_dims( K.sqrt(K.sum(x ** 2, axis = 1)))  ), name='nextDirection')(layers[-1]) ) # normalize output to unit vector 
+    layerNextDirection = layers[-1]
+        
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+
+    mlp = Model([layers[0]], outputs=[layerNextDirection])
+    
+    if(loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    elif(loss == 'cos'):
+        mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer) # use in case of directional vectors
+    elif(loss == 'sqCos2'):
+        mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+    
+    return mlp
+
+def get_rcnn(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, kernelSz=3, poolSz = (2,2)):
+
+    inputs = Input(inputShapeDWI)
+    layers = [inputs]
+
+    for i in range(1, depth + 1):
+        layers.append(RCL_block(layers[-1], activation_function=activation_function, features=features,
+                                name="RCL-" + str(i)))
+        if(useBN):
+            layers.append(BatchNormalization()(layers[-1]))
+        if(useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+
+
+    layers.append(Flatten()(layers[-1]))
+    layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
+    if(useBN):
+        layers.append(BatchNormalization()(layers[-1]))
+    layers.append(activation_function(layers[-1]))
+    layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
+
+    layerNextDirection = layers[-1]
+
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+    mlp = Model([layers[0]], outputs=[layerNextDirection])
+
+    if(loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    elif(loss == 'cos'):
+        mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer) # use in case of directional vectors
+    elif(loss == 'sqCos2'):
+        mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+
+    return mlp
+
+def RCL_block(l, activation_function=LeakyReLU(), features=32, kernel_size=3, name="RCL"):
+    """Build recurrent ConvLayer. See https://doi.org/10.1109/CVPR.2015.7298958 (i.e. Figure 3)
+    Parameters
+    ----------
+    l: Keras Layer (Tensor?)
+        Previous layer of the neural network.
+    activation_function: Keras Activation Function
+        Activation function (standard: LeakyReLU()).
+    features: int
+        Number of extracted features.
+    kernel_size: int
+        Size of Convolution Kernel.
+    name: string
+        Name of the recurrent ConvLayer (standard: 'RCL').
+    :param l: Keras Layer (Tensor?)
+        Previous layer of the neural network.
+    :param activation_function: Keras Activation Function
+        Activation function (standard: LeakyReLU()).
+    :param features: int
+        Number of extracted features.
+    :param kernel_size: int
+        Size of Convolution Kernel.
+    :param name: string
+        Name of the recurrent ConvLayer (standard: 'RCL').
+    Returns
+    -------
+    stack15: keras layer stack
+        Recurrent ConvLayer as Keras Layer Stack
+    :return: stack15: keras layer stack
+        Recurrent ConvLayer as Keras Layer Stack
+    """
+    conv1 = Conv2D(features, kernel_size, padding='same', name=name)
+    stack1 = conv1(l)
+    stack2 = activation_function(stack1)
+    stack3 = BatchNormalization()(stack2)
+
+    # UNROLLED RECURRENT BLOCK(s)
+    conv2 = Conv2D(features, kernel_size, padding='same', init='he_normal')
+    stack4 = conv2(stack3)
+    stack5 = add([stack1, stack4])
+    stack6 = activation_function(stack5)
+    stack7 = BatchNormalization()(stack6)
+
+    conv3 = Convolution2D_tied(features, kernel_size, padding='same', tied_to=conv2)
+    stack8 = conv3(stack7)
+    stack9 = add([stack1, stack8])
+    stack10 = activation_function(stack9)
+    stack11 = BatchNormalization()(stack10)
+
+    conv4 = Convolution2D_tied(features, kernel_size, padding='same', tied_to=conv2)
+    stack12 = conv4(stack11)
+    stack13 = add([stack1, stack12])
+    stack14 = activation_function(stack13)
+    stack15 = BatchNormalization()(stack14)
+
+    return stack15
+
 
 # the cnn multi input architecture leads to some ambiguities.. 
 def get_cnn_multiInput_singleOutput(inputShapeDWI, inputShapeVector, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, kernelSz=3, poolSz = 2):
@@ -421,7 +601,7 @@ def get_mlp_multiInput_singleOutput_v3(inputShapeDWI, inputShapeVector, loss='ms
     return mlp
 
 
-def get_mlp_singleOutput(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5):
+def get_mlp_singleOutput(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, normalizeOutput = True):
     '''
     predict direction of past/next streamline position using simple MLP architecture
     Input: DWI subvolume centered at current streamline position
@@ -445,7 +625,7 @@ def get_mlp_singleOutput(inputShapeDWI, loss='mse', outputShape = 3, depth=1, fe
     
     layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
     
-    if(outputShape == 3): # euclidean coordinates
+    if(normalizeOutput):
         layers.append( Lambda(lambda x: tf.div(x, K.expand_dims( K.sqrt(K.sum(x ** 2, axis = 1)))  ), name='nextDirection')(layers[-1]) ) # normalize output to unit vector 
     layerNextDirection = layers[-1]
         
@@ -462,6 +642,51 @@ def get_mlp_singleOutput(inputShapeDWI, loss='mse', outputShape = 3, depth=1, fe
     elif(loss == 'sqCos2'):
         mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
     
+    return mlp
+
+def get_mlp_multiInput_singleOutput_v4(inputShapeDWI, inputShapeVector, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, normalizeOutput=True):
+    '''
+    predict direction of past/next streamline position using simple MLP architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    i1 = Input(inputShapeDWI)
+    layers = [i1]
+    layers.append(Flatten()(layers[-1]))
+    
+    i2 = Input(inputShapeVector)
+    
+    layers.append(concatenate(  [layers[-1], i2], axis = -1))
+    
+    for i in range(1,depth+1):
+        layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
+        
+        if(useBN):
+            layers.append(BatchNormalization()(layers[-1]))
+        
+        layers.append(activation_function(layers[-1]))
+        
+        if(useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+    
+    i1 = layers[-1]
+    
+    layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
+    
+    if(normalizeOutput): # euclidean coordinates
+        layers.append( Lambda(lambda x: tf.div(x, K.expand_dims( K.sqrt(K.sum(x ** 2, axis = 1)))  ), name='nextDirection')(layers[-1]) ) # normalize output to unit vector 
+    layerNextDirection = layers[-1]
+        
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+
+    mlp = Model([layers[0],i2], outputs=[layerNextDirection])
+    
+    if(loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    elif(loss == 'cos'):
+        mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer) # use in case of directional vectors
+    elif(loss == 'sqCos2'):
+        mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+    mlp.summary()
     return mlp
 
 

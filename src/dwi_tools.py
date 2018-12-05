@@ -21,6 +21,7 @@ import nibabel as nb
 import numpy as np
 import matplotlib.pyplot as plt
 import h5py
+import dipy
 
 from dipy.denoise.localpca import localpca
 from dipy.denoise.pca_noise_estimate import pca_noise_estimate
@@ -168,7 +169,7 @@ def resample_dwi(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0.00
     ndarray
         Diffusion weights resampled according to `sphere`.
     """
-    data_sh = get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=sh_order, smooth=smooth)
+    data_sh = get_spherical_harmonics_coefficients(dwi, b0=b0, bvals=bvals, bvecs=bvecs, sh_order=sh_order, smooth=smooth)
 
     sphere = get_sphere('repulsion100')
     # sphere = get_sphere('repulsion724')
@@ -215,13 +216,13 @@ def resample_dwi_forunet(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smo
     ndarray
         Diffusion weights resampled according to `sphere`.
     """
-    data_sh = get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=sh_order, smooth=smooth)
+    data_sh = get_spherical_harmonics_coefficients(dwi, b0=b0, bvals=bvals, bvecs=bvecs, sh_order=sh_order, smooth=smooth)
 
     # sphere = get_sphere('repulsion100')
     # sphere = get_sphere('repulsion724')
     
-    noThetas = 10
-    noPhis = 10
+    noThetas = 16
+    noPhis = 16
 
     xi = np.arange(0,np.pi, (np.pi) / noThetas) # theta
     yi = np.arange(-np.pi,np.pi,2 * (np.pi) / noPhis) # phi
@@ -235,6 +236,7 @@ def resample_dwi_forunet(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smo
             ctr+=1
     
     sphere = Sphere(theta=orderedBasis[:,0],phi=orderedBasis[:,1])
+    #sphere = get_sphere('repulsion100')
     
     if directions is not None:
         sphere = directions
@@ -266,6 +268,10 @@ def normalize_dwi(weights, b0):
     ndarray
         Diffusion weights normalized by the B0.
     """
+    if(b0 is None):
+        print('[W] no normalisation')
+        return weights
+    
     b0 = b0[..., None]  # Easier to work if it is a 4D array.
 
     # Make sure in every voxels weights are lower than ones from the b0.
@@ -287,15 +293,13 @@ def normalize_dwi(weights, b0):
     return weights_normed
 
 
-def get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=8, smooth=0.006):
+def get_spherical_harmonics_coefficients(dwi, b0, bvecs, sh_order=8, smooth=0.006, bvals=None):
     """ Compute coefficients of the spherical harmonics basis.
     adapted from: https://github.com/ppoulin91/learn2track/blob/miccai2017_submission/learn2track/neurotools.py
     Parameters
     -----------
     dwi : `nibabel.NiftiImage` object
         Diffusion signal as weighted images (4D).
-    bvals : ndarray shape (N,)
-        B-values used with each direction.
     bvecs : ndarray shape (N, 3)
         Directions of the diffusion signal. Directions are
         assumed to be only on the hemisphere.
@@ -309,7 +313,6 @@ def get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=8, smoo
         Spherical harmonics coefficients at every voxel. The actual number of
         coeffs depends on `sh_order`.
     """
-    bvals = np.asarray(bvals)
     bvecs = np.asarray(bvecs)
     dwi_weights = dwi.astype("float32")
 
@@ -317,7 +320,7 @@ def get_spherical_harmonics_coefficients(dwi, b0, bvals, bvecs, sh_order=8, smoo
     dwi_weights = normalize_dwi(dwi_weights, b0)
 
     # Assuming all directions lie on the hemisphere.
-    raw_sphere = HemiSphere(xyz=bvecs) ### CHANGED 11/09/2018 FROM HEMISPHERE TO SPHERE AS OUR HCP DATA DOESNT JUST HAVE GRADIENTS ON A SPHERE
+    raw_sphere = Sphere(xyz=bvecs)
 
     # Fit SH to signal
     sph_harm_basis = sph_harm_lookup.get('mrtrix')
@@ -351,6 +354,18 @@ def convertIntoSphericalCoordsAndNormalize(train_prevDirection, train_nextDirect
     train_prevDirection_sph[:,1] = (train_prevDirection_sph[:,1] + np.pi) / (2 * np.pi)
     return train_prevDirection_sph, train_nextDirection_sph
 
+def transformISMRMDatsetToHCPCoordinates(dwi):
+    I = np.eye(4)
+    I[1,1] = -1
+    I[1,3] = dwi.shape[1]
+    dx,dy,dz,dw = dwi.shape
+    dwiT = dwi.copy()
+    print(str(I))
+    for i in range(dw):
+        dwiT[:,:,:,i] = dipy.align.reslice.affine_transform(dwi[:,:,:,i], I)
+        
+    return dwiT,I
+
 
 def loadISMRMData(path, resliceToHCPDimensions=True, denoiseData=False):
     '''
@@ -361,9 +376,11 @@ def loadISMRMData(path, resliceToHCPDimensions=True, denoiseData=False):
     
     img = nb.load(path + '/Diffusion.nii.gz')
     dwi = img.get_data()
-    #dwi = dwi[:,::-1,:,:] # some orientation as HCP
+    print(dwi.shape)
+    
+    #dwi,I = transformISMRMDatsetToHCPCoordinates(dwi)
     aff = img.affine
-    #aff[2,2] = -1 * aff[2,2]
+    #aff = I @ aff
     
     if(denoiseData):
         print("Denoising")
@@ -380,7 +397,7 @@ def loadISMRMData(path, resliceToHCPDimensions=True, denoiseData=False):
     img = nb.load(path + '/T1.nii.gz')
     t1 = img.get_data()
     if(resliceToHCPDimensions):
-        print("Reslicing")
+        print("Reslicing to 1.25 mm^3")
         new_zooms = (1.25, 1.25, 1.25) # similar to HCP
         dwi, aff = reslice(dwi, aff, zooms, new_zooms)
     
@@ -581,6 +598,30 @@ def visStreamlines(streamlines, volume=None, vol_slice_idx = 40, vol_slice_idx2 
         window.show(r)
     else:
         print('we need VTK for proper visualisation of our fibres.')
+        
+        
+def curvatureOfStreamlineExceedsThreshold(sl, theta):
+    max_theta = np.deg2rad(theta)
+
+    ls = sl[2:,:] - sl[1:-1,:]
+    bls = sl[1:-1, :] - sl[0:-2,:]
+
+    lsn = np.sqrt(np.sum(ls ** 2, axis = 1))
+    ls = ls / lsn[:,None]
+
+    blsn = np.sqrt(np.sum(bls ** 2, axis = 1))
+    bls = bls / blsn[:,None]
+
+    angles2 = np.arccos(np.sum(np.multiply(ls, bls), axis = 1))
+    return np.max(angles2) > max_theta
+        
+
+def filterStreamlinesByCurvature(streamlines, maximumCurvature = 20):
+    '''
+    removes streamlines whose curvature is larger than maximumCurvature (in degree)
+    '''
+    return [x for x in streamlines if curvatureOfStreamlineExceedsThreshold(x, maximumCurvature) == False]
+        
 
         
 def filterStreamlinesByLength(streamlines, minimumLength = 80):
@@ -588,6 +629,13 @@ def filterStreamlinesByLength(streamlines, minimumLength = 80):
     removes streamlines that are shorter than minimumLength (in mm)
     '''
     return [x for x in streamlines if metrics.length(x) > minimumLength]
+
+
+def filterStreamlinesByMaxLength(streamlines, maxLength = 200):
+    '''
+    removes streamlines that are shorter than minimumLength (in mm)
+    '''
+    return [x for x in streamlines if metrics.length(x) < maxLength]
 
 
 def _getCoordinateGrid(noX,noY,noZ,coordinateScaling):
@@ -692,6 +740,76 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, 
 
     print("-> " + str(ctr))
     return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint
+
+
+def generateTrainingData_fstr(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1, unitTension = True):
+    '''
+    
+    '''
+    sfa = np.asarray(streamlines)
+    dx,dy,dz,dw = dwi.shape
+    noNeighbours = 2*noCrossings + 1
+    sl_pos = sfa[0]
+    noStreamlines = len(streamlines)
+    
+    #dwi_at_curPosition = dwi_tools.interpolateDWIVolume(dwi, curPosition_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ)
+    
+    # Build kd-tree of streamline positions. This significantly decreases subsequent lookup times.
+    for streamlineIndex in range(1,noStreamlines):
+        lengthStreamline = len(sfa[streamlineIndex])
+        sl_pos = np.concatenate([sl_pos, sfa[streamlineIndex][0:lengthStreamline]], axis=0) # dont store absolute value but relative displacement
+    
+    #kdt = KDTree(sl_pos)
+    
+    print('Processing streamlines')
+   
+    # define spacing of the 3D grid
+    x_,y_,z_ = _getCoordinateGrid(noX,noY,noZ,coordinateScaling)
+    
+    # initialize our supervised training data
+    #directionsToAdjacentStreamlines = np.zeros([len(sl_pos),2*noCrossings,3]) # likely next streamline directions
+    directionToNextStreamlinePoint = np.zeros([len(sl_pos),3]) # next direction
+    directionToPreviousStreamlinePoint = np.zeros([len(sl_pos),3]) # previous direction
+    interpolatedDWISubvolume = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
+    interpolatedDWISubvolumePast = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
+    
+    # projections
+    aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
+    M = aff_ras_ijk[:3, :3]
+    abc = aff_ras_ijk[:3, 3]
+    abc = abc[:,None]
+    
+    ctr = 0
+    for streamlineIndex in range(0,noStreamlines):
+        if((streamlineIndex % 100) == 0):
+                print(str(streamlineIndex) + "/" + str(noStreamlines))
+                
+        streamlinevec = streamlines[streamlineIndex]
+        noPoints = len(streamlinevec)
+        streamlinevec_ijk = (M.dot(streamlinevec.T) + abc).T
+        
+        streamlinevec_all_next = streamlines[streamlineIndex][1:]
+        
+        
+        
+        interp_slv_ijk = interpolateDWIVolume(dwi,streamlinevec_ijk, noX = noX, noY = noY, noZ = noZ,x_ = x_,y_ = y_,z_ = z_)
+        dNextAll = np.concatenate(  (streamlinevec_all_next - streamlinevec[0:-1,], np.array([[0,0,0]])))
+        dPrevAll = np.concatenate( (np.array([[0,0,0]]), -1 * dNextAll[0:-1,]) )
+        
+        streamlinevecPast_ijk = (M.dot(streamlinevec.T) + abc).T
+        
+        interpolatedDWISubvolume[ctr:ctr+noPoints,] = interp_slv_ijk
+        interpolatedDWISubvolumePast[ctr+1:ctr+noPoints,] = interp_slv_ijk[0:-1,]
+        directionToNextStreamlinePoint[ctr:ctr+noPoints,] = dNextAll
+        directionToPreviousStreamlinePoint[ctr:ctr+noPoints,] = dPrevAll
+        ctr += noPoints
+        
+    if(unitTension):
+        directionToNextStreamlinePoint = np.nan_to_num(directionToNextStreamlinePoint // np.sqrt(np.sum(directionToNextStreamlinePoint ** 2, axis = 1))) # unit vector   
+        directionToPreviousStreamlinePoint = np.nan_to_num(directionToPreviousStreamlinePoint // np.sqrt(np.sum(directionToPreviousStreamlinePoint ** 2, axis = 1))) # unit vector
+
+    print("-> " + str(ctr))
+    return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint, interpolatedDWISubvolumePast
 
 
 def generate2DUnrolledTrainingData(streamlines, dwi, affine, resamplingSphere, coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 0.6):
