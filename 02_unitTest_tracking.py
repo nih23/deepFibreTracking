@@ -59,35 +59,68 @@ importlib.reload(nn_helper)
 import src.tracking as tracking
 import tensorflow as tf
 from src.nn_helper import swish, squared_cosine_proximity_2
+from src.SelectiveDropout import SelectiveDropout
+
+import os
 
 def main():
-    
-    sh_order = 4
-    b_value = 1000
+    fa_threshold = 0.15
+#    fa_threshold = 0.2
+    sh_order = 8
+#    b_value = 3000
     stepWidth = 0.6
+    minimumStreamlineLength = 50 # mm
     
     coordinateScaling = 1
     useDTIPeakDirection = True
     useSphericalHarmonics = True
     
-    pCaseID = '100307'
-    pModel = 'results/train_OLDsh4_step0.6_wholeBrain_b1k_csd_1x1x1/models/doubleIn_noInputRepetition_mlp_doubleIn_single_sqCos2_wb_dx_1_dy_1_dz_1_dd_15_ReLU_feat_512_depth_3_output_3_lr_0.0001_dropout_1_bn_1_pt_0_467--0.977036.h5'
-    pModel = 'results/train_OLDsh4_step0.6_wholeBrain_b3000_2_csd_1x1x1/models/doubleIn_noInputRepetition_mlp_single_sqCos2_wb_dx_1_dy_1_dz_1_dd_15_ReLU_feat_512_depth_3_output_3_lr_0.0001_dropout_1_bn_0_pt_0_899--0.926069.h5'
-    pResult = pModel.replace('.h5','').replace('/models/','_') + '-prediction'
+    pCaseID = 'HCP/100408'
+    pCaseID = 'HCP/100307'
     
-    tracker = load_model(pModel , custom_objects={'tf':tf, 'swish':Activation(swish), 'squared_cosine_proximity': squared_cosine_proximity_2, 'squared_cosine_proximity_2': squared_cosine_proximity_2})
-    useBitracker = True
+    pModel = 'results/train_oldSH8_step0.6_wholeBrain_b3000_2_csd_1x1x1/models/mlp_doubleIn_single_sqCos2_wb_dx_1_dy_1_dz_1_dd_45_ReLU_feat_2048_depth_3_output_3_lr_0.0001_dropout_1_bn_0_pt_0_233--0.988976.h5'
+    
 
+    
+    pResult = pModel.replace('.h5','').replace('/models/','/tracking/') + '.vtk'
+    
+
+    os.makedirs(pModel.replace('.h5','').replace('/models/','/tracking/'), exist_ok=True)
+    
+    tracker = load_model(pModel , custom_objects={'tf':tf, 'swish':Activation(swish), 'SelectiveDropout': SelectiveDropout, 'squared_cosine_proximity_2': squared_cosine_proximity_2})
+    
+    tracker.summary()
+    
+    useBitracker = True
+    useBayesianTracker = False
+    use2DProjection = False
+    
+    if(pModel.find("cnn_special")>=0):
+        use2DProjection = True
+
+    
+    if(pModel.find("b1000")>=0):
+        b_value = 1000
+    
+    if(pModel.find("b3000")>=0):
+        b_value = 3000
+#    if(pModel.find("single_bayesian")>=0):
+#        useBayesianTracker = True
+    
     if(pModel.find("mlp_single")>=0):
-       useBitracker = False
-   
-    noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)
-    if(useBitracker): 
-       noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)[0]
-    print('Loaded model with  (dx %d, dy %d, dz %d) and %d channels' % (noX, noY, noZ, noC))
+        useBitracker = False
+
+    if(useBitracker and not use2DProjection): 
+        noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)[0]
+    elif (not useBitracker and not use2DProjection):
+        noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)
+    else:
+        noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)[0]
+        noZ = 1
+        useSphericalHarmonics = False
 
     # load DWI data
-    print('Importing HCP data')
+    print('Loading dataset %s at b=%d' % (pCaseID, b_value))
     bvals,bvecs,gtab,dwi,aff,t1,binarymask = dwi_tools.loadHCPData('data/%s' % (pCaseID))
     dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(b_value, bvals, bvecs, dwi)
     b0_idx = bvals < 10
@@ -99,12 +132,18 @@ def main():
     bvecs_singleShell = np.concatenate((bvecs_subset, bvecs[b0_idx,]), axis=0)
     gtab_singleShell = gradient_table(bvals=bvals_singleShell, bvecs=bvecs_singleShell, b0_threshold = 10)
 
-    tracking_data = dwi_singleShell_norm
+    # resampling dataset
+    print('Resampling to 100 directions on repulsion100')
+    dwi_singleShell_ressampled, resamplingSphere = dwi_tools.resample_dwi(dwi_subset, b0, bvals_subset, bvecs_subset, sh_order=8, smooth=0, mean_centering=False)
+    
+    # set data to use in tracking
+    tracking_data = dwi_singleShell_ressampled
 
     if(useSphericalHarmonics):
         print('Spherical Harmonics (ours)')
         start_time = time.time()
-        tracking_data = dwi_tools.get_spherical_harmonics_coefficients(bvals=bvals_singleShell,bvecs=bvecs_singleShell,sh_order=sh_order, dwi=dwi_singleShell_norm, b0 = 0)
+        #tracking_data = dwi_tools.get_spherical_harmonics_coefficients(bvals=bvals_singleShell,bvecs=bvecs_singleShell,sh_order=sh_order, dwi=dwi_singleShell_norm, b0 = 0)
+        tracking_data = dwi_tools.get_spherical_harmonics_coefficients(bvals=bvals_subset,bvecs=bvecs_subset,sh_order=sh_order, dwi=dwi_subset, b0 = b0)
         runtime = time.time() - start_time
         print('Runtime ' + str(runtime) + 's')
         #CSD/DIPY APPROACH
@@ -114,41 +153,53 @@ def main():
         #tracking_data = csd_fit.shm_coeff
 
 
-    # DTI PEAK DIRECTION INPUT
-    if(useDTIPeakDirection):
-        print('DTI Peak Direction/odf estimation')
-        start_time = time.time()
-        dti_model = dti.TensorModel(gtab_singleShell, fit_method='LS')
-        dti_fit = dti_model.fit(dwi_singleShell_norm)
-        runtime = time.time() - start_time
-        print('Runtime ' + str(runtime) + 's')
-
-    # corpus callosum seed mask
-    ccmask, options = nrrd.read('data/100307/100307-ccSegmentation.nrrd')
-    ccseeds = seeds_from_mask(ccmask, affine=aff)
-    # whole brain seeds
-    wholebrainseeds = seeds_from_mask(binarymask, affine=aff)
-   
-    seedsToUse = wholebrainseeds 
-    
+    # DTI 
+    print('DTI fa estimation')
     start_time = time.time()
-    streamlines_mlp_simple_sc,vNorms = tracking.startWithStopping(mask=binarymask,fa=dti_fit.fa, bitracker=useBitracker, inverseDirection=False, seeds=ccseeds, data=tracking_data, affine=aff, model=tracker, noX=noX, noY=noY, noZ=noZ, dw = noC, stepWidth = 0.6, coordinateScaling = coordinateScaling)
+    dti_model = dti.TensorModel(gtab_singleShell, fit_method='LS')
+    dti_fit = dti_model.fit(dwi_singleShell_norm)
+    runtime = time.time() - start_time
+    print('Runtime ' + str(runtime) + 's')
+
+    print("Tractography")
+    wholebrainseeds = seeds_from_mask(binarymask, affine=aff)
+    rndseeds = random_seeds_from_mask(binarymask, seeds_count=300, seed_count_per_voxel=False, affine=aff)
+    #seedsToUse = wholebrainseeds 
+    seedsToUse = rndseeds 
+    
+    nn_helper.setAllDropoutLayers(tracker, useBayesianTracker)
+    nn_helper.printDropoutLayersState(tracker)
+    
+   
+    start_time = time.time()
+    if(use2DProjection):
+        streamlines_mlp_simple_sc,vNorms = tracking.startWithStoppingAnd2DProjection(printProgress = True, resamplingSphere = resamplingSphere, bayesianModel = useBayesianTracker, fa_threshold = fa_threshold, mask=binarymask,fa=dti_fit.fa, bitracker=useBitracker, inverseDirection=False, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, stepWidth = stepWidth)
+    else:
+        streamlines_mlp_simple_sc,vNorms = tracking.startWithStopping(printProgress = True, bayesianModel = useBayesianTracker, fa_threshold = fa_threshold, mask=binarymask,fa=dti_fit.fa, bitracker=useBitracker, inverseDirection=False, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, noX=noX, noY=noY, noZ=noZ, dw = noC, stepWidth = stepWidth, coordinateScaling = coordinateScaling)
     runtime = time.time() - start_time
     print('Runtime ' + str(runtime) + ' s ')
 
-    start_time = time.time()
-    streamlines_mlp_simple_sc_2,vNorms2 = tracking.startWithStopping(mask=binarymask,fa=dti_fit.fa, bitracker=useBitracker, inverseDirection=True, seeds=ccseeds, data=tracking_data, affine=aff, model=tracker, noX=noX, noY=noY, noZ=noZ, dw = noC, stepWidth = 0.6, coordinateScaling = coordinateScaling)
+    #start_time = time.time()
+    if(use2DProjection):
+        streamlines_mlp_simple_sc_2,vNorms_2 = tracking.startWithStoppingAnd2DProjection(printProgress = True, resamplingSphere = resamplingSphere, bayesianModel = useBayesianTracker, fa_threshold = fa_threshold, mask=binarymask,fa=dti_fit.fa, bitracker=useBitracker, inverseDirection=True, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, stepWidth = stepWidth)
+    else:
+        streamlines_mlp_simple_sc_2,vNorms_2 = tracking.startWithStopping(printProgress = True, bayesianModel = useBayesianTracker, fa_threshold = fa_threshold, mask=binarymask,fa=dti_fit.fa, bitracker=useBitracker, inverseDirection=True, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, noX=noX, noY=noY, noZ=noZ, dw = noC, stepWidth = stepWidth, coordinateScaling = coordinateScaling)
     runtime = time.time() - start_time
     print('Runtime ' + str(runtime) + ' s ')
 
     # join left and right streamlines
+    print("Postprocessing streamlines and removing streamlines shorter than " + str(minimumStreamlineLength) + " mm")
     streamlines_joined_sc = tracking.joinTwoAlignedStreamlineLists(streamlines_mlp_simple_sc,streamlines_mlp_simple_sc_2)
+       
+    streamlines_joined_sc = dwi_tools.filterStreamlinesByLength(streamlines_joined_sc, minimumStreamlineLength)
 
-    streamlines_joined_sc_imageCS = transform_streamlines(streamlines_joined_sc, np.linalg.inv(aff))
-
-    dwi_tools.saveVTKstreamlines(streamlines_joined_sc_imageCS,pResult + '.vtk')
+    print("Writing the data to disk")
+    dwi_tools.saveVTKstreamlines(streamlines_joined_sc,pResult)
     
-    #dwi_tools.visStreamlines(streamlines_joined_sc_imageCS,t1, vol_slice_idx = 75)
+    streamlines_joined_sc_imageCS = transform_streamlines(streamlines_joined_sc, np.linalg.inv(aff))
+    dwi_tools.visStreamlines(streamlines_joined_sc_imageCS, t1, vol_slice_idx = 75)
+    
+    
 
 if __name__ == "__main__":
     main()
