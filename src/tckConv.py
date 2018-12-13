@@ -1,5 +1,5 @@
 from dipy.io.streamline import load_trk
-import dwi_tools as dwi_tools
+import src.dwi_tools as dwi_tools
 import argparse
 from dipy.tracking.streamline import Streamlines
 
