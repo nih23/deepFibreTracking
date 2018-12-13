@@ -26,6 +26,7 @@ import dipy
 from dipy.denoise.localpca import localpca
 from dipy.denoise.pca_noise_estimate import pca_noise_estimate
 
+import math
 
 import vtk
 from scipy.interpolate import griddata
@@ -73,7 +74,7 @@ def saveVTKstreamlines(streamlines, pStreamlines):
     ptCtr = 0
        
     for i in range(0,len(streamlines)):
-        if((i % 1000) == 0):
+        if((i % 10000) == 0):
                 print(str(i) + "/" + str(len(streamlines)))
         
         
@@ -88,6 +89,8 @@ def saveVTKstreamlines(streamlines, pStreamlines):
             
         lines.InsertNextCell(line)
                    
+    print(str(i) + "/" + str(len(streamlines)))
+            
     polydata.SetLines(lines)
     polydata.SetPoints(points)
     
@@ -113,7 +116,7 @@ def saveVTKstreamlinesWithPointdata(streamlines, pStreamlines, pointdata, normal
     
        
     for i in range(0,len(streamlines)):
-        if((i % 1000) == 0):
+        if((i % 10000) == 0):
                 print(str(i) + "/" + str(len(streamlines)))
         
         
@@ -367,6 +370,45 @@ def transformISMRMDatsetToHCPCoordinates(dwi):
     return dwiT,I
 
 
+def loadISMRMDataArtifactFree(path, resliceToHCPDimensions=True, denoiseData=False):
+    '''
+    import HCP dataset
+    '''
+    print('loading ISMRM artifact free data')
+    bvals, bvecs = read_bvals_bvecs(path + '/NoArtifacts_Relaxation.bvals', path + '/NoArtifacts_Relaxation.bvecs')
+    gtab = gradient_table(bvals=bvals, bvecs=bvecs)
+    
+    img = nb.load(path + '/NoArtifacts_Relaxation.nii.gz')
+    dwi = img.get_data()
+    print(dwi.shape)
+    
+    #dwi,I = transformISMRMDatsetToHCPCoordinates(dwi)
+    aff = img.affine
+    #aff = I @ aff
+    
+    if(denoiseData):
+        print("Denoising")
+        t = time.time()
+        sigma = pca_noise_estimate(dwi, gtab, correct_bias=True, smooth=3)
+        print("Sigma estimation time", time.time() - t)
+
+        dwi = localpca(dwi, sigma=sigma, patch_radius=2)
+
+        print("Time taken for local PCA (slow)", time.time() - t)
+    
+    
+    zooms = img.header.get_zooms()[:3]
+    img = nb.load(path + '/T1.nii.gz')
+    t1 = img.get_data()
+    if(resliceToHCPDimensions):
+        print("Reslicing to 1.25 mm^3")
+        new_zooms = (1.25, 1.25, 1.25) # similar to HCP
+        dwi, aff = reslice(dwi, aff, zooms, new_zooms)
+    
+    return bvals,bvecs,gtab,dwi,aff,t1
+
+
+
 def loadISMRMData(path, resliceToHCPDimensions=True, denoiseData=False):
     '''
     import HCP dataset
@@ -374,7 +416,9 @@ def loadISMRMData(path, resliceToHCPDimensions=True, denoiseData=False):
     bvals, bvecs = read_bvals_bvecs(path + '/Diffusion.bvals', path + '/Diffusion.bvecs')
     gtab = gradient_table(bvals=bvals, bvecs=bvecs)
     
-    img = nb.load(path + '/Diffusion.nii.gz')
+    #img = nb.load(path + '/Diffusion.nii.gz') # raw data
+    img = nb.load(path + '/ismrm_denoised_preproc_mrtrix.nii.gz') # denoised and motion corrected data
+    print('Loading ismrm_denoised_preproc_mrtrix.nii.gz')
     dwi = img.get_data()
     print(dwi.shape)
     
@@ -612,15 +656,48 @@ def curvatureOfStreamlineExceedsThreshold(sl, theta):
     blsn = np.sqrt(np.sum(bls ** 2, axis = 1))
     bls = bls / blsn[:,None]
 
+    #angle1 = np.sum(np.multiply(ls, bls), axis = 1)
+    #maxAngle = np.arccos(np.max(abs(angle1)))
+    
     angles2 = np.arccos(np.sum(np.multiply(ls, bls), axis = 1))
-    return np.max(angles2) > max_theta
+    
+    maxAngle = np.max(abs(angles2))
+    
+    #if(maxAngle > np.pi):
+    #    maxAngle -= np.pi
         
+    #if(maxAngle < -np.pi):
+     #   maxAngle += np.pi
+        
+    #maxAngle = np.arccos(maxAngle)
+    
+    return maxAngle > max_theta or math.isnan(np.max(angles2))
+        
+
+def getMaxCurvatureOfStreamline(sl):
+    ls = sl[2:,:] - sl[1:-1,:]
+    bls = sl[1:-1, :] - sl[0:-2,:]
+
+    lsn = np.sqrt(np.sum(ls ** 2, axis = 1))
+    ls = ls / lsn[:,None]
+
+    blsn = np.sqrt(np.sum(bls ** 2, axis = 1))
+    bls = bls / blsn[:,None]
+
+    angles2 = np.arccos(np.sum(np.multiply(ls, bls), axis = 1))
+    return np.max(angles2)
+    
+    
+def getCurvaturesForEachStreamline(streamlines):
+    
+    return [getMaxCurvatureOfStreamline(x) for x in streamlines]
 
 def filterStreamlinesByCurvature(streamlines, maximumCurvature = 20):
     '''
     removes streamlines whose curvature is larger than maximumCurvature (in degree)
     '''
-    return [x for x in streamlines if curvatureOfStreamlineExceedsThreshold(x, maximumCurvature) == False]
+       
+    return [ x for x in streamlines if curvatureOfStreamlineExceedsThreshold(x, maximumCurvature) == False]
         
 
         
@@ -662,7 +739,8 @@ def _getCoordinateGrid(noX,noY,noZ,coordinateScaling):
     
     return x_,y_,z_
 
-def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1, unitTension = True):
+
+def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, noY=1,noZ=1,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1, unitTension = True):
     '''
     
     '''
@@ -679,89 +757,7 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, 
     
     #kdt = KDTree(sl_pos)
     
-    print('Processing streamlines')
-   
-    # define spacing of the 3D grid
-    x_,y_,z_ = _getCoordinateGrid(noX,noY,noZ,coordinateScaling)
-    
-    # initialize our supervised training data
-    #directionsToAdjacentStreamlines = np.zeros([len(sl_pos),2*noCrossings,3]) # likely next streamline directions
-    directionToNextStreamlinePoint = np.zeros([len(sl_pos),3]) # next direction
-    directionToPreviousStreamlinePoint = np.zeros([len(sl_pos),3]) # previous direction
-    interpolatedDWISubvolume = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
-    
-    # projections
-    aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
-    M = aff_ras_ijk[:3, :3]
-    abc = aff_ras_ijk[:3, 3]
-    abc = abc[:,None]
-    
-    ctr = 0
-    for streamlineIndex in range(0,noStreamlines):
-        if((streamlineIndex % 100) == 0):
-                print(str(streamlineIndex) + "/" + str(noStreamlines))
-        lengthStreamline = len(streamlines[streamlineIndex])
-        for streamlinePoint in range(0,lengthStreamline,step):
-
-            streamlinevec = streamlines[streamlineIndex][streamlinePoint]
-            streamlinevec_next = streamlines[streamlineIndex][min(streamlinePoint+1,lengthStreamline-1)]
-            streamlinevec_prev = streamlines[streamlineIndex][max(streamlinePoint-1,0)]
-
-
-            #streamlinevec_next = sl_pos[min((streamlineIndex+1,len(sl_pos)-1))]
-            #streamlinevec_prev = sl_p os[max((streamlineIndex-1,0))]
-
-            ### COMMENTED OUT AS ITS CURRENTLY NOT IN USE AND SLOWS DOWN DATASET CREATION
-            #d = np.sum( (streamlinevec - streamlinevec_next)**2)
-            #i = kdt.query_ball_point(streamlinevec,distToNeighbours) # acquire neighbours within a certain distance
-            #i = i[0:2*noCrossings] # limit length to the nearest neighbours
-            #n_slv = kdt.data[i] - streamlinevec # direction to nearest streamline position
-            #n_slv = np.unique(n_slv, axis = 0) # remove duplicats from our search query
-            #noPoints,dimPoints = n_slv.shape
-            #directionsToAdjacentStreamlines[streamlineIndex,0:noPoints,] = n_slv
-
-            directionToNextStreamlinePoint[ctr,] = streamlinevec_next - streamlinevec
-            if(unitTension):
-                directionToNextStreamlinePoint[ctr,] = np.nan_to_num(directionToNextStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToNextStreamlinePoint[ctr,] ** 2))) # unit vector
-
-            directionToPreviousStreamlinePoint[ctr,] = streamlinevec_prev - streamlinevec
-            
-            if(unitTension):
-                directionToPreviousStreamlinePoint[ctr,] = np.nan_to_num(directionToPreviousStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToPreviousStreamlinePoint[ctr,] ** 2))) # unit vector
-
-            #DEBUG project from RAS to image coordinate system
-            curStreamlinePos_ras = streamlinevec
-            curStreamlinePos_ras = curStreamlinePos_ras[:,None]
-            curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
-
-            interpolatedDWISubvolume[ctr,] = interpolatePartialDWIVolume(dwi,curStreamlinePos_ijk, noX = noX, noY = noY, noZ = noZ,x_ = x_,y_ = y_,z_ = z_)
-            
-            ctr += 1
-
-    print("-> " + str(ctr))
-    return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint
-
-
-def generateTrainingData_fstr(streamlines, dwi, affine, rec_level_sphere = 3, noX=3, noY=3,noZ=3,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1, unitTension = True):
-    '''
-    
-    '''
-    sfa = np.asarray(streamlines)
-    dx,dy,dz,dw = dwi.shape
-    noNeighbours = 2*noCrossings + 1
-    sl_pos = sfa[0]
-    noStreamlines = len(streamlines)
-    
-    #dwi_at_curPosition = dwi_tools.interpolateDWIVolume(dwi, curPosition_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ)
-    
-    # Build kd-tree of streamline positions. This significantly decreases subsequent lookup times.
-    for streamlineIndex in range(1,noStreamlines):
-        lengthStreamline = len(sfa[streamlineIndex])
-        sl_pos = np.concatenate([sl_pos, sfa[streamlineIndex][0:lengthStreamline]], axis=0) # dont store absolute value but relative displacement
-    
-    #kdt = KDTree(sl_pos)
-    
-    print('Processing streamlines')
+    #print('Processing streamlines')
    
     # define spacing of the 3D grid
     x_,y_,z_ = _getCoordinateGrid(noX,noY,noZ,coordinateScaling)
@@ -772,6 +768,7 @@ def generateTrainingData_fstr(streamlines, dwi, affine, rec_level_sphere = 3, no
     directionToPreviousStreamlinePoint = np.zeros([len(sl_pos),3]) # previous direction
     interpolatedDWISubvolume = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
     interpolatedDWISubvolumePast = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
+#    interpolatedDWISubvolumePastAggregated = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
     
     # projections
     aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
@@ -780,9 +777,13 @@ def generateTrainingData_fstr(streamlines, dwi, affine, rec_level_sphere = 3, no
     abc = abc[:,None]
     
     ctr = 0
+    
+    slOffset =  np.zeros([len(sl_pos)])
+    
     for streamlineIndex in range(0,noStreamlines):
-        if((streamlineIndex % 100) == 0):
-                print(str(streamlineIndex) + "/" + str(noStreamlines))
+        slOffset[streamlineIndex] = ctr
+        if(((streamlineIndex) % 10000) == 0):
+            print(str(streamlineIndex) + "/" + str(noStreamlines))
                 
         streamlinevec = streamlines[streamlineIndex]
         noPoints = len(streamlinevec)
@@ -802,88 +803,16 @@ def generateTrainingData_fstr(streamlines, dwi, affine, rec_level_sphere = 3, no
         interpolatedDWISubvolumePast[ctr+1:ctr+noPoints,] = interp_slv_ijk[0:-1,]
         directionToNextStreamlinePoint[ctr:ctr+noPoints,] = dNextAll
         directionToPreviousStreamlinePoint[ctr:ctr+noPoints,] = dPrevAll
+        
+#        interpolatedDWISubvolumePastAggregated[ctr,] = interp_slv_ijk[0,]
+        
+#        for j in range(1,noPoints):
+#            interpolatedDWISubvolumePastAggregated[ctr+j,] = np.mean(interp_slv_ijk[0:j,], axis = 0)
+        
         ctr += noPoints
         
     if(unitTension):
         directionToNextStreamlinePoint = np.nan_to_num(directionToNextStreamlinePoint // np.sqrt(np.sum(directionToNextStreamlinePoint ** 2, axis = 1))) # unit vector   
         directionToPreviousStreamlinePoint = np.nan_to_num(directionToPreviousStreamlinePoint // np.sqrt(np.sum(directionToPreviousStreamlinePoint ** 2, axis = 1))) # unit vector
 
-    print("-> " + str(ctr))
     return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint, interpolatedDWISubvolumePast
-
-
-def generate2DUnrolledTrainingData(streamlines, dwi, affine, resamplingSphere, coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 0.6):
-    '''
-    
-    '''
-    sfa = np.asarray(streamlines)
-    dx,dy,dz,dw = dwi.shape
-    noNeighbours = 2*noCrossings + 1
-    sl_pos = sfa[0]
-    noStreamlines = len(streamlines)
-    
-    # Build kd-tree of streamline positions. This significantly decreases subsequent lookup times.
-    for streamlineIndex in range(1,noStreamlines):
-        lengthStreamline = len(sfa[streamlineIndex])
-        sl_pos = np.concatenate([sl_pos, sfa[streamlineIndex][0:lengthStreamline]], axis=0) # dont store absolute value but relative displacement
-    
-    #kdt = KDTree(sl_pos)
-    
-    print('Processing streamlines')
-   
-    # define spacing of the 3D grid
-    x_,y_,z_ = _getCoordinateGrid(1,1,1,coordinateScaling)
-    
-    # initialize our supervised training data
-    #directionsToAdjacentStreamlines = np.zeros([len(sl_pos),2*noCrossings,3]) # likely next streamline directions
-    directionToNextStreamlinePoint = np.zeros([len(sl_pos),3]) # next direction
-    directionToPreviousStreamlinePoint = np.zeros([len(sl_pos),3]) # previous direction
-    interpolatedDWISubvolume = np.zeros([len(sl_pos),10,10]) # interpolated dwi dataset for each streamline position
-    
-    # projections
-    aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
-    M = aff_ras_ijk[:3, :3]
-    abc = aff_ras_ijk[:3, 3]
-    abc = abc[:,None]
-    
-    ctr = 0
-    for streamlineIndex in range(0,noStreamlines):
-        if((streamlineIndex % 100) == 0):
-                print(str(streamlineIndex) + "/" + str(noStreamlines))
-        lengthStreamline = len(streamlines[streamlineIndex])
-        for streamlinePoint in range(0,lengthStreamline,step):
-
-            streamlinevec = streamlines[streamlineIndex][streamlinePoint]
-            streamlinevec_next = streamlines[streamlineIndex][min(streamlinePoint+1,lengthStreamline-1)]
-            streamlinevec_prev = streamlines[streamlineIndex][max(streamlinePoint-1,0)]
-
-
-            #streamlinevec_next = sl_pos[min((streamlineIndex+1,len(sl_pos)-1))]
-            #streamlinevec_prev = sl_pos[max((streamlineIndex-1,0))]
-
-            ### COMMENTED OUT AS ITS CURRENTLY NOT IN USE AND SLOWS DOWN DATASET CREATION
-            #d = np.sum( (streamlinevec - streamlinevec_next)**2)
-            #i = kdt.query_ball_point(streamlinevec,distToNeighbours) # acquire neighbours within a certain distance
-            #i = i[0:2*noCrossings] # limit length to the nearest neighbours
-            #n_slv = kdt.data[i] - streamlinevec # direction to nearest streamline position
-            #n_slv = np.unique(n_slv, axis = 0) # remove duplicats from our search query
-            #noPoints,dimPoints = n_slv.shape
-            #directionsToAdjacentStreamlines[streamlineIndex,0:noPoints,] = n_slv
-
-            directionToNextStreamlinePoint[ctr,] = streamlinevec_next - streamlinevec
-            directionToNextStreamlinePoint[ctr,] = np.nan_to_num(directionToNextStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToNextStreamlinePoint[ctr,] ** 2))) # unit vector
-
-            directionToPreviousStreamlinePoint[ctr,] = streamlinevec_prev - streamlinevec
-            directionToPreviousStreamlinePoint[ctr,] = np.nan_to_num(directionToPreviousStreamlinePoint[ctr,] / np.sqrt(np.sum(directionToPreviousStreamlinePoint[ctr,] ** 2))) # unit vector
-
-            #DEBUG project from RAS to image coordinate system
-            curStreamlinePos_ras = streamlinevec
-            curStreamlinePos_ras = curStreamlinePos_ras[:,None]
-            curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras) + abc).T
-
-            interpolatedDWISubvolume[ctr,] = np.reshape(interpolatePartialDWIVolume(dwi,curStreamlinePos_ijk, noX = 1, noY = 1, noZ = 1,x_ = x_,y_ = y_,z_ = z_), [10,10])
-            
-            ctr += 1
-
-    print("-> " + str(ctr))
-    return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint
