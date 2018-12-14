@@ -13,7 +13,7 @@ from dipy.tracking.streamline import Streamlines, length
 from dipy.tracking import metrics
 from dipy.reconst.shm import sph_harm_lookup, smooth_pinv
 
-from joblib import Parallel, delayed
+#from joblib import Parallel, delayed
 import multiprocessing
 import time
 import nrrd
@@ -719,13 +719,13 @@ def _getCoordinateGrid(noX,noY,noZ,coordinateScaling):
     '''
     generate a grid of provided spatial extent which is used to interpolate data
     '''
-    x_ = coordinateScaling * np.linspace(-4., 4, noX)
-    y_ = coordinateScaling * np.linspace(-4., 4., noY)
-    z_ = coordinateScaling * np.linspace(-4., 4., noZ)
+    #x_ = coordinateScaling * np.linspace(-4., 4, noX)
+    #y_ = coordinateScaling * np.linspace(-4., 4., noY)
+    #z_ = coordinateScaling * np.linspace(-4., 4., noZ)
     
     x_ = coordinateScaling * np.linspace(-1 * noX/2, noX/2, noX)
-    y_ = coordinateScaling * np.linspace(-1 * noX/2, noY/2, noY)
-    z_ = coordinateScaling * np.linspace(-1 * noX/2, noZ/2, noZ)
+    y_ = coordinateScaling * np.linspace(-1 * noY/2, noY/2, noY)
+    z_ = coordinateScaling * np.linspace(-1 * noZ/2, noZ/2, noZ)
     
     # dirty hack ...
     if(noX == 1):
