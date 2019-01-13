@@ -776,6 +776,9 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, 
     
     slOffset =  np.zeros([len(sl_pos)])
     
+    if(rotateTrainingData):
+        print('[I] the training data is being rotated wrt. each points tangent.')
+    
     for streamlineIndex in range(0,noStreamlines):
         slOffset[streamlineIndex] = ctr
         if(((streamlineIndex) % 10000) == 0):
@@ -787,7 +790,7 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, 
         
         streamlinevec_all_next = streamlines[streamlineIndex][1:]
         
-        rotations = None
+        rot = None
         
         if(rotateTrainingData):
             # reference orientation
