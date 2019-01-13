@@ -525,32 +525,32 @@ def _spheToEuclidean(r,theta,psi):
     zz = r * np.cos(theta)
     return xx,yy,zz
 
-
-def interpolateDWIVolume(dwi, positions, x_,y_,z_, noX = 8, noY = 8, noZ = 8):
-    
+def interpolateDWIVolume(dwi, positions, x_,y_,z_, rotations = None, noX = 8, noY = 8, noZ = 8):
     szDWI = dwi.shape
     noPositions = len(positions)
-    #print('pos: ' + str(positions.shape))
     start_time = time.time()
     cvF = np.ones([noPositions*noX*noY*noZ,3])
-    #cvF = (np.vstack(np.meshgrid(x_,y_,z_)).reshape(3,-1).T + positions[0,])
-    #print('cvf: ' + str(cvF.shape))
     noElem = noX * noZ * noY
     grid = np.array(np.meshgrid(x_,y_,z_)).reshape(3,-1).T
+
     for j in range(0,noPositions):
-        coordVecs = grid + positions[j,]
-        
-        #print('coordVecs: ' + str(coordVecs.shape))
+        grid_rotated = grid
+        if(rotations is not None):
+            grid_rotated = rotateByMatrix(grid,rotations[j,])
+        coordVecs = (grid_rotated + positions[j,:,None]).T
         il = j * noElem
         ir = (j+1) * noElem 
         cvF[il:ir] = coordVecs
-        #cvF = np.concatenate([cvF, coordVecs])
+
     x = np.zeros([noPositions,noX,noY,noZ,szDWI[-1]])
     
     for i in range(0,szDWI[-1]):
         x[:,:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(dwi[:,:,:,i],cvF)[0], [noPositions,noX,noY,noZ])
         
     return x
+
+def rotateByMatrix(vectorsToRotate,rotationMatrix,rotationCenterVector = np.array([0,0,0])):\
+    return np.dot(rotationMatrix,vectorsToRotate.T - rotationCenterVector[:,None]) + rotationCenterVector[:,None]
 
 
 def interpolatePartialDWIVolume(dwi, centerPosition, x_,y_,z_, noX = 8, noY = 8, noZ = 8):
@@ -719,10 +719,6 @@ def _getCoordinateGrid(noX,noY,noZ,coordinateScaling):
     '''
     generate a grid of provided spatial extent which is used to interpolate data
     '''
-    #x_ = coordinateScaling * np.linspace(-4., 4, noX)
-    #y_ = coordinateScaling * np.linspace(-4., 4., noY)
-    #z_ = coordinateScaling * np.linspace(-4., 4., noZ)
-    
     x_ = coordinateScaling * np.linspace(-1 * noX/2, noX/2, noX)
     y_ = coordinateScaling * np.linspace(-1 * noY/2, noY/2, noY)
     z_ = coordinateScaling * np.linspace(-1 * noZ/2, noZ/2, noZ)
@@ -740,7 +736,7 @@ def _getCoordinateGrid(noX,noY,noZ,coordinateScaling):
     return x_,y_,z_
 
 
-def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, noY=1,noZ=1,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1, unitTension = True):
+def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, noY=1,noZ=1,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1, unitTension = True, rotateTrainingData = True):
     '''
     
     '''
@@ -791,9 +787,25 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, 
         
         streamlinevec_all_next = streamlines[streamlineIndex][1:]
         
+        rotations = None
         
+        if(rotateTrainingData):
+            # reference orientation
+            vv = np.array([0,1,0])
+            
+            # compute tangents
+            tangents = streamlinevec_ijk[0:-1] - streamlinevec_ijk[1:] # tangents represents the tangents starting from the 2nd streamline position
+            
+            # compute rotation matrices
+            rot = np.zeros([noPoints,3,3])
+            rot[0,:] = np.eye(3)
+
+            for k in range(noPoints-1):
+                R_2vect(rot[k+1,:],vector_orig=tangents[k,],vector_fin=vv)
+                
+        # interpolate
+        interp_slv_ijk = interpolateDWIVolume(dwi,streamlinevec_ijk, rotations=rot, noX = noX, noY = noY, noZ = noZ,x_ = x_,y_ = y_,z_ = z_)        
         
-        interp_slv_ijk = interpolateDWIVolume(dwi,streamlinevec_ijk, noX = noX, noY = noY, noZ = noZ,x_ = x_,y_ = y_,z_ = z_)
         dNextAll = np.concatenate(  (streamlinevec_all_next - streamlinevec[0:-1,], np.array([[0,0,0]])))
         dPrevAll = np.concatenate( (np.array([[0,0,0]]), -1 * dNextAll[0:-1,]) )
         
@@ -816,3 +828,56 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, 
         directionToPreviousStreamlinePoint = np.nan_to_num(directionToPreviousStreamlinePoint // np.sqrt(np.sum(directionToPreviousStreamlinePoint ** 2, axis = 1))) # unit vector
 
     return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint, interpolatedDWISubvolumePast
+
+def R_2vect(R, vector_orig, vector_fin):
+    """Calculate the rotation matrix required to rotate from one vector to another.
+    For the rotation of one vector to another, there are an infinit series of rotation matrices
+    possible.  Due to axially symmetry, the rotation axis can be any vector lying in the symmetry
+    plane between the two vectors.  Hence the axis-angle convention will be used to construct the
+    matrix with the rotation axis defined as the cross product of the two vectors.  The rotation
+    angle is the arccosine of the dot product of the two unit vectors.
+    Given a unit vector parallel to the rotation axis, w = [x, y, z] and the rotation angle a,
+    the rotation matrix R is::
+              |  1 + (1-cos(a))*(x*x-1)   -z*sin(a)+(1-cos(a))*x*y   y*sin(a)+(1-cos(a))*x*z |
+        R  =  |  z*sin(a)+(1-cos(a))*x*y   1 + (1-cos(a))*(y*y-1)   -x*sin(a)+(1-cos(a))*y*z |
+              | -y*sin(a)+(1-cos(a))*x*z   x*sin(a)+(1-cos(a))*y*z   1 + (1-cos(a))*(z*z-1)  |
+    @param R:           The 3x3 rotation matrix to update.
+    @type R:            3x3 numpy array
+    @param vector_orig: The unrotated vector defined in the reference frame.
+    @type vector_orig:  numpy array, len 3
+    @param vector_fin:  The rotated vector defined in the reference frame.
+    @type vector_fin:   numpy array, len 3
+    """
+
+    # Convert the vectors to unit vectors.
+    vector_orig = vector_orig / np.linalg.norm(vector_orig)
+    vector_fin = vector_fin / np.linalg.norm(vector_fin)
+
+    # The rotation axis (normalised).
+    axis = np.cross(vector_orig, vector_fin)
+    axis_len = np.linalg.norm(axis)
+    if axis_len != 0.0:
+        axis = axis / axis_len
+
+    # Alias the axis coordinates.
+    x = axis[0]
+    y = axis[1]
+    z = axis[2]
+
+    # The rotation angle.
+    angle = np.arccos(np.dot(vector_orig, vector_fin))
+
+    # Trig functions (only need to do this maths once!).
+    ca = np.cos(angle)
+    sa = np.sin(angle)
+
+    # Calculate the rotation matrix elements.
+    R[0,0] = 1.0 + (1.0 - ca)*(x**2 - 1.0)
+    R[0,1] = -z*sa + (1.0 - ca)*x*y
+    R[0,2] = y*sa + (1.0 - ca)*x*z
+    R[1,0] = z*sa+(1.0 - ca)*x*y
+    R[1,1] = 1.0 + (1.0 - ca)*(y**2 - 1.0)
+    R[1,2] = -x*sa+(1.0 - ca)*y*z
+    R[2,0] = -y*sa+(1.0 - ca)*x*z
+    R[2,1] = x*sa+(1.0 - ca)*y*z
+    R[2,2] = 1.0 + (1.0 - ca)*(z**2 - 1.0)

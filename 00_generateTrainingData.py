@@ -55,12 +55,15 @@ def main():
     parser.add_argument('-repr', dest='repr',default='res100', help='data representation: [raw,sph,res100,2D]: raw, spherical harmonics, resampled to 100 directions, 16x16 2D resampling (256 directions) ')
     parser.add_argument('-sh', dest='sh', type=int, default=8, help='order of spherical harmonics (if used)')
     parser.add_argument('-noStreamlines', dest='noStreamlines', default=0, type=int, help='specify if a random subset of the streamlines should be used to generate the training data')
+    parser.add_argument('--rotateTrainingData', help='rotate data wrt. tangent [default]', dest='rotateTrainingData' , action='store_true')
+    parser.add_argument('--noRotateTrainingData', help='dont rotate data', dest='rotateTrainingData' , action='store_false')
     parser.add_argument('--unitTangent', help='unit tangent', dest='unittangent' , action='store_true')
-    parser.add_argument('--nounitTangent', help='no unit tangent', dest='unittangent' , action='store_false')
+    parser.add_argument('--noUnitTangent', help='no unit tangent [default]', dest='unittangent' , action='store_false')
     parser.add_argument('--visStreamlines', help='visualize streamlines before proceeding with data generation', dest='visStreamlines' , action='store_true')
     parser.add_argument('--ISMRM2015data', help='generate training data for the ismrm 2015 dataset', dest='ISMRM2015data' , action='store_true')
-    parser.add_argument('--HCPid', default='100307', help='case id of the HCP dataset to be used')
+    parser.add_argument('--HCPid', default='100307', help='case id of the HCP dataset to be used [default: 100307]')
     
+    parser.set_defaults(rotateData=True)   
     parser.set_defaults(unittangent=False)   
     parser.set_defaults(visStreamlines=False)   
     parser.set_defaults(ISMRM2015data=False)
@@ -82,6 +85,7 @@ def main():
     visStreamlines = args.visStreamlines
     useISMRM = args.ISMRM2015data
     hcpCaseID = args.HCPid
+    rotateTrainingData = args.rotateData
     
     print('Parameters:')
     print(str(args))
@@ -146,7 +150,7 @@ def main():
     print('LocalTracking Runtime ' + str(runtime) + 's')
 
     
-    tInfo = '%s_sw%.1f_minL%d_maxL%d_fa%.2f' % (tensorModel,stepWidth,minimumStreamlineLength,maximumStreamlineLength,faThreshold)
+    tInfo = '%s_sw%.1f_minL%d_maxL%d_fa%.2f_rotateTD%d' % (tensorModel,stepWidth,minimumStreamlineLength,maximumStreamlineLength,faThreshold,rotateTrainingData)
     
     if(visStreamlines):
         dwi_tools.visStreamlines(streamlines_filtered)
@@ -177,7 +181,7 @@ def main():
     print('Generating training data... ')
 
     start_time = time.time()
-    train_DWI,train_prevDirection, train_nextDirection,_ = dwi_tools.generateTrainingData(streamlines_filtered, t_data, unitTension = unitTangent, affine=aff, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossingFibres, step = 1)
+    train_DWI,train_prevDirection, train_nextDirection,_ = dwi_tools.generateTrainingData(streamlines_filtered, t_data, unitTension = unitTangent, affine=aff, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossingFibres, step = 1, rotateTrainingData = rotateTrainingData)
     #train_DWI,train_prevDirection, train_nextDirection,_,slo,train_DWI_pastAggregated = dwi_tools.generateTrainingData(streamlines_filtered, t_data, unitTension = unitTangent, affine=aff, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossingFibres, step = 1)
     runtime = time.time() - start_time
     print('Runtime ' + str(runtime) + ' s ')
