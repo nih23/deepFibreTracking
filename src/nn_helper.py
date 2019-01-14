@@ -583,7 +583,8 @@ def get_mlp_singleOutput(inputShapeDWI, loss='mse', outputShape = 3, depth=1, fe
             layers.append(Dropout(0.5)(layers[-1]))
     
     i1 = layers[-1]
-    
+    layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
+    layers.append(activation_function(layers[-1]))
     layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
     
     if(normalizeOutput):

@@ -83,11 +83,12 @@ def main():
     parser.add_argument('--nodenoise', help='dont denoise dataset', dest='denoise' , action='store_false')
     parser.add_argument('--bvalue',type=int, default=1000, help='b-value of our DWI data')
     parser.add_argument('--reslice', help='reslice datase to 1.25mm^3', dest='reslice' , action='store_true')
+    parser.add_argument('--rotateData', help='reslice datase to 1.25mm^3', dest='rotateData' , action='store_true')
     parser.set_defaults(denoise=False)   
     parser.set_defaults(reslice=False)   
+    parser.set_defaults(rotateData=False)   
     args = parser.parse_args()
-    #parser.print_help()
-    
+
     fa_threshold=args.faThreshold
     sh_order=args.shOrder
     minimumStreamlineLength = args.minLength
@@ -99,6 +100,7 @@ def main():
     pModel = args.model
     resliceDataToHCPDimension = args.reslice
     useDenoising = args.denoise
+    rotateData = args.rotateData
     
     coordinateScaling = 1
     useDTIPeakDirection = True
@@ -158,24 +160,13 @@ def main():
         print("Magic model :)")
         magicModel = True
             
-        
-#    elif(usePreviousDirection): 
-#        noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)[0]
-#    else: 
-#        noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)
-
     print('Loaded model %s' % (pModel))
 
     # load DWI data
     print('Loading dataset %s at b=%d' % (pCaseID, b_value))
     bvals,bvecs,gtab,dwi,aff,t1 = dwi_tools.loadISMRMData('data/%s' % (pCaseID), denoiseData = useDenoising, resliceToHCPDimensions=resliceDataToHCPDimension)
     b0_mask, binarymask = median_otsu(dwi[:,:,:,0], 2, 1)
-    
-    #pCaseID = 'ISMRM_2015_Tracto_challenge_ground_truth_dwi_v2'
-    #useDenoising = False
-    #bvals,bvecs,gtab,dwi,aff,t1 = dwi_tools.loadISMRMDataArtifactFree('data/%s' % (pCaseID), denoiseData = useDenoising, resliceToHCPDimensions=resliceDataToHCPDimension)
-    #b0_mask, binarymask = median_otsu(dwi[:,:,:,0], 2, 1)
-    
+   
     # crop DWI data
     dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(b_value, bvals, bvecs, dwi)
     b0_idx = bvals < 10
@@ -227,19 +218,21 @@ def main():
     
     if(magicModel):
         if(pModel.find('2mlp_single')>0):
+            # magic 2mlp_single with aggregation
             start_time = time.time()
-            streamlines_joined_sc,vNorms,stopProb = tracking.startAggregatedMagicModel(printfProfiling = False, printProgress = True, mask=binarymask, inverseDirection=False, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, noX=noX, noY=noY, noZ=noZ, dw = noC, stepWidth = stepWidth, coordinateScaling = coordinateScaling, noIterations = noTrackingSteps, usePreviousDirection=usePreviousDirection, reshapeForConvNet = use2DProjection)
+            streamlines_joined_sc,vNorms,stopProb = tracking.startAggregatedMagicModel(printfProfiling = False, printProgress = True, mask=binarymask, inverseDirection=False, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, noX=noX, noY=noY, noZ=noZ, dw = noC, stepWidth = stepWidth, coordinateScaling = coordinateScaling, noIterations = noTrackingSteps, usePreviousDirection=usePreviousDirection, reshapeForConvNet = use2DProjection, rotateData = rotateData)
             runtime = time.time() - start_time
             
         else:
+            # plain magic model
             start_time = time.time()
-            streamlines_joined_sc,vNorms,stopProb = tracking.startMagicModel(printfProfiling = False, printProgress = True, mask=binarymask, inverseDirection=False, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, noX=noX, noY=noY, noZ=noZ, dw = noC, stepWidth = stepWidth, coordinateScaling = coordinateScaling, noIterations = noTrackingSteps, usePreviousDirection=usePreviousDirection, reshapeForConvNet = use2DProjection)
+            streamlines_joined_sc,vNorms,stopProb = tracking.startMagicModel(printfProfiling = False, printProgress = True, mask=binarymask, inverseDirection=False, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, noX=noX, noY=noY, noZ=noZ, dw = noC, stepWidth = stepWidth, coordinateScaling = coordinateScaling, noIterations = noTrackingSteps, usePreviousDirection=usePreviousDirection, reshapeForConvNet = use2DProjection, rotateData = rotateData)
             runtime = time.time() - start_time
-        #np.save('stopProb.npy', stopProb)
-        #np.save('vNorms.npy', vNorms)
+
     else:
+        # standard model without learnt stopping criteria
         start_time = time.time()
-        streamlines_joined_sc,vNorms = tracking.start(printfProfiling = False, printProgress = True, fa_threshold = fa_threshold, mask=binarymask,fa=dti_fit.fa, inverseDirection=False, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, noX=noX, noY=noY, noZ=noZ, dw = noC, stepWidth = stepWidth, coordinateScaling = coordinateScaling, noIterations = noTrackingSteps, usePreviousDirection=usePreviousDirection, reshapeForConvNet = use2DProjection)
+        streamlines_joined_sc,vNorms = tracking.start(printfProfiling = False, printProgress = True, fa_threshold = fa_threshold, mask=binarymask,fa=dti_fit.fa, inverseDirection=False, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, noX=noX, noY=noY, noZ=noZ, dw = noC, stepWidth = stepWidth, coordinateScaling = coordinateScaling, noIterations = noTrackingSteps, usePreviousDirection=usePreviousDirection, reshapeForConvNet = use2DProjection, rotateData = rotateData)
         runtime = time.time() - start_time
 
    

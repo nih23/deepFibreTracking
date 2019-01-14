@@ -525,14 +525,14 @@ def _spheToEuclidean(r,theta,psi):
     zz = r * np.cos(theta)
     return xx,yy,zz
 
-def interpolateDWIVolume(dwi, positions, x_,y_,z_, rotations = None, noX = 8, noY = 8, noZ = 8):
+def interpolateDWIVolume(dwi, positions, x_,y_,z_, rotations = None, noX = 9, noY = 9, noZ = 9):
+    # positions: noPoints x 3 
     szDWI = dwi.shape
     noPositions = len(positions)
     start_time = time.time()
     cvF = np.ones([noPositions*noX*noY*noZ,3])
     noElem = noX * noZ * noY
-    grid = np.array(np.meshgrid(x_,y_,z_)).reshape(3,-1).T
-
+    grid = np.array(np.meshgrid(x_,y_,z_)).reshape(3,-1)
     for j in range(0,noPositions):
         grid_rotated = grid
         if(rotations is not None):
@@ -549,14 +549,15 @@ def interpolateDWIVolume(dwi, positions, x_,y_,z_, rotations = None, noX = 8, no
         
     return x
 
-def rotateByMatrix(vectorsToRotate,rotationMatrix,rotationCenterVector = np.array([0,0,0])):\
-    return np.dot(rotationMatrix,vectorsToRotate.T - rotationCenterVector[:,None]) + rotationCenterVector[:,None]
+def rotateByMatrix(vectorsToRotate,rotationMatrix,rotationCenterVector = np.array([0,0,0])):    
+    return np.dot(rotationMatrix,vectorsToRotate - rotationCenterVector[:,None]) + rotationCenterVector[:,None]
 
 
 def interpolatePartialDWIVolume(dwi, centerPosition, x_,y_,z_, noX = 8, noY = 8, noZ = 8):
     '''
     interpolate a dwi volume at some center position and provided spatial extent
     '''
+    print("rot " + str(rotations[j,].shape))
     szDWI = dwi.shape
     coordVecs = np.vstack(np.meshgrid(x_,y_,z_, indexing='ij')).reshape(3,-1).T + centerPosition   
     x = np.zeros([noX,noY,noZ,szDWI[-1]])
@@ -736,6 +737,9 @@ def _getCoordinateGrid(noX,noY,noZ,coordinateScaling):
     return x_,y_,z_
 
 
+def getReferenceOrientation():
+    return np.array([0,1,0])
+
 def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, noY=1,noZ=1,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1, unitTension = True, rotateTrainingData = True):
     '''
     
@@ -794,7 +798,7 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, 
         
         if(rotateTrainingData):
             # reference orientation
-            vv = np.array([0,1,0])
+            vv = getReferenceOrientation()
             
             # compute tangents
             tangents = streamlinevec_ijk[0:-1] - streamlinevec_ijk[1:] # tangents represents the tangents starting from the 2nd streamline position

@@ -1,3 +1,9 @@
+from numpy.random import seed
+seed(2342)
+from tensorflow import set_random_seed
+set_random_seed(4223)
+
+
 import time
 import nrrd
 import os
@@ -61,15 +67,16 @@ def main():
     parser.add_argument('--unitTangent', help='unit tangent', dest='unittangent' , action='store_true')
     parser.add_argument('--nounitTangent', help='no unit tangent', dest='unittangent' , action='store_false')
     parser.add_argument('--dropout', help='dropout regularization', dest='dropout' , action='store_true')
+    parser.add_argument('--keepZeroVectors', help='keep zero vectors at the outer positions of streamline to indicate termination.', dest='keepzero' , action='store_true')
     parser.add_argument('-bn','--batchnormalization', help='batchnormalization', dest='dropout' , action='store_true')
     
     parser.add_argument('--bvalue',type=int, default=1000, help='b-value of our DWI data')
         
     parser.set_defaults(unittangent=False)   
     parser.set_defaults(dropout=False)   
+    parser.set_defaults(keepzero=False)
     parser.set_defaults(batchnormalization=False)   
     args = parser.parse_args()
-    #parser.print_help()
     
     noGPUs = 1
     pTrainData = args.data
@@ -84,70 +91,19 @@ def main():
     usePretrainedModel = False
     unitTangent = args.unittangent
     modelToUse = args.modeltouse
+    keepZeroVectors = args.keepzero
+    
     activation_function = {
           'relu': lambda x: ReLU(),
           'leakyrelu': lambda x: LeakyReLU(),
           'swish': lambda x: Activation(swish)
         }[args.activationfunction](0)
     
-    withoutZeroVectors = False
-    
-    #noFeatures = 512 # 512
-    #depth = 3
-    #activation_function = ReLU()
-    #activation_function = LeakyReLU()
-    #activation_function = Activation(swish)
-
-    
-    # model selection
-    #modelToUse = 'mlp_doubleIn_single_v4' #'mlp_single' # 'mlp_double'
-    #modelToUse = 'mlp_doubleIn_single'
-    #modelToUse = 'mlp_single'   
-    
-    ####modelToUse = 'cnn_special_pd'
-    ####modelToUse = 'cnn_special'
-    ####modelToUse = 'rcnn'
-    
-    # loss function
-    #loss = 'cos'
-    #loss = 'mse'
-    #loss = 'sqCos2'
-    
-    #loss = 'sqCos2WEP'
+    if(loss == 'sqCos2WEP'):
+        print('Keeping zero vectors as the neural network shall predict endpoints.')
+        keepZeroVectors = True
     
     useSphericalCoordinates = False
-
-    # whole brain tractography
-    
-#    if( (modelToUse == 'cnn_special')   or  (modelToUse == 'rcnn')):
-        #pTrainData = 'data/train_resampled_10x10_noB0InSH_step0.6_wholeBrain_b1000_2_ukf_curated.h5'
-###        pTrainData = 'data/train_res1002D_16x16_30k_noB0InSH_step0.6_wholeBrain_b1000_csd_ismrm_1x1x1_noUnitTension.h5'
-        #depth = 1
-        #noFeatures = 32
-###    if( (modelToUse == 'cnn_special_pd')   or  (modelToUse == 'rcnn_pd')):
-###        pTrainData = 'data/train_res1002D_16x16_prevDWI_30k_noB0InSH_step0.6_wholeBrain_b1000_csd_ismrm_1x1x1_noUnitTension.h5'
-###        depth = 3
-###        noFeatures = 32
-        
-###        f = h5py.File(pTrainData, "r")
-###        train_DWI_past = np.array(f["train_DWI_prev"].value)
-###        f.close()
-#    else:
-        #### GENERATE UKF b1k TRAINING DATA AND RUN TRAINING ON MLP v3 and v1
-        #pTrainData = 'data/train_sh8_noB0InSH_step0.6_wholeBrain_b1000_2_ukf_curated_1x1x1.h5'
-###        pTrainData = 'data/train_sh8_noB0InSH_step0.6_wholeBrain_b1000_2_ukf_curated_1x1x1_noUnitTension.h5'
-        #pTrainData = 'data/train_sh8_noB0InSH_step0.6_wholeBrain_b1000_2_csd_ismrm_1x1x1.h5'
-        #pTrainData = 'data/train_sh8_noB0InSH_step0.6_wholeBrain_b1000_2_csd_ismrm_1x1x1_noUnitTension.h5'
-        
-###        pTrainData = 'data/train_res100_30k_noB0InSH_step0.6_wholeBrain_b1000_csd_ismrm_1x1x1_noUnitTension.h5'
-###        pTrainData = 'data/train_res1002D_16x16_30k_noB0InSH_step0.6_wholeBrain_b1000_csd_ismrm_1x1x1_noUnitTension.h5'
-        
-###        pTrainData = 'data/train_res100_30k_noB0InSH_step0.6_wholeBrain_b1000_csd_ismrm_cur_1x1x1_noUnitTension.h5'
-        
-        #pTrainData = 'data/train_res100_all_noB0InSH_step0.6_wholeBrain_b1000_csd_ismrm_cur_1x1x1_noUnitTension.h5'
-        
-###        pTrainData = 'data/train_res100_30k_noB0InSH_step0.6_wholeBrain_b1000_csd_ismrm_cur_aggrPast_1x1x1_noUnitTension.h5'
-
     pModelOutput = pTrainData.replace('.h5','').replace('data/','')
 
     
@@ -160,7 +116,6 @@ def main():
     f = h5py.File(pTrainData, "r")
     train_DWI = np.array(f["train_DWI"].value)
     train_prevDirection = np.array(f["train_curPosition"].value)
-    #train_likelyDirections = np.array(f["train_LikelyFibreDirections"].value)
     train_nextDirection = np.array(f["train_NextFibreDirection"].value)
     f.close()
     
@@ -169,23 +124,7 @@ def main():
     train_DWI = train_DWI[indices,]
     train_nextDirection = train_nextDirection[indices,]
     train_prevDirection = train_prevDirection[indices,]
-    
-    
-    #train_prevDirection = (train_prevDirection + 1) / 2
-    #train_nextDirection = (train_nextDirection + 1) / 2
-
-    # remove streamline points right at the end of the streamline
-    # zvFix didnt account for zero vectors in the previous direction
-    # zvFix2 removes zero vectors in both previous and next streamline directions
- 
-    #vN = np.sqrt(np.sum(train_nextDirection ** 2 , axis = 1))
-    #idx3 = np.where(vN == 0)[0]
-    #idx3 = np.concatenate((idx3,idx3-10,idx3-20))
-    
-    #train_DWI = train_DWI[idx3,...]
-    #train_nextDirection = train_nextDirection[idx3,]
-    #train_prevDirection = train_prevDirection[idx3,]
-    
+       
     vN = np.sqrt(np.sum(train_nextDirection ** 2 , axis = 1))
     idx1 = np.where(vN > 0)[0]
     vN = np.sqrt(np.sum(train_prevDirection ** 2 , axis = 1))
@@ -193,7 +132,7 @@ def main():
     s2 = set(idx2)
     idxNoZeroVectors = [val for val in idx1 if val in s2]
     
-    if(withoutZeroVectors):
+    if(keepZeroVectors == False):
         train_DWI = train_DWI[idxNoZeroVectors,...]
         train_nextDirection = train_nextDirection[idxNoZeroVectors,]
         train_prevDirection = train_prevDirection[idxNoZeroVectors,]
@@ -211,13 +150,9 @@ def main():
     
    
     # train simple MLP
-    params = "%s_%s_dx_%d_dy_%d_dz_%d_dd_%d_%s_feat_%d_depth_%d_output_%d_lr_%.4f_dropout_%d_bn_%d_unitTangent_%d" % (modelToUse,loss,noX,noY,noZ,noD,activation_function.__class__.__name__,noFeatures, depth,noOutputNeurons,lr,useDropout,useBatchNormalization,unitTangent)
+    params = "%s_%s_dx_%d_dy_%d_dz_%d_dd_%d_%s_feat_%d_depth_%d_output_%d_lr_%.4f_dropout_%d_bn_%d_unitTangent_%d_wz_%d" % (modelToUse,loss,noX,noY,noZ,noD,activation_function.__class__.__name__,noFeatures, depth,noOutputNeurons,lr,useDropout,useBatchNormalization,unitTangent,keepZeroVectors)
     pModel = "results/" + pModelOutput + '/models/' + params + "-{val_loss:.6f}.h5"
     pCSVLog = "results/" + pModelOutput + '/logs/' + params + ".csv"
-    
-    if(withoutZeroVectors):
-        pModel = pModel.replace('wZ','')
-        pCSVLog = pModel.replace('wZ','')
     
     newpath = r'results/' + pModelOutput + '/models/'
     if not os.path.exists(newpath):
@@ -316,24 +251,31 @@ def main():
     ### MLP SINGLE ###
         ### ### ###
     elif (modelToUse == 'mlp_single'):
+        class_weight = None
+        
         if(loss == 'sqCos2WEP'):
             noSamples = len(train_DWI)
             labels = np.zeros((noSamples,1))
             labels[idx1] = 1
             loss = 'sqCos2'
+            
+            noPosSamples = len(np.where(labels == 1)[0])
+            noNegSamples = len(np.where(labels == 0)[0])
+            class_weight = {1: (noPosSamples+noNegSamples) / noPosSamples,
+                            0: (noPosSamples+noNegSamples) / noNegSamples}
+            class_weight = { 'signLayer': {1: (noPosSamples+noNegSamples) / noPosSamples, 0: (noPosSamples+noNegSamples) / noNegSamples} }
+            print(class_weight)
+            print(str(train_nextDirection.shape))
+            print(str(labels.shape))
         
-        mlp_simple = nn_helper.get_mlp_singleOutputWEP(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=train_DWI.shape[1:5], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, normalizeOutput = unitTangent)  
-        
-        noPosSamples = len(np.where(labels == 1)[0])
-        noNegSamples = len(np.where(labels == 0)[0])
-        class_weight = {1: (noPosSamples+noNegSamples) / noPosSamples,
-                        0: (noPosSamples+noNegSamples) / noNegSamples}
-        class_weight = { 'signLayer': {1: (noPosSamples+noNegSamples) / noPosSamples, 0: (noPosSamples+noNegSamples) / noNegSamples} }
-        mlp_simple.summary()
-        print(class_weight)
-        print(str(train_nextDirection.shape))
-        print(str(labels.shape))
-        mlp_simple.fit([train_DWI], [train_nextDirection, labels], batch_size=batch_size, epochs=epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger], class_weight=class_weight)
+            mlp_simple = nn_helper.get_mlp_singleOutputWEP(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=train_DWI.shape[1:5], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, normalizeOutput = unitTangent)  
+            mlp_simple.summary()
+            mlp_simple.fit([train_DWI], [train_nextDirection, labels], batch_size=batch_size, epochs=epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger], class_weight=class_weight)
+        else:
+            mlp_simple = nn_helper.get_mlp_singleOutput(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=train_DWI.shape[1:5], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, normalizeOutput = unitTangent)  
+            mlp_simple.summary()
+            mlp_simple.fit([train_DWI], [train_nextDirection], batch_size=batch_size, epochs=epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+            
     ###
         ### ### ###
     ### 2MLP SINGLE ###
