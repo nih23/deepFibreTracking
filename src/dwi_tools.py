@@ -557,7 +557,7 @@ def interpolatePartialDWIVolume(dwi, centerPosition, x_,y_,z_, noX = 8, noY = 8,
     '''
     interpolate a dwi volume at some center position and provided spatial extent
     '''
-    print("rot " + str(rotations[j,].shape))
+    #print("rot " + str(rotations[j,].shape))
     szDWI = dwi.shape
     coordVecs = np.vstack(np.meshgrid(x_,y_,z_, indexing='ij')).reshape(3,-1).T + centerPosition   
     x = np.zeros([noX,noY,noZ,szDWI[-1]])
@@ -780,12 +780,12 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, 
     
     slOffset =  np.zeros([len(sl_pos)])
     
-    if(rotateTrainingData):
-        print('[I] the training data is being rotated wrt. each points tangent.')
+#    if(rotateTrainingData):
+#        print('[I] the training data is being rotated wrt. each points tangent.')
     
     for streamlineIndex in range(0,noStreamlines):
         slOffset[streamlineIndex] = ctr
-        if(((streamlineIndex) % 10000) == 0):
+        if(((streamlineIndex) % 10000) == 0 and streamlineIndex > 0):
             print(str(streamlineIndex) + "/" + str(noStreamlines))
                 
         streamlinevec = streamlines[streamlineIndex]
