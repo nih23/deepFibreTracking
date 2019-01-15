@@ -62,6 +62,8 @@ def main():
     parser.add_argument('--visStreamlines', help='visualize streamlines before proceeding with data generation', dest='visStreamlines' , action='store_true')
     parser.add_argument('--ISMRM2015data', help='generate training data for the ismrm 2015 dataset', dest='ISMRM2015data' , action='store_true')
     parser.add_argument('--HCPid', default='100307', help='case id of the HCP dataset to be used [default: 100307]')
+    parser.add_argument('--precomputedStreamlines', default='', help='load precomputed streamlines instead of applying a tensor model')
+    parser.add_argument('-nt', '--noThreads', type=int, default=4, help='number of parallel threads of the data generator. Note: this also increases the memory demand.')
     
     parser.set_defaults(rotateTrainingData=False)   
     parser.set_defaults(unittangent=False)   
@@ -86,6 +88,7 @@ def main():
     useISMRM = args.ISMRM2015data
     hcpCaseID = args.HCPid
     rotateTrainingData = args.rotateTrainingData
+    pPrecomputedStreamlines = args.precomputedStreamlines
     
     print('Parameters:')
     print(str(args))
@@ -105,8 +108,14 @@ def main():
     
     wholebrainseeds = seeds_from_mask(binarymask, affine=aff)
     
+    if(pPrecomputedStreamlines != ''):
+        streamlines_filtered = dwi_tools.loadVTKstreamlines(pPrecomputedStreamlines)
+        print("step width " + str(np.linalg.norm(streamlines_filtered[0][1] - streamlines_filtered[0][0])) + " mm")
+        tensorModel = 'precomp'
+        tInfo = pPrecomputedStreamlines
+        pTrainData = '/data/nico/trainingdata/%s/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotateTD%d.h5' % (nameDWIDataset, pPrecomputedStreamlines, b_value, dataRepr, stepWidth, noX,noY,noZ,unitTangent,rotateTrainingData)
+    
     if(tensorModel == 'dti'):
-        import dipy.reconst.dti as dti
         start_time = time.time()
         dti_model = dti.TensorModel(gtab)
         dti_fit = dti_model.fit(dwi, mask=binarymask)
@@ -114,8 +123,7 @@ def main():
         dg = DeterministicMaximumDirectionGetter
         directionGetter = dg.from_pmf(dti_fit_odf, max_angle=30., sphere=default_sphere)
         runtime = time.time() - start_time
-        print('DTI Runtime ' + str(runtime) + 's')
-        
+        print('DTI Runtime ' + str(runtime) + 's')       
 
     elif(tensorModel == 'csd'):
         response, ratio = auto_response(gtab, dwi, roi_radius=10, fa_thr=0.7)
@@ -141,21 +149,23 @@ def main():
         start_time = time.time()       
         directionGetter = csd_peaks
 
-    classifier = ThresholdTissueClassifier(dti_fit.fa, faThreshold)
-    streamlines_generator = LocalTracking(directionGetter, classifier, wholebrainseeds, aff, step_size=stepWidth)
-    streamlines = Streamlines(streamlines_generator)
-    streamlines_filtered = dwi_tools.filterStreamlinesByLength(streamlines, minimumStreamlineLength)
-    streamlines_filtered = dwi_tools.filterStreamlinesByMaxLength(streamlines_filtered, maximumStreamlineLength)
-    runtime = time.time() - start_time
-    print('LocalTracking Runtime ' + str(runtime) + 's')
+    if(tensorModel != 'precomp'):
+        classifier = ThresholdTissueClassifier(dti_fit.fa, faThreshold)
+        streamlines_generator = LocalTracking(directionGetter, classifier, wholebrainseeds, aff, step_size=stepWidth)
+        streamlines = Streamlines(streamlines_generator)
+        streamlines_filtered = dwi_tools.filterStreamlinesByLength(streamlines, minimumStreamlineLength)
+        streamlines_filtered = dwi_tools.filterStreamlinesByMaxLength(streamlines_filtered, maximumStreamlineLength)
+        runtime = time.time() - start_time
+        print('LocalTracking Runtime ' + str(runtime) + 's')
+        tInfo = '%s_sw%.1f_minL%d_maxL%d_fa%.2f' % (tensorModel,stepWidth,minimumStreamlineLength,maximumStreamlineLength,faThreshold)
+        pTrainData = '/data/nico/trainingdata/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotateTD%d.h5' % (nameDWIDataset, b_value, dataRepr, stepWidth, noX,noY,noZ,unitTangent,rotateTrainingData)
+        dwi_tools.saveVTKstreamlines(streamlines_filtered, 'data/%s_%s.vtk' % (nameDWIDataset,tInfo))
 
-    
-    tInfo = '%s_sw%.1f_minL%d_maxL%d_fa%.2f' % (tensorModel,stepWidth,minimumStreamlineLength,maximumStreamlineLength,faThreshold)
     
     if(visStreamlines):
         dwi_tools.visStreamlines(streamlines_filtered)
     
-    dwi_tools.saveVTKstreamlines(streamlines_filtered, 'data/%s_%s_noreslicing_mrtrixDenoised_preproc.vtk' % (nameDWIDataset,tInfo))
+    
     
     # crop DWI data
     dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(b_value, bvals, bvecs, dwi)
@@ -186,7 +196,7 @@ def main():
     runtime = time.time() - start_time
     print('Runtime ' + str(runtime) + ' s ')
 
-    pTrainData = '/data/nico/trainingdata/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotateTD%d.h5' % (nameDWIDataset, b_value, dataRepr, stepWidth, noX,noY,noZ,unitTangent,rotateTrainingData)
+    
 
     print('Writing training data: ' + pTrainData )
     

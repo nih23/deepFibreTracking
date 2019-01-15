@@ -98,6 +98,113 @@ def cropped_relu(x):
 
 
 # the cnn multi input architecture leads to some ambiguities.. 
+def get_simpleCNN(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, kernelSz=3, poolSz = (2,2)):
+    '''
+    predict direction of past/next streamline position using simple CNN architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    i1 = Input(inputShapeDWI)
+    layers = [i1]
+    
+    layersEncoding = []
+    
+    # DOWNSAMPLING STREAM
+    for i in range(1,depth+1):
+        layers.append(Conv2D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+        if(useBN):
+            layers.append(BatchNormalization()(layers[-1]))
+        if(useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+        layers.append(activation_function(layers[-1]))
+        
+        layers.append(Conv2D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+        if(useBN):
+            layers.append(BatchNormalization()(layers[-1]))
+        if(useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+
+        layers.append(activation_function(layers[-1]))
+            
+        layersEncoding.append(layers[-1])
+        layers.append(MaxPooling2D(pool_size=poolSz)(layers[-1]))
+
+
+    # final prediction layer w/ previous input
+    layers.append(Flatten()(layers[-1]))
+    
+    layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
+    layers.append(activation_function(layers[-1]))
+    layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
+    layerNextDirection = layers[-1]
+        
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+
+    mlp = Model([layers[0]], outputs=[layerNextDirection])
+    
+    if(loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    elif(loss == 'cos'):
+        mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer) # use in case of directional vectors
+    elif(loss == 'sqCos2'):
+        mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+    
+    return mlp
+
+# the cnn multi input architecture leads to some ambiguities.. 
+def get_simple3DCNN(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, kernelSz=3, poolSz = (2,2,2)):
+    '''
+    predict direction of past/next streamline position using simple CNN architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    i1 = Input(inputShapeDWI)
+    layers = [i1]
+    
+    layersEncoding = []
+    
+    # DOWNSAMPLING STREAM
+    for i in range(1,depth+1):
+        layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+        if(useBN):
+            layers.append(BatchNormalization()(layers[-1]))
+        if(useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+        layers.append(activation_function(layers[-1]))
+        
+        layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+        if(useBN):
+            layers.append(BatchNormalization()(layers[-1]))
+        if(useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+
+        layers.append(activation_function(layers[-1]))
+            
+        layersEncoding.append(layers[-1])
+        layers.append(MaxPooling3D(pool_size=poolSz)(layers[-1]))
+
+
+    # final prediction layer w/ previous input
+    layers.append(Flatten()(layers[-1]))
+    
+    layers.append(Dense(features, kernel_initializer = 'he_normal')(layers[-1]))
+    layers.append(activation_function(layers[-1]))
+    layers.append(Dense(outputShape, kernel_initializer = 'he_normal')(layers[-1]))
+    layerNextDirection = layers[-1]
+        
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+
+    mlp = Model([layers[0]], outputs=[layerNextDirection])
+    
+    if(loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    elif(loss == 'cos'):
+        mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer) # use in case of directional vectors
+    elif(loss == 'sqCos2'):
+        mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+    
+    return mlp
+
+
+# the cnn multi input architecture leads to some ambiguities.. 
 def get_cnn_singleOutput(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, kernelSz=3, poolSz = (2,2)):
     '''
     predict direction of past/next streamline position using simple CNN architecture
@@ -180,6 +287,7 @@ def get_cnn_singleOutput(inputShapeDWI, loss='mse', outputShape = 3, depth=1, fe
         mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
     
     return mlp
+
 
 def get_rcnn(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, kernelSz=3, poolSz = (2,2)):
 
