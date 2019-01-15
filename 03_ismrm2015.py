@@ -79,6 +79,7 @@ def main():
     parser.add_argument('-mal','--maxLength', type=int, default=200, help='maximum length of a streamline [mm]')
     parser.add_argument('-fa','--faThreshold', type=float, default=0, help='fa threshold in case of non-magical models')
     parser.add_argument('-sh', '--shOrder', type=int, default=8, help='order of spherical harmonics (if used)')
+    parser.add_argument('-nt', '--noThreads', type=int, default=4, help='number of parallel threads of the data generator. Note: this also increases the memory demand.')
     parser.add_argument('--denoise', help='denoise dataset', dest='denoise' , action='store_true')
     parser.add_argument('--nodenoise', help='dont denoise dataset', dest='denoise' , action='store_false')
     parser.add_argument('--bvalue',type=int, default=1000, help='b-value of our DWI data')

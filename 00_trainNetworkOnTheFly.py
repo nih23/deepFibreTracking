@@ -35,7 +35,7 @@ from dipy.tracking import utils
 
 import src.dwi_tools as dwi_tools
 import src.nn_helper as nn_helper
-from src.tractographydatagenerator import TractographyDataGenerator
+from src.tractographydatagenerator import TractographyDataGenerator, TwoDimensionalTractographyDataGenerator, ThreeDimensionalTractographyDataGenerator
 
 from src.nn_helper import swish
 
@@ -68,22 +68,28 @@ def main():
     parser.add_argument('-e','--epochs', default=1000, type=int, help='no. epochs')
     parser.add_argument('-lr','--learningrate', type=float, default=1e-4, help='minimal length of a streamline [mm]')
     parser.add_argument('-sh', '--shOrder', type=int, default=8, dest='sh', help='order of spherical harmonics (if used)')
+    parser.add_argument('-repr', dest='repr',default='res100', help='data representation: [raw,sph,res100,2D]: raw, spherical harmonics, resampled to 100 directions, 16x16 2D resampling (256 directions) ')
     parser.add_argument('--unitTangent', help='unit tangent', dest='unittangent' , action='store_true')
     parser.add_argument('--nounitTangent', help='no unit tangent', dest='unittangent' , action='store_false')
-    parser.add_argument('--dropout', help='dropout regularization', dest='dropout' , action='store_true')
+    parser.add_argument('--dropout', help='dropout regularization', dest='dropout', action='store_true')
     parser.add_argument('--keepZeroVectors', help='keep zero vectors at the outer positions of streamline to indicate termination.', dest='keepzero' , action='store_true')
     parser.add_argument('-bn','--batchnormalization', help='batchnormalization', dest='dropout' , action='store_true')
     parser.add_argument('--bvalue',type=int, default=1000, help='b-value of our DWI data')
-        
+    parser.add_argument('--storeTemporaryData',help='store temporary data on disk to save computational time', action='store_true')
+    parser.add_argument('-nt', '--noThreads', type=int, default=2, help='number of parallel threads of the data generator. Note: this also increases the memory demand.')
+    
     parser.set_defaults(unittangent=False)   
     parser.set_defaults(dropout=False)   
     parser.set_defaults(keepzero=False)
     parser.set_defaults(batchnormalization=False)   
+    parser.set_defaults(storeTemporaryData=False)   
     args = parser.parse_args()
     
+    noThreads = args.noThreads
     noX = args.nx
     noY = args.ny
     noZ = args.nz
+    dataRepr = args.repr
     noGPUs = 1
     b_value = args.bvalue
     pStreamlines = args.streamlines
@@ -100,6 +106,7 @@ def main():
     modelToUse = args.modeltouse
     keepZeroVectors = args.keepzero
     shOrder = args.sh
+    storeTemporaryData = args.storeTemporaryData
     
     activation_function = {
           'relu': lambda x: ReLU(),
@@ -110,7 +117,13 @@ def main():
     useSphericalCoordinates = False
     pModelOutput = pStreamlines.replace('.vtk','').replace('data/','')
     noOutputNeurons = 3 # euclidean coordinates
-    noDiffusionSignals = 100
+    
+
+    # load streamlines
+    streamlines = dwi_tools.loadVTKstreamlines(pStreamlines)
+    
+    # init data generator
+    noTrainingSamples = len(list(range(len(streamlines)-10000)))
     
     # load DWI dataset
     nameDWIDataset = 'ISMRM_2015_Tracto_challenge_data'
@@ -127,16 +140,49 @@ def main():
     bvals_singleShell = np.concatenate((bvals_subset, bvals[..., b0_idx]), axis=0)
     bvecs_singleShell = np.concatenate((bvecs_subset, bvecs[b0_idx,]), axis=0)
     gtab_singleShell = gradient_table(bvals=bvals_singleShell, bvecs=bvecs_singleShell, b0_threshold = 10)
-    t_data, resamplingSphere = dwi_tools.resample_dwi(dwi_subset, b0, bvals_subset, bvecs_subset, sh_order=shOrder, smooth=0, mean_centering=False)
     
-    # load streamlines
-    streamlines = dwi_tools.loadVTKstreamlines(pStreamlines)
+    if(dataRepr == 'sh'):
+        t_data = dwi_tools.get_spherical_harmonics_coefficients(bvals=bvals_subset,bvecs=bvecs_subset,sh_order=shOrder, dwi=dwi_subset, b0 = b0)
+    elif(dataRepr == 'res100'):
+        t_data, resamplingSphere = dwi_tools.resample_dwi(dwi_subset, b0, bvals_subset, bvecs_subset, sh_order=shOrder, smooth=0, mean_centering=False)
+    elif(dataRepr == 'raw'):
+        t_data = dwi_subset
+    elif(dataRepr == '2D' or dataRepr == '3D'):
+        t_data, resamplingSphere = dwi_tools.resample_dwi_2D(dwi_subset, b0, bvals_subset, bvecs_subset, sh_order=shOrder, smooth=0, mean_centering=False)
     
-    # init data generator
-    noTrainingSamples = len(list(range(len(streamlines)-10000)))
-    
-    training_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000))), dim=[noX,noY,noZ], batch_size=batch_size)
-    validation_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size)
+    noDiffusionSignals = t_data.shape[-1]
+    ####################
+    ####################
+    if(dataRepr == '2D'):
+        noX = 1
+        noY = 1
+        noZ = 1
+        modelToUse = '2D_cnn'
+        model = nn_helper.get_simpleCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[8,8,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)  
+        model.summary()
+        # data generator
+        training_generator = TwoDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        validation_generator = TwoDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+    ####################
+    ####################
+    if(dataRepr == '3D'):
+        modelToUse = '3D_cnn'
+        model = nn_helper.get_simple3DCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX*8,noY*8,noZ,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)  
+        model.summary()
+        # data generator
+        training_generator = ThreeDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        validation_generator = ThreeDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+    ####################
+    ####################
+    else:
+        ### ### ###
+    ### MLP SINGLE ###
+        ### ### ###
+        model = nn_helper.get_mlp_singleOutput(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX,noY,noZ,noDiffusionSignals], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, normalizeOutput = unitTangent)  
+        model.summary()
+        
+        training_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        validation_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
     
 
     
@@ -161,11 +207,7 @@ def main():
     if not os.path.exists(newpath):
         os.makedirs(newpath)
 
-        ### ### ###
-    ### MLP SINGLE ###
-        ### ### ###
-    mlp_simple = nn_helper.get_mlp_singleOutput(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX,noY,noZ,noDiffusionSignals], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, normalizeOutput = unitTangent)  
-    mlp_simple.summary()
+
 
     # Train model on dataset
     pModel = "results/" + pModelOutput + '/models/' + params + "-{val_loss:.6f}.h5"
@@ -177,15 +219,16 @@ def main():
     
     callbacks=[checkpoint, csv_logger]
     
-    mlp_simple.fit_generator(generator=training_generator,
+    model.fit_generator(generator=training_generator,
         validation_data=validation_generator,
         use_multiprocessing=True,
-        workers=6,
+        workers=noThreads,
         steps_per_epoch=int(noTrainingSamples/batch_size),
         epochs=epochs,
         verbose=1,
         validation_steps=1,
-        callbacks=callbacks)
+        callbacks=callbacks,
+        max_queue_size=noThreads)
             
 
         

@@ -192,7 +192,7 @@ def resample_dwi(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0.00
 
     return data_resampled, sphere
 
-def resample_dwi_forunet(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0.006, mean_centering=True):
+def resample_dwi_2D(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0.006, mean_centering=True, noThetas = 8, noPhis = 8):
     """ Resamples a diffusion signal according to a set of directions using spherical harmonics.
     source: https://github.com/ppoulin91/learn2track/blob/miccai2017_submission/learn2track/neurotools.py
     Parameters
@@ -224,9 +224,6 @@ def resample_dwi_forunet(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smo
     # sphere = get_sphere('repulsion100')
     # sphere = get_sphere('repulsion724')
     
-    noThetas = 16
-    noPhis = 16
-
     xi = np.arange(0,np.pi, (np.pi) / noThetas) # theta
     yi = np.arange(-np.pi,np.pi,2 * (np.pi) / noPhis) # phi
 

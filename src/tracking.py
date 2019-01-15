@@ -104,6 +104,7 @@ def getNextDirection(dwi,curPosition_ijk, model, lastDirections = None, x_ = [0]
     
     if(rotateData):
         print('rotating data')
+        start_time = time.time()
         # reference orientation
         vv = dwi_tools.getReferenceOrientation()
 
@@ -114,6 +115,7 @@ def getNextDirection(dwi,curPosition_ijk, model, lastDirections = None, x_ = [0]
 
         for k in range(noPositions):
             dwi_tools.R_2vect(rot[k,:,:],vector_orig=lastDirections[k,],vector_fin=vv)
+        print(" -> " + str(time.time() - start_time) + "s")
 
     dwi_at_curPosition = dwi_tools.interpolateDWIVolume(dwi, curPosition_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ, rotations = rot)
     
