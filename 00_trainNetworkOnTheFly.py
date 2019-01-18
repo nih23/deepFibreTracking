@@ -64,11 +64,11 @@ def main():
     parser.add_argument('-dr', '--dilationRate', default=1, type=int, help='dilation rate in x and y plane for 3D models. ')
     parser.add_argument('-a', '--activationfunction', default='relu', help='relu, leakyrelu, swish')
     parser.add_argument('-m', '--modeltouse', default='mlp_single', help='mlp_single, mlp_doublein_single, cnn_special, cnn_special_pd, rcnn')
-    parser.add_argument('-l', '--loss', default='sqCos2', help='cos, mse, sqCos2')
+    parser.add_argument('-l', '--loss', default='sqCos2', help='cos, mse, sqCos2,sqCos2WEP')
     parser.add_argument('-b', '--batchsize', default=2**12, type=int, help='no. tracking steps')
     parser.add_argument('-e','--epochs', default=1000, type=int, help='no. epochs')
     parser.add_argument('-lr','--learningrate', type=float, default=1e-4, help='minimal length of a streamline [mm]')
-    parser.add_argument('-sh', '--shOrder', type=int, default=8, dest='sh', help='order of spherical harmonics (if used)')
+    parser.add_argument('-sh', '--shOrder', type=int, default=4, dest='sh', help='order of spherical harmonics (if used)')
     parser.add_argument('-lm','--loadModel', dest='lm',default='', help='continue training with a pretrained model ')
     parser.add_argument('--repr', dest='repr',default='res100', help='data representation: [raw,sph,res100,2D]: raw, spherical harmonics, resampled to 100 directions, 16x16 2D resampling (256 directions) ')
     parser.add_argument('--unitTangent', help='unit tangent', dest='unittangent' , action='store_true')
@@ -111,6 +111,8 @@ def main():
     shOrder = args.sh
     storeTemporaryData = args.storeTemporaryData
     dilationRate = (args.dilationRate,args.dilationRate,1)
+    if(loss == 'sqCos2WEP'):
+        endpointPrediction = True
     
     activation_function = {
           'relu': lambda x: ReLU(),
@@ -156,6 +158,9 @@ def main():
     ####################
     ####################
     if(dataRepr == '2D'):
+        if(endpointPrediction):
+            warning('not implemented yet')
+            return
         noX = 1
         noY = 1
         noZ = 1
@@ -172,6 +177,9 @@ def main():
     ####################
     ####################
     elif(dataRepr == '3D'):
+        if(endpointPrediction):
+            warning('not implemented yet')
+            return
         modelToUse = '3D_cnn_dr%s' % (str(dilationRate))
         model = nn_helper.get_simple3DCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX*8,noY*8,noZ,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, dilationRate = dilationRate)  
         model.summary()
@@ -187,11 +195,17 @@ def main():
         ### ### ###
     ### MLP SINGLE ###
         ### ### ###
-        model = nn_helper.get_mlp_singleOutput(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX,noY,noZ,noDiffusionSignals], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, normalizeOutput = unitTangent)  
+        if(endpointPrediction):
+            print('wep model')
+            model = nn_helper.get_mlp_singleOutputWEP(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX,noY,noZ,noDiffusionSignals], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, normalizeOutput = unitTangent)
+        else:
+            print('raw model')
+            model = nn_helper.get_mlp_singleOutput(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX,noY,noZ,noDiffusionSignals], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, normalizeOutput = unitTangent)  
+            
         model.summary()
         
-        training_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
-        validation_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        training_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData, endpointPrediction = endpointPrediction)
+        validation_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData, endpointPrediction = endpointPrediction)
         
         noTrainingSamples = len( list(range(len(streamlines)-1000)) )
         noValidationSamples = len( list(range(len(streamlines)-1000,len(streamlines))) )

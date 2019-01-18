@@ -8,7 +8,7 @@ import os.path
 class TractographyDataGenerator(keras.utils.Sequence):
 
     def __init__(self, dwi, streamlines, affine, list_IDs, batch_size=32, dim=(3,3,3), n_channels=1,rotateTrainingData=True,
-                 n_target_coordinates=3, shuffle=False, storeTemporaryData = False):
+                 n_target_coordinates=3, shuffle=False, storeTemporaryData = False, endpointPrediction = True):
         'Initialization'
         self.pTempData = '/data/nico/tmp/' + str(time.time()) + '/'
         self.dwi = dwi
@@ -25,6 +25,12 @@ class TractographyDataGenerator(keras.utils.Sequence):
         self.coordinateScaling = 1 # scaling factor
         self.rotateTrainingData = rotateTrainingData
         self.storeTemporaryData = storeTemporaryData
+        self.keepZeroVectors = False
+        self.endpointPredictionData = endpointPrediction
+        
+        if(self.endpointPredictionData):
+            print('keeping zero vectors due to endpoint prediction')
+            self.keepZeroVectors = True
         
         os.makedirs(self.pTempData)
         
@@ -42,6 +48,32 @@ class TractographyDataGenerator(keras.utils.Sequence):
         'Generates data containing batch_size samples' # X : (n_samples, *dim, n_channels)
         streamlines_batch = [self.streamlines[i] for i in list_IDs_temp]
         interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint = dwi_tools.generateTrainingData(streamlines_batch, self.dwi, unitTension = self.unitTangent, affine=self.affine, noX=self.dim[0],noY=self.dim[1],noZ=self.dim[2],coordinateScaling=self.coordinateScaling,distToNeighbours=1, noCrossings = 1, step = self.step, rotateTrainingData = self.rotateTrainingData)
+        
+        if(self.endpointPredictionData):
+            # predict random data along our streamlines with zero directions
+            interpolatedDWISubvolumeEP, _, directionToNextStreamlinePointEP = dwi_tools.generateTrainingData(streamlines_batch, self.dwi, unitTension = self.unitTangent, affine=self.affine, noX=self.dim[0],noY=self.dim[1],noZ=self.dim[2],coordinateScaling=self.coordinateScaling,distToNeighbours=1, noCrossings = 1, step = self.step, rotateTrainingData = self.rotateTrainingData, generateRandomData = True)
+            
+            interpolatedDWISubvolume = np.concatenate((interpolatedDWISubvolume,interpolatedDWISubvolumeEP))
+            directionToNextStreamlinePoint = np.concatenate((directionToNextStreamlinePoint,directionToNextStreamlinePointEP))
+            
+            noSamples = len(interpolatedDWISubvolume)
+            labels = np.zeros((noSamples,1))
+            vN = np.sqrt(np.sum(directionToNextStreamlinePoint ** 2 , axis = 1)) 
+            idx1 = np.where(vN > 0)[0] # idx of non-zero directions
+            labels[idx1] = 1
+            
+            return interpolatedDWISubvolume, [directionToNextStreamlinePoint, np.squeeze(labels)]
+        
+        if(self.keepZeroVectors == False):
+            vN = np.sqrt(np.sum(directionToNextStreamlinePoint ** 2 , axis = 1))
+            idx1 = np.where(vN > 0)[0]
+            vN = np.sqrt(np.sum(directionToNextStreamlinePoint ** 2 , axis = 1))
+            idx2 = np.where(vN > 0)[0]
+            s2 = set(idx2)
+            idxNoZeroVectors = [val for val in idx1 if val in s2]
+            
+            interpolatedDWISubvolume = interpolatedDWISubvolume[idxNoZeroVectors,...]
+            directionToNextStreamlinePoint = directionToNextStreamlinePoint[idxNoZeroVectors,]
         
         return interpolatedDWISubvolume, directionToNextStreamlinePoint
 
@@ -64,21 +96,29 @@ class TractographyDataGenerator(keras.utils.Sequence):
         if(os.path.isfile(pTmpX)):
             #print('Loading ' + pTmpX)
             X = np.load(pTmpX)
-            y = np.load(pTmpY)
+            if(self.endpointPredictionData):
+                y1 = np.load(pTmpY+"-0")
+                y2 = np.load(pTmpY+"-1")
+                y = [y1,y2]
+            else:
+                y = np.load(pTmpY)
         else:
             # Generate data
             X, y = self.__data_generation(list_IDs_temp)
             if(self.storeTemporaryData):
-                #print('Writing ' + pTmpX)
                 np.save(pTmpX,X)
-                np.save(pTmpY,y)
+                if(self.endpointPredictionData):
+                    np.save(pTmpY+"-0",y[0])
+                    np.save(pTmpY+"-1",y[1])
+                else:
+                    np.save(pTmpY,y)
 
         return X, y
     
 class TwoDimensionalTractographyDataGenerator(keras.utils.Sequence):
 
     def __init__(self, dwi, streamlines, affine, list_IDs, batch_size=32, dim=(3,3,3), n_channels=1,rotateTrainingData=1,
-                 n_target_coordinates=3, shuffle=False, storeTemporaryData = False):
+                 n_target_coordinates=3, shuffle=False, storeTemporaryData = False, keepZeroVectors = False):
         'Initialization'
         self.pTempData = '/data/nico/tmp/' + str(time.time()) + '/'
         self.dwi = dwi
@@ -95,6 +135,7 @@ class TwoDimensionalTractographyDataGenerator(keras.utils.Sequence):
         self.coordinateScaling = 1 # scaling factor
         self.rotateTrainingData = rotateTrainingData
         self.storeTemporaryData = storeTemporaryData
+        self.keepZeroVectors = keepZeroVectors
         
         os.makedirs(self.pTempData)
         
@@ -147,7 +188,7 @@ class TwoDimensionalTractographyDataGenerator(keras.utils.Sequence):
 class ThreeDimensionalTractographyDataGenerator(keras.utils.Sequence):
 
     def __init__(self, dwi, streamlines, affine, list_IDs, batch_size=32, dim=(3,3,3), n_channels=1,rotateTrainingData=1,
-                 n_target_coordinates=3, shuffle=False, storeTemporaryData = False):
+                 n_target_coordinates=3, shuffle=False, storeTemporaryData = False, keepZeroVectors = False):
         'Initialization'
         self.pTempData = '/data/nico/tmp/' + str(time.time()) + '/'
         self.dwi = dwi
@@ -164,6 +205,7 @@ class ThreeDimensionalTractographyDataGenerator(keras.utils.Sequence):
         self.coordinateScaling = 1 # scaling factor
         self.rotateTrainingData = rotateTrainingData
         self.storeTemporaryData = storeTemporaryData
+        self.keepZeroVectors = keepZeroVectors
         
         os.makedirs(self.pTempData)
         
