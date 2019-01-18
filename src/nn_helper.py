@@ -151,7 +151,7 @@ def get_simpleCNN(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=
     return mlp
 
 # the cnn multi input architecture leads to some ambiguities.. 
-def get_simple3DCNN(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, kernelSz=3, poolSz = (2,2,2)):
+def get_simple3DCNN(inputShapeDWI, loss='mse', outputShape = 3, depth=1, features=64, activation_function=LeakyReLU(alpha=0.3), lr=1e-4, noGPUs=4, decayrate=0, useBN=False, useDropout=False, pDropout=0.5, kernelSz=3, poolSz = (2,2,2), dilation_rate = (1,1,1)):
     '''
     predict direction of past/next streamline position using simple CNN architecture
     Input: DWI subvolume centered at current streamline position
@@ -163,14 +163,14 @@ def get_simple3DCNN(inputShapeDWI, loss='mse', outputShape = 3, depth=1, feature
     
     # DOWNSAMPLING STREAM
     for i in range(1,depth+1):
-        layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+        layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal', dilation_rate = dilation_rate)(layers[-1]))
         if(useBN):
             layers.append(BatchNormalization()(layers[-1]))
         if(useDropout):
             layers.append(Dropout(0.5)(layers[-1]))
         layers.append(activation_function(layers[-1]))
         
-        layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
+        layers.append(Conv3D(features, kernelSz, padding='same', kernel_initializer = 'he_normal', dilation_rate = dilation_rate)(layers[-1]))
         if(useBN):
             layers.append(BatchNormalization()(layers[-1]))
         if(useDropout):

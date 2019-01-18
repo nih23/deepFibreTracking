@@ -3,7 +3,6 @@ seed(2342)
 from tensorflow import set_random_seed
 set_random_seed(4223)
 
-
 import time
 import nrrd
 import os
@@ -11,7 +10,7 @@ import nibabel as nb
 import numpy as np
 import matplotlib.pyplot as plt
 import h5py
-
+import tensorflow as tf
 import warnings
 
 from keras.callbacks import ModelCheckpoint, CSVLogger, ReduceLROnPlateau, EarlyStopping
@@ -36,8 +35,9 @@ from dipy.tracking import utils
 import src.dwi_tools as dwi_tools
 import src.nn_helper as nn_helper
 from src.tractographydatagenerator import TractographyDataGenerator, TwoDimensionalTractographyDataGenerator, ThreeDimensionalTractographyDataGenerator
-
-from src.nn_helper import swish
+from src.nn_helper import swish, squared_cosine_proximity_2, weighted_binary_crossentropy, mse_directionInvariant
+from src.SelectiveDropout import SelectiveDropout
+from src.tied_layers1d import Convolution2D_tied
 
 from keras.layers.advanced_activations import LeakyReLU, ReLU
 from keras.layers import Activation
@@ -61,6 +61,7 @@ def main():
     parser.add_argument('-nz', dest='nz',default=1, type=int, help='no of voxels in Z plane for each streamline position')   
     parser.add_argument('-f', '--features', default=128, type=int, help='name of tracking case')
     parser.add_argument('-d', '--depth', default=3, type=int, help='name of tracking case')
+    parser.add_argument('-dr', '--dilationRate', default=1, type=int, help='dilation rate in x and y plane for 3D models. ')
     parser.add_argument('-a', '--activationfunction', default='relu', help='relu, leakyrelu, swish')
     parser.add_argument('-m', '--modeltouse', default='mlp_single', help='mlp_single, mlp_doublein_single, cnn_special, cnn_special_pd, rcnn')
     parser.add_argument('-l', '--loss', default='sqCos2', help='cos, mse, sqCos2')
@@ -68,7 +69,8 @@ def main():
     parser.add_argument('-e','--epochs', default=1000, type=int, help='no. epochs')
     parser.add_argument('-lr','--learningrate', type=float, default=1e-4, help='minimal length of a streamline [mm]')
     parser.add_argument('-sh', '--shOrder', type=int, default=8, dest='sh', help='order of spherical harmonics (if used)')
-    parser.add_argument('-repr', dest='repr',default='res100', help='data representation: [raw,sph,res100,2D]: raw, spherical harmonics, resampled to 100 directions, 16x16 2D resampling (256 directions) ')
+    parser.add_argument('-lm','--loadModel', dest='lm',default='', help='continue training with a pretrained model ')
+    parser.add_argument('--repr', dest='repr',default='res100', help='data representation: [raw,sph,res100,2D]: raw, spherical harmonics, resampled to 100 directions, 16x16 2D resampling (256 directions) ')
     parser.add_argument('--unitTangent', help='unit tangent', dest='unittangent' , action='store_true')
     parser.add_argument('--nounitTangent', help='no unit tangent', dest='unittangent' , action='store_false')
     parser.add_argument('--dropout', help='dropout regularization', dest='dropout', action='store_true')
@@ -85,6 +87,7 @@ def main():
     parser.set_defaults(storeTemporaryData=False)   
     args = parser.parse_args()
     
+    pPretrainedModel = args.lm
     noThreads = args.noThreads
     noX = args.nx
     noY = args.ny
@@ -107,6 +110,7 @@ def main():
     keepZeroVectors = args.keepzero
     shOrder = args.sh
     storeTemporaryData = args.storeTemporaryData
+    dilationRate = (args.dilationRate,args.dilationRate,1)
     
     activation_function = {
           'relu': lambda x: ReLU(),
@@ -121,9 +125,7 @@ def main():
 
     # load streamlines
     streamlines = dwi_tools.loadVTKstreamlines(pStreamlines)
-    
-    # init data generator
-    noTrainingSamples = len(list(range(len(streamlines)-10000)))
+    streamlines = streamlines[0:30000] 
     
     # load DWI dataset
     nameDWIDataset = 'ISMRM_2015_Tracto_challenge_data'
@@ -161,17 +163,24 @@ def main():
         model = nn_helper.get_simpleCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[8,8,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)  
         model.summary()
         # data generator
-        training_generator = TwoDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
-        validation_generator = TwoDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        training_generator = TwoDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        validation_generator = TwoDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        
+        noTrainingSamples = len( list(range(len(streamlines)-1000)) )
+        noValidationSamples = len( list(range(len(streamlines)-1000,len(streamlines))) )
+        print('samples tra/val %d/%d' % (noTrainingSamples, noValidationSamples) )
     ####################
     ####################
-    if(dataRepr == '3D'):
-        modelToUse = '3D_cnn'
-        model = nn_helper.get_simple3DCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX*8,noY*8,noZ,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)  
+    elif(dataRepr == '3D'):
+        modelToUse = '3D_cnn_dr%s' % (str(dilationRate))
+        model = nn_helper.get_simple3DCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX*8,noY*8,noZ,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, dilationRate = dilationRate)  
         model.summary()
         # data generator
         training_generator = ThreeDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
         validation_generator = ThreeDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        noTrainingSamples = len( list(range(len(streamlines)-1000)) )
+        noValidationSamples = len( list(range(len(streamlines)-1000,len(streamlines))) )
+        print('samples tra/val %d/%d' % (noTrainingSamples, noValidationSamples) )
     ####################
     ####################
     else:
@@ -181,10 +190,15 @@ def main():
         model = nn_helper.get_mlp_singleOutput(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX,noY,noZ,noDiffusionSignals], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, normalizeOutput = unitTangent)  
         model.summary()
         
-        training_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
-        validation_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        training_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        validation_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        
+        noTrainingSamples = len( list(range(len(streamlines)-1000)) )
+        noValidationSamples = len( list(range(len(streamlines)-1000,len(streamlines))) )
+        print('samples tra/val %d/%d' % (noTrainingSamples, noValidationSamples) )
     
-
+    if(pPretrainedModel != ''):
+        model = load_model(pPretrainedModel, custom_objects={'tf':tf, 'swish':Activation(swish), 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'mse_directionInvariant': mse_directionInvariant})
     
     print('\n**************')
     print('** Training **')
@@ -226,7 +240,7 @@ def main():
         steps_per_epoch=int(noTrainingSamples/batch_size),
         epochs=epochs,
         verbose=1,
-        validation_steps=1,
+        validation_steps=int(noValidationSamples/batch_size),
         callbacks=callbacks,
         max_queue_size=noThreads)
             
