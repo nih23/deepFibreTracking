@@ -101,9 +101,9 @@ def makeStep(predictedDirection,lastDirections,curStreamlinePos_ras,M,abc,stepWi
 
 def getNextDirection(dwi,curPosition_ijk, model, lastDirections = None, x_ = [0], y_ = [0], z_ = [0], noX = 1, noY = 1, noZ = 1, batch_size = 2**10, reshapeForConvNet = False, rotateData = False, usePreviousDirection = False):
     rot = None
-    
+       
     if(rotateData):
-        print('rotating data')
+        #print('rotating data')
         start_time = time.time()
         # reference orientation
         vv = dwi_tools.getReferenceOrientation()
@@ -120,9 +120,18 @@ def getNextDirection(dwi,curPosition_ijk, model, lastDirections = None, x_ = [0]
     dwi_at_curPosition = dwi_tools.interpolateDWIVolume(dwi, curPosition_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ, rotations = rot)
     
     if(reshapeForConvNet):
+        
         noSamples,dx,dy,dz,dw = dwi_at_curPosition.shape
-        dwi_at_curPosition = np.reshape(dwi_at_curPosition, [noSamples,16,16])
-        dwi_at_curPosition = dwi_at_curPosition[..., np.newaxis]
+#        print(str([[-1,], model.get_input_shape_at(0)[1:]]))
+        dim = np.concatenate([[-1,], model.get_input_shape_at(0)[1:]])
+        dwi_at_curPosition = np.reshape(dwi_at_curPosition, dim)
+        
+#        if(dw == 64):
+#            dwi_at_curPosition = np.reshape(dwi_at_curPosition, [noSamples,8*noX,8*noY,noZ,1])
+#        else:
+#            dwi_at_curPosition = np.reshape(dwi_at_curPosition, [noSamples,noX,noY,noZ])
+#        print("dwi shape2" + str(dwi_at_curPosition.shape))
+        #dwi_at_curPosition = dwi_at_curPosition[..., np.newaxis]
         
     if(usePreviousDirection == False):
         predictedDirection = model.predict([dwi_at_curPosition], batch_size = batch_size)
@@ -130,8 +139,6 @@ def getNextDirection(dwi,curPosition_ijk, model, lastDirections = None, x_ = [0]
         if(reshapeForConvNet):
             # CNN model w/ previous direction is different than the MLP as it doesnt require the last streamline vector but the actual DWI data at the previous streamline position.
             # we hacked that into the last direction :D
-            print("ld shape:" + str(lastDirections.shape))
-            print("cur shape:" + str(dwi_at_curPosition.shape))
             dwi_at_prev_and_curPosition = np.stack((np.squeeze(lastDirections), np.squeeze(dwi_at_curPosition)))
             dwi_at_prev_and_curPosition = np.moveaxis(dwi_at_prev_and_curPosition,0,-1)
             predictedDirection = model.predict([dwi_at_prev_and_curPosition], batch_size = batch_size)
@@ -158,7 +165,7 @@ def getNextDirectionMagicModel(dwi,curPosition_ijk, model, lastDirections = None
         validIdx = list(range(len(curPosition_ijk)))
     
     dwi_at_curPosition = dwi_tools.interpolateDWIVolume(dwi, curPosition_ijk[validIdx,], x_,y_,z_, noX = noX, noY = noY, noZ = noZ)
-    
+       
     if(reshapeForConvNet):
         noSamples,dx,dy,dz,dw = dwi_at_curPosition.shape
         dwi_at_curPosition = np.reshape(dwi_at_curPosition, [noSamples,16,16])
@@ -204,6 +211,9 @@ def start(seeds, data, model, affine, mask, fa, printProgress = False, fa_thresh
     '''
     fibre tracking using neural networks
     '''    
+    
+    print('Reshape: ' + str(reshapeForConvNet))
+    
     mask = mask.astype(np.float)
     
     noSeeds = len(seeds)
@@ -237,13 +247,13 @@ def start(seeds, data, model, affine, mask, fa, printProgress = False, fa_thresh
     lastDirections = np.zeros([noSeeds,3])
     
     ld_input = lastDirections
-    if(reshapeForConvNet):
-        dwi_at_lastPosition = dwi_tools.interpolateDWIVolume(data, curStreamlinePos_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ) ## otherwise try zero.. depending on model
-        noSamples,dx,dy,dz,dw = dwi_at_lastPosition.shape
-        dwi_at_lastPosition = np.reshape(dwi_at_lastPosition, [noSamples,16,16])
-        dwi_at_lastPosition = np.zeros((noSamples,16,16))
-        dwi_at_lastPosition = dwi_at_lastPosition[..., np.newaxis]
-        ld_input = dwi_at_lastPosition
+#    if(reshapeForConvNet):
+#        dwi_at_lastPosition = dwi_tools.interpolateDWIVolume(data, curStreamlinePos_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ) ## otherwise try zero.. depending on model
+#        noSamples,dx,dy,dz,dw = dwi_at_lastPosition.shape
+#        dwi_at_lastPosition = np.reshape(dwi_at_lastPosition, [noSamples,16,16])
+#        dwi_at_lastPosition = np.zeros((noSamples,16,16))
+#        dwi_at_lastPosition = dwi_at_lastPosition[..., np.newaxis]
+#        ld_input = dwi_at_lastPosition
     
     # predict direction but in never rotate data
     predictedDirection, vecNorms, dwi_at_curPosition = getNextDirection(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = ld_input, reshapeForConvNet = reshapeForConvNet, rotateData = False, usePreviousDirection = usePreviousDirection, noX = noX, noY = noY, noZ = noZ, x_ = x_, y_ = y_, z_ = z_)
@@ -281,8 +291,8 @@ def start(seeds, data, model, affine, mask, fa, printProgress = False, fa_thresh
         ####
         # compute direction
         ld_input = lastDirections
-        if(reshapeForConvNet):
-            ld_input = dwi_at_curPosition
+#        if(reshapeForConvNet):
+#            ld_input = dwi_at_curPosition
             
         predictedDirection, vecNorms, dwi_at_curPosition = getNextDirection(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = ld_input, reshapeForConvNet = reshapeForConvNet, rotateData = rotateData, usePreviousDirection = usePreviousDirection, noX = noX, noY = noY, noZ = noZ, x_ = x_, y_ = y_, z_ = z_)
         vNorms[:,iter,] = vecNorms

@@ -65,11 +65,9 @@ def main():
     parser.add_argument('-lr','--learningrate', type=float, default=1e-4, help='minimal length of a streamline [mm]')
     parser.add_argument('-sh', '--shOrder', type=int, default=8, help='order of spherical harmonics (if used)')
     parser.add_argument('--unitTangent', help='unit tangent', dest='unittangent' , action='store_true')
-    parser.add_argument('--nounitTangent', help='no unit tangent', dest='unittangent' , action='store_false')
     parser.add_argument('--dropout', help='dropout regularization', dest='dropout' , action='store_true')
     parser.add_argument('--keepZeroVectors', help='keep zero vectors at the outer positions of streamline to indicate termination.', dest='keepzero' , action='store_true')
     parser.add_argument('-bn','--batchnormalization', help='batchnormalization', dest='dropout' , action='store_true')
-    
     parser.add_argument('--bvalue',type=int, default=1000, help='b-value of our DWI data')
         
     parser.set_defaults(unittangent=False)   
@@ -92,7 +90,6 @@ def main():
     unitTangent = args.unittangent
     modelToUse = args.modeltouse
     keepZeroVectors = args.keepzero
-    
     activation_function = {
           'relu': lambda x: ReLU(),
           'leakyrelu': lambda x: LeakyReLU(),
@@ -181,7 +178,29 @@ def main():
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2,
                               patience=5, min_lr=1e-5, verbose=1)
 
-   
+       ####################
+    ####################
+    if(modelToUse == '2Dcnn'):
+        noX = 1
+        noY = 1
+        noZ = 1
+        modelToUse = '2D_cnn'
+        model = nn_helper.get_simpleCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[8,8,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)  
+        model.summary()
+        # data generator
+        training_generator = TwoDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-20000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        validation_generator = TwoDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-20000,len(streamlines)-10000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+    ####################
+    ####################
+    if(modelToUse == '3Dcnn'):
+        modelToUse = '3D_cnn_dr%s' % (str(dilationRate))
+        model = nn_helper.get_simple3DCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX*8,noY*8,noZ,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, dilationRate = dilationRate)  
+        model.summary()
+        # data generator
+        training_generator = ThreeDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        validation_generator = ThreeDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+    ####################
+    ####################
     ### train model ###
     if (modelToUse == 'mlp_double'):
         mlp_simple = nn_helper.get_mlp_doubleOutput(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=train_DWI.shape[1:5], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)       
@@ -196,7 +215,6 @@ def main():
         train_DWI = np.reshape(train_DWI, [noSamples,16,16])
         print(str(train_DWI.shape))
 
-        #train_DWI_past = train_DWI_past[idxNoZeroVectors,...]
         train_DWI_past = np.reshape(train_DWI_past, [noSamples,16,16])
         
         train_DWI_both = np.stack((train_DWI_past, train_DWI))

@@ -1,5 +1,6 @@
 import time
 import nrrd
+import os
 import nibabel as nb
 import numpy as np
 import matplotlib.pyplot as plt
@@ -54,23 +55,26 @@ def main():
     parser.add_argument('-mal', dest='maxLength', type=int, default=200, help='maximum length of a streamline [mm]')
     parser.add_argument('-repr', dest='repr',default='res100', help='data representation: [raw,sph,res100,2D]: raw, spherical harmonics, resampled to 100 directions, 16x16 2D resampling (256 directions) ')
     parser.add_argument('-sh', dest='sh', type=int, default=8, help='order of spherical harmonics (if used)')
-    parser.add_argument('-noStreamlines', dest='noStreamlines', default=0, type=int, help='specify if a random subset of the streamlines should be used to generate the training data')
+    parser.add_argument('--noStreamlines', dest='noStreamlines', default=0, type=int, help='specify if a random subset of the streamlines should be used to generate the training data')
     parser.add_argument('--rotateTrainingData', help='rotate data wrt. tangent [default]', dest='rotateTrainingData' , action='store_true')
     #parser.add_argument('--noRotateTrainingData', help='dont rotate data', dest='rotateTrainingData' , action='store_false')
     parser.add_argument('--unitTangent', help='unit tangent', dest='unittangent' , action='store_true')
     #parser.add_argument('--noUnitTangent', help='no unit tangent [default]', dest='unittangent' , action='store_false')
     parser.add_argument('--visStreamlines', help='visualize streamlines before proceeding with data generation', dest='visStreamlines' , action='store_true')
-    parser.add_argument('--ISMRM2015data', help='generate training data for the ismrm 2015 dataset', dest='ISMRM2015data' , action='store_true')
+    parser.add_argument('--ISMRM2015data', help='generate training data for the ismrm 2015 dataset', dest='ISMRM2015data', action='store_true')
     parser.add_argument('--HCPid', default='100307', help='case id of the HCP dataset to be used [default: 100307]')
     parser.add_argument('--precomputedStreamlines', default='', help='load precomputed streamlines instead of applying a tensor model')
+    parser.add_argument('--addRandomDataForEndpointPrediction', default='', help='should we generate additional random data for endpoint prediction?', action='store_true')
     parser.add_argument('-nt', '--noThreads', type=int, default=4, help='number of parallel threads of the data generator. Note: this also increases the memory demand.')
     
     parser.set_defaults(rotateTrainingData=False)   
     parser.set_defaults(unittangent=False)   
     parser.set_defaults(visStreamlines=False)   
     parser.set_defaults(ISMRM2015data=False)
+    parser.set_defaults(addRandomDataForEndpointPrediction=False)
     args = parser.parse_args()
     
+    addRandomDataForEndpointPrediction = args.addRandomDataForEndpointPrediction
     tensorModel = args.tensorModel
     noX = args.nx
     noY = args.ny
@@ -113,7 +117,8 @@ def main():
         print("step width " + str(np.linalg.norm(streamlines_filtered[0][1] - streamlines_filtered[0][0])) + " mm")
         tensorModel = 'precomp'
         tInfo = pPrecomputedStreamlines
-        pTrainData = '/data/nico/trainingdata/%s/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotateTD%d.h5' % (nameDWIDataset, pPrecomputedStreamlines, b_value, dataRepr, stepWidth, noX,noY,noZ,unitTangent,rotateTrainingData)
+        pTrainDataDir = '/data/nico/trainingdata/%s/%s/' % (nameDWIDataset, pPrecomputedStreamlines)
+        pTrainData = '/data/nico/trainingdata/%s/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotateD%d_ep%d.h5' % (nameDWIDataset, pPrecomputedStreamlines, b_value, dataRepr, stepWidth, noX,noY,noZ,unitTangent,rotateTrainingData,addRandomDataForEndpointPrediction)
     
     if(tensorModel == 'dti'):
         start_time = time.time()
@@ -158,7 +163,9 @@ def main():
         runtime = time.time() - start_time
         print('LocalTracking Runtime ' + str(runtime) + 's')
         tInfo = '%s_sw%.1f_minL%d_maxL%d_fa%.2f' % (tensorModel,stepWidth,minimumStreamlineLength,maximumStreamlineLength,faThreshold)
-        pTrainData = '/data/nico/trainingdata/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotateTD%d.h5' % (nameDWIDataset, b_value, dataRepr, stepWidth, noX,noY,noZ,unitTangent,rotateTrainingData)
+        pTrainData = '/data/nico/trainingdata/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotated%d_ep%d.h5' % (nameDWIDataset, b_value, dataRepr, stepWidth, noX,noY,noZ,unitTangent,rotateTrainingData,addRandomDataForEndpointPrediction)
+        pTrainDataDir = '/data/nico/trainingdata/'
+        
         dwi_tools.saveVTKstreamlines(streamlines_filtered, 'data/%s_%s.vtk' % (nameDWIDataset,tInfo))
 
     
@@ -171,11 +178,11 @@ def main():
     dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(b_value, bvals, bvecs, dwi)
     b0_idx = bvals < 10
     b0 = dwi[..., b0_idx].mean(axis=3)
-    dwi_singleShell = np.concatenate((dwi_subset, dwi[..., b0_idx]), axis=3)
+    #dwi_singleShell = np.concatenate((dwi_subset, dwi[..., b0_idx]), axis=3)
     #    dwi_singleShell_norm = dwi_tools.normalize_dwi(dwi_singleShell, b0)
-    bvals_singleShell = np.concatenate((bvals_subset, bvals[..., b0_idx]), axis=0)
-    bvecs_singleShell = np.concatenate((bvecs_subset, bvecs[b0_idx,]), axis=0)
-    gtab_singleShell = gradient_table(bvals=bvals_singleShell, bvecs=bvecs_singleShell, b0_threshold = 10)
+    #bvals_singleShell = np.concatenate((bvals_subset, bvals[..., b0_idx]), axis=0)
+    #bvecs_singleShell = np.concatenate((bvecs_subset, bvecs[b0_idx,]), axis=0)
+    #gtab_singleShell = gradient_table(bvals=bvals_singleShell, bvecs=bvecs_singleShell, b0_threshold = 10)
     
     if(dataRepr == 'sh'):
         t_data = dwi_tools.get_spherical_harmonics_coefficients(bvals=bvals_subset,bvecs=bvecs_subset,sh_order=shOrder, dwi=dwi_subset, b0 = b0)
@@ -183,7 +190,9 @@ def main():
         t_data, resamplingSphere = dwi_tools.resample_dwi(dwi_subset, b0, bvals_subset, bvecs_subset, sh_order=shOrder, smooth=0, mean_centering=False)
     elif(dataRepr == 'raw'):
         t_data = dwi_subset
-        
+    
+    del dwi_subset
+    
     if(noStreamlines>0):
         streamlines_filtered = np.random.choice(streamlines_filtered,noStreamlines, replace=False)
         nameDWIDataset = nameDWIDataset + "_" + str(noStreamlines) + "sl_"
@@ -191,15 +200,24 @@ def main():
     print('Generating training data... ')
 
     start_time = time.time()
-    train_DWI,train_prevDirection, train_nextDirection,_ = dwi_tools.generateTrainingData(streamlines_filtered, t_data, unitTension = unitTangent, affine=aff, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossingFibres, step = 1, rotateTrainingData = rotateTrainingData)
-    #train_DWI,train_prevDirection, train_nextDirection,_,slo,train_DWI_pastAggregated = dwi_tools.generateTrainingData(streamlines_filtered, t_data, unitTension = unitTangent, affine=aff, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossingFibres, step = 1)
+    train_DWI,train_prevDirection, train_nextDirection = dwi_tools.generateTrainingData(streamlines_filtered, t_data, unitTension = unitTangent, affine=aff, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossingFibres, step = 1, rotateTrainingData = rotateTrainingData)
+    
+    if(addRandomDataForEndpointPrediction):
+        print('Generate random data for endpoint prediction')
+        train_DWI2,train_prevDirection2, train_nextDirection2 = dwi_tools.generateTrainingData(streamlines_filtered, t_data, unitTension = unitTangent, affine=aff, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossingFibres, step = 1, rotateTrainingData = rotateTrainingData, generateRandomData = True)
+        train_DWI = np.concatenate((train_DWI,train_DWI2))
+        train_prevDirection = np.concatenate((train_prevDirection,train_prevDirection2))
+        train_nextDirection = np.concatenate((train_nextDirection,train_nextDirection2))
+
+    del t_data
+    
     runtime = time.time() - start_time
     print('Runtime ' + str(runtime) + ' s ')
 
     
 
     print('Writing training data: ' + pTrainData )
-    
+    os.makedirs(pTrainDataDir, exist_ok = True)
     with h5py.File(pTrainData,"w") as f:
         f.create_dataset('train_DWI',data=train_DWI)
     #    f.create_dataset('train_DWI_pastAgg',data=train_DWI_pastAggregated)

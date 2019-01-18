@@ -737,7 +737,7 @@ def _getCoordinateGrid(noX,noY,noZ,coordinateScaling):
 def getReferenceOrientation():
     return np.array([0,1,0])
 
-def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, noY=1,noZ=1,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1, unitTension = True, rotateTrainingData = True):
+def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, noY=1,noZ=1,coordinateScaling = 1, noCrossings = 3, distToNeighbours = 0.5, maximumNumberOfNearbyStreamlinePoints = 3, step = 1, unitTension = True, rotateTrainingData = True, generateRandomData=False):
     '''
     
     '''
@@ -764,8 +764,8 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, 
     directionToNextStreamlinePoint = np.zeros([len(sl_pos),3]) # next direction
     directionToPreviousStreamlinePoint = np.zeros([len(sl_pos),3]) # previous direction
     interpolatedDWISubvolume = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
-    interpolatedDWISubvolumePast = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
-#    interpolatedDWISubvolumePastAggregated = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
+    #interpolatedDWISubvolumePast = np.zeros([len(sl_pos),noX,noY,noZ,dw]) # interpolated dwi dataset for each streamline position
+
     
     # projections
     aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
@@ -806,6 +806,9 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, 
 
             for k in range(noPoints-1):
                 R_2vect(rot[k+1,:],vector_orig=tangents[k,],vector_fin=vv)
+                if(generateRandomData):
+                    rot[k+1,:] += np.random.rand(3,3) - 0.5 # randomely rotate our data (and hope that there no other streamline coming from that direction)
+                
                 
         # interpolate
         interp_slv_ijk = interpolateDWIVolume(dwi,streamlinevec_ijk, rotations=rot, noX = noX, noY = noY, noZ = noZ,x_ = x_,y_ = y_,z_ = z_)        
@@ -813,10 +816,14 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, 
         dNextAll = np.concatenate(  (streamlinevec_all_next - streamlinevec[0:-1,], np.array([[0,0,0]])))
         dPrevAll = np.concatenate( (np.array([[0,0,0]]), -1 * dNextAll[0:-1,]) )
         
+        if(generateRandomData):
+            dNextAll = np.zeros([noPoints,3])
+            dPrevAll = np.zeros([noPoints,3])
+        
         streamlinevecPast_ijk = (M.dot(streamlinevec.T) + abc).T
         
         interpolatedDWISubvolume[ctr:ctr+noPoints,] = interp_slv_ijk
-        interpolatedDWISubvolumePast[ctr+1:ctr+noPoints,] = interp_slv_ijk[0:-1,]
+        #interpolatedDWISubvolumePast[ctr+1:ctr+noPoints,] = interp_slv_ijk[0:-1,]
         directionToNextStreamlinePoint[ctr:ctr+noPoints,] = dNextAll
         directionToPreviousStreamlinePoint[ctr:ctr+noPoints,] = dPrevAll
         
@@ -831,7 +838,7 @@ def generateTrainingData(streamlines, dwi, affine, rec_level_sphere = 3, noX=1, 
         directionToNextStreamlinePoint = np.nan_to_num(directionToNextStreamlinePoint // np.sqrt(np.sum(directionToNextStreamlinePoint ** 2, axis = 1))) # unit vector   
         directionToPreviousStreamlinePoint = np.nan_to_num(directionToPreviousStreamlinePoint // np.sqrt(np.sum(directionToPreviousStreamlinePoint ** 2, axis = 1))) # unit vector
 
-    return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint, interpolatedDWISubvolumePast
+    return interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint #, interpolatedDWISubvolumePast
 
 def R_2vect(R, vector_orig, vector_fin):
     """Calculate the rotation matrix required to rotate from one vector to another.

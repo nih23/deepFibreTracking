@@ -105,20 +105,16 @@ def main():
     
     coordinateScaling = 1
     useDTIPeakDirection = True
-    useSphericalHarmonics = True
-    usePreviousDirection = True
+    useSphericalHarmonics = False
+    usePreviousDirection = False
     useBayesianTracker = False
     use2DProjection = False
     #useDenoising = False
     resample100Directions = False
    # resliceDataToHCPDimension = False
     
-    #pCaseID = 'ISMRM_2015_Tracto_challenge_data'
-    #pCaseID = 'ISMRM_2015_Tracto_challenge_ground_truth_dwi_v2'
-       
-
-    #pModel = 'results/train_res100_all_noB0InSH_step0.6_wholeBrain_b1000_csd_ismrm_cur_1x1x1_noUnitTension/models/V3wZ_mlp_single_sqCos2WEP_dx_1_dy_1_dz_1_dd_100_ReLU_feat_512_depth_3_output_3_lr_0.0001_dropout_1_bn_0_pt_0_unitTension_0-zvFix2_13--0.658784.h5' # ziemlich gut
-    
+    cnn2D = False
+    cnn3D = False
     
     pResult = "results_tracking/" + pCaseID + os.path.sep + pModel.replace('.h5','').replace('/models/','/').replace('results','') + 'reslice-' + str(resliceDataToHCPDimension) + '-denoising-' + str(useDenoising) + '-' + str(noTrackingSteps) + 'st-20mm-fa-' + str(fa_threshold)
     
@@ -155,6 +151,24 @@ def main():
         else: 
             noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)
 
+    if(pModel.find("2D_cnn")>0):
+        cnn2D = True
+        noSamples, noX, noY, noZ = tracker.get_input_shape_at(0)
+        noC = -1
+        noX = 1
+        noY = 1
+        usePreviousDirection = False
+        use2DProjection = True
+        rotateData = False
+            
+    elif(pModel.find("3D_cnn")>0):
+        cnn3D = True
+        noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)
+        noX = int(noX / 8)
+        noY = int(noY / 8)
+        usePreviousDirection = False
+        use2DProjection = True
+            
     magicModel = False
     
     if(pModel.find("sqCos2WEP")>0):
@@ -183,9 +197,10 @@ def main():
     if(use2DProjection):
         print('2D projection')
         start_time = time.time()
-        tracking_data, resamplingSphere = dwi_tools.resample_dwi_forunet(dwi_subset, b0, bvals_subset, bvecs_subset, sh_order=8, smooth=0, mean_centering=False)
+        tracking_data, resamplingSphere = dwi_tools.resample_dwi_2D(dwi_subset, b0, bvals_subset, bvecs_subset, sh_order=8, smooth=0, mean_centering=False)
         runtime = time.time() - start_time
         print('Runtime ' + str(runtime) + 's')
+        print('Shape: ' + str(tracking_data.shape))
         #use2DProjection = False
 
     if(resample100Directions):
