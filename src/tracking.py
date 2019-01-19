@@ -159,21 +159,41 @@ def getNextDirection(dwi,curPosition_ijk, model, lastDirections = None, x_ = [0]
     return predictedDirection, vecNorms, dwi_at_curPosition
 
 
-def getNextDirectionMagicModel(dwi,curPosition_ijk, model, lastDirections = None, x_ = [0], y_ = [0], z_ = [0], noX = 1, noY = 1, noZ = 1, batch_size = 2**10, reshapeForConvNet = False, validIdx = None):
+def getNextDirectionMagicModel(dwi,curPosition_ijk, model, lastDirections = None, x_ = [0], y_ = [0], z_ = [0], noX = 1, noY = 1, noZ = 1, batch_size = 2**10, reshapeForConvNet = False, validIdx = None, rotateData = False):
     
     if(validIdx is None):
         validIdx = list(range(len(curPosition_ijk)))
     
-    dwi_at_curPosition = dwi_tools.interpolateDWIVolume(dwi, curPosition_ijk[validIdx,], x_,y_,z_, noX = noX, noY = noY, noZ = noZ)
+    #dwi_at_curPosition = dwi_tools.interpolateDWIVolume(dwi, curPosition_ijk[validIdx,], x_,y_,z_, noX = noX, noY = noY, noZ = noZ)
+    
+    rot = None
+       
+    if(rotateData):
+        #print('rotating data')
+        start_time = time.time()
+        # reference orientation
+        vv = dwi_tools.getReferenceOrientation()
+
+        noPositions = len(lastDirections)
+
+        # compute rotation matrices
+        rot = np.zeros([noPositions,3,3])
+
+        for k in range(noPositions):
+            dwi_tools.R_2vect(rot[k,:,:],vector_orig=lastDirections[k,],vector_fin=vv)
+        print(" -> " + str(time.time() - start_time) + "s")
+
+    dwi_at_curPosition = dwi_tools.interpolateDWIVolume(dwi, curPosition_ijk[validIdx,], x_,y_,z_, noX = noX, noY = noY, noZ = noZ, rotations = rot[validIdx,])
        
     if(reshapeForConvNet):
         noSamples,dx,dy,dz,dw = dwi_at_curPosition.shape
-        dwi_at_curPosition = np.reshape(dwi_at_curPosition, [noSamples,16,16])
-        dwi_at_curPosition = dwi_at_curPosition[..., np.newaxis]
+#        dwi_at_curPosition = np.reshape(dwi_at_curPosition, [noSamples,16,16])
+#        dwi_at_curPosition = dwi_at_curPosition[..., np.newaxis]
+        dim = np.concatenate([[-1,], model.get_input_shape_at(0)[0][1:]])
+        dwi_at_curPosition = np.reshape(dwi_at_curPosition, dim)
     
     predictedDirection = np.zeros([len(curPosition_ijk),3])
     stopTrackingProbability = np.zeros([len(curPosition_ijk),1])
-    
     
     
     if(lastDirections is None):
@@ -183,8 +203,8 @@ def getNextDirectionMagicModel(dwi,curPosition_ijk, model, lastDirections = None
         if(reshapeForConvNet):
             # CNN model w/ previous direction is different than the MLP as it doesnt require the last streamline vector but the actual DWI data at the previous streamline position.
             # we hacked that into the last direction :D
-            print("ld shape:" + str(lastDirections.shape))
-            print("cur shape:" + str(dwi_at_curPosition.shape))
+#            print("ld shape:" + str(lastDirections.shape))
+#            print("cur shape:" + str(dwi_at_curPosition.shape))
             dwi_at_prev_and_curPosition = np.stack((np.squeeze(lastDirections), np.squeeze(dwi_at_curPosition)))
             dwi_at_prev_and_curPosition = np.moveaxis(dwi_at_prev_and_curPosition,0,-1)
             predictedDirectionAtIdx, stopTrackingProbabilityAtIdx = model.predict([dwi_at_prev_and_curPosition], batch_size = batch_size)
@@ -347,7 +367,7 @@ def start(seeds, data, model, affine, mask, fa, printProgress = False, fa_thresh
 
 
 
-def startMagicModel(seeds, data, model, affine, mask, printProgress = False, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, useSph = False,inverseDirection = False, printfProfiling = False, noIterations = 200, batch_size = 2**12, usePreviousDirection = True, reshapeForConvNet = False):   
+def startMagicModel(seeds, data, model, affine, mask, printProgress = False, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, useSph = False,inverseDirection = False, printfProfiling = False, noIterations = 200, batch_size = 2**12, usePreviousDirection = True, reshapeForConvNet = False, rotateData = False):   
     '''
     fibre tracking using neural networks
     '''    
@@ -388,17 +408,17 @@ def startMagicModel(seeds, data, model, affine, mask, printProgress = False, noX
 #   if(usePreviousDirection == False):
 #       predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = None, reshapeForConvNet = reshapeForConvNet)
 #   else:
-    if(reshapeForConvNet):
-        dwi_at_lastPosition = dwi_tools.interpolateDWIVolume(data, curStreamlinePos_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ) ## otherwise try zero.. depending on model
-        noSamples,dx,dy,dz,dw = dwi_at_lastPosition.shape
-        dwi_at_lastPosition = np.reshape(dwi_at_lastPosition, [noSamples,16,16])
-        dwi_at_lastPosition = np.zeros((noSamples,16,16))
-        dwi_at_lastPosition = dwi_at_lastPosition[..., np.newaxis]
-        ld_i = dwi_at_lastPosition
+#    if(reshapeForConvNet):
+#        dwi_at_lastPosition = dwi_tools.interpolateDWIVolume(data, curStreamlinePos_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ) ## otherwise try zero.. depending on model
+#        noSamples,dx,dy,dz,dw = dwi_at_lastPosition.shape
+#        dwi_at_lastPosition = np.reshape(dwi_at_lastPosition, [noSamples,16,16])
+#        dwi_at_lastPosition = np.zeros((noSamples,16,16))
+#        dwi_at_lastPosition = dwi_at_lastPosition[..., np.newaxis]
+#        ld_i = dwi_at_lastPosition
 #           predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = dwi_at_lastPosition, reshapeForConvNet = reshapeForConvNet)
 #       else:
     
-    predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = ld_i, reshapeForConvNet = reshapeForConvNet)
+    predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = ld_i, reshapeForConvNet = reshapeForConvNet, rotateData = False)
         
     candidatePosition_ras, candidatePosition_ijk = makeStep(stepWidth=stepWidth,printfProfiling=printfProfiling,predictedDirection = predictedDirection, lastDirections = lastDirections, curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc);
             
@@ -437,12 +457,12 @@ def startMagicModel(seeds, data, model, affine, mask, printProgress = False, noX
         ####
         # compute direction
         if(usePreviousDirection == False):
-            predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = None, reshapeForConvNet = reshapeForConvNet, validIdx = validSls)
+            predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = dwi_at_curPosition, reshapeForConvNet = reshapeForConvNet, validIdx = validSls, rotateData = rotateData)
         else:
             if(reshapeForConvNet):
-                predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = dwi_at_curPosition, reshapeForConvNet = reshapeForConvNet, validIdx = validSls)
+                predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = dwi_at_curPosition, reshapeForConvNet = reshapeForConvNet, validIdx = validSls, rotateData = rotateData)
             else:
-                predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = lastDirections, reshapeForConvNet = reshapeForConvNe, validIdx = validSls)
+                predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = lastDirections, reshapeForConvNet = reshapeForConvNe, validIdx = validSls, rotateData = rotateData)
         vNorms[:,iter,] = vecNorms
         stopProbabilities[:,iter] = stopTrackingProbability
         ####
@@ -491,130 +511,6 @@ def startMagicModel(seeds, data, model, affine, mask, printProgress = False, noX
     streamlines = Streamlines(joinTwoAlignedStreamlineLists(sl_backward, sl_forward))
     
     return streamlines, vNorms, stopProbabilities
-
-
-def startAggregatedMagicModel(seeds, data, model, affine, mask, printProgress = False, noX=3, noY=3,noZ=3,dw=288,coordinateScaling = 0.1, stepWidth = 0.1, useSph = False,inverseDirection = False, printfProfiling = False, noIterations = 200, batch_size = 2**12, usePreviousDirection = True, reshapeForConvNet = False):   
-    '''
-    fibre tracking using neural networks
-    '''    
-    mask = mask.astype(np.float)
-    
-    noSeeds = len(seeds)
-
-    # initialize streamline positions data
-    vNorms = np.zeros([2*noSeeds,noIterations+1])
-    stopProbabilities = np.zeros([2*noSeeds,noIterations+1])
-    streamlinePositions = np.zeros([2*noSeeds,noIterations+1,3])
-    
-    streamlinePositions[0:noSeeds,0,] = seeds[0:noSeeds] ## FORWARD
-    streamlinePositions[noSeeds:,1,] = seeds[0:noSeeds] ## BACKWARD
-    
-    indexLastStreamlinePosition = noIterations * np.ones([2*noSeeds], dtype=np.intp)
-
-    del seeds # its not supposed to use the seeds anymore
-    
-    # interpolate data given these coordinates for each channel
-    #x = np.zeros([2*noSeeds,noX,noY,noZ,dw])
-    x_,y_,z_ = dwi_tools._getCoordinateGrid(noX,noY,noZ,coordinateScaling)
-
-    # prepare transformations to project a streamline point from IJK into RAS coordinate system to interpolate DWI data
-    aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
-    M = aff_ras_ijk[:3, :3]
-    abc = aff_ras_ijk[:3, 3]
-    abc = abc[:,None]
-    
-    
-    ### FIRST STEP PREDICTION ###
-    # just predict the forward direction (the first half of streamlinePositions)
-    curStreamlinePos_ras = streamlinePositions[0:noSeeds,0,]
-    curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras.T) + abc).T
-    lastDirections = np.zeros([noSeeds,3])
-    
-    dwi_at_lastPosition = dwi_tools.interpolateDWIVolume(data, curStreamlinePos_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ) ## otherwise try zero.. depending on model
-    predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = dwi_at_lastPosition, reshapeForConvNet = reshapeForConvNet)
- 
-    candidatePosition_ras, candidatePosition_ijk = makeStep(stepWidth=stepWidth,printfProfiling=printfProfiling,predictedDirection = predictedDirection, lastDirections = lastDirections, curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc);
-            
-    streamlinePositions[0:noSeeds,1,] = candidatePosition_ras
-    streamlinePositions[noSeeds:,0,] = candidatePosition_ras
-    
-    stopProbabilities[0:noSeeds,1] = stopTrackingProbability
-    stopProbabilities[noSeeds:,0] = stopTrackingProbability
-  
-    candidatePosition_ras = streamlinePositions[:,1,]
-    candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
-    
-    cp = streamlinePositions[:,0,] 
-    cp_ijk = (M.dot(cp.T) + abc).T
-    lastPos = dwi_tools.interpolateDWIVolume(data, cp_ijk, x_,y_,z_, noX = noX, noY = noY, noZ = noZ) ## otherwise try zero.. depending on model
-    lastPosDiv = 1
-    
-    ### START ITERATION UNTIL NOITERATIONS REACHED ###
-    start_time = time.time()    
-    for iter in range(1,noIterations):
-        ####
-        ####
-        # compute current position and last direction
-        if(printProgress):
-            print(str(iter-1) + "/" + str(noIterations) + " [" + str(time.time() - start_time) + "s]")
-        curStreamlinePos_ras = candidatePosition_ras
-        curStreamlinePos_ijk = candidatePosition_ijk
-        lastDirections = (streamlinePositions[:,iter-1,] - streamlinePositions[:,iter,]) # previousPosition - currentPosition
-        
-        ####
-        ####
-        # compute direction
-        dwi_in = dwi_at_curPosition
-        if(iter>1):
-            lastPos = lastPos + dwi_at_curPosition 
-            
-        predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = lastPos / iter, reshapeForConvNet = reshapeForConvNet)
-
-        vNorms[:,iter,] = vecNorms
-        stopProbabilities[:,iter] = stopTrackingProbability
-
-        ####
-        ####
-        # compute next streamline position and check if this position is valid wrt. our stopping criteria1
-        candidatePosition_ras, candidatePosition_ijk = makeStep(stepWidth=stepWidth,predictedDirection = predictedDirection, lastDirections = lastDirections, curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling)
-        
-        #streamlinePositions[:,iter+1,] = candidatePosition_ras[:,]
-        print('Average valid prob %.2f (valid ratio %.2f)' % (np.mean(stopTrackingProbability), np.sum(np.where(stopTrackingProbability > 0.5)[0]) / (2*noSeeds) ))
-
-        for j in range(0,2*noSeeds):
-            if(stopTrackingProbability[j] > 0.5):
-                streamlinePositions[j,iter+1,] = candidatePosition_ras[j,]
-            else:
-                    #streamlinePositions[j,iter+1,] = candidatePosition_ras[j,]
-                indexLastStreamlinePosition[j] = np.min((indexLastStreamlinePosition[j],iter))
-        
-    streamlinePositions = streamlinePositions.tolist()
-    
-    ####
-    ####
-    # 
-    # crop streamlines to length specified by stopping criteria
-    vNorms = vNorms.tolist()
-    
-    for seedIdx in range(0,2*noSeeds):
-        currentStreamline = np.array(streamlinePositions[seedIdx])
-        currentStreamline = currentStreamline[0:indexLastStreamlinePosition[seedIdx],]
-        
-        currentNorm = np.array(vNorms[seedIdx])
-        currentNorm = currentNorm[0:indexLastStreamlinePosition[seedIdx],]
-        
-        streamlinePositions[seedIdx] = currentStreamline
-        vNorms[seedIdx] = currentNorm
-
-    # extract both directions
-    sl_forward = streamlinePositions[0:noSeeds]
-    sl_backward = streamlinePositions[noSeeds:]
-
-    # join directions
-    streamlines = Streamlines(joinTwoAlignedStreamlineLists(sl_backward, sl_forward))
-    
-    return streamlines, vNorms, stopProbabilities
-
 
 
 def areVoxelsValidStreamlinePoints(nextCandidatePositions_ijk,mask,fa,fa_threshold):
