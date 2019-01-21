@@ -111,6 +111,7 @@ def main():
     shOrder = args.sh
     storeTemporaryData = args.storeTemporaryData
     dilationRate = (args.dilationRate,args.dilationRate,1)
+    endpointPrediction = False
     if(loss == 'sqCos2WEP'):
         endpointPrediction = True
     
@@ -180,7 +181,7 @@ def main():
         if(endpointPrediction):
             warning('not implemented yet')
             return
-        modelToUse = '3D_cnn_dr%s' % (str(dilationRate))
+        modelToUse = '3D_cnn_dr%d' % (dilationRate[0])
         model = nn_helper.get_simple3DCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX*8,noY*8,noZ,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, dilationRate = dilationRate)  
         model.summary()
         # data generator

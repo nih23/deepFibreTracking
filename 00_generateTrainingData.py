@@ -31,6 +31,7 @@ from dipy.segment.mask import median_otsu
 
 import src.dwi_tools as dwi_tools
 import src.nn_helper as nn_helper
+from src.state import TractographyInformation
 from dipy.segment.mask import median_otsu
 
 import argparse
@@ -39,10 +40,9 @@ def main():
     '''
     generate training data
     '''
-    coordinateScaling = 1
-    noCrossingFibres = 3
-    
-    
+
+    myState = TractographyInformation()
+
     parser = argparse.ArgumentParser(description='Deep Learning Tractography -- Data Generation')
     parser.add_argument('tensorModel', help='tensormodel to use to fit the data: dti, csd')
     parser.add_argument('-nx', dest='nx', default=1, type=int, help='no of voxels in X plane for each streamline position')
@@ -73,54 +73,54 @@ def main():
     parser.set_defaults(ISMRM2015data=False)
     parser.set_defaults(addRandomDataForEndpointPrediction=False)
     args = parser.parse_args()
-    
-    addRandomDataForEndpointPrediction = args.addRandomDataForEndpointPrediction
-    tensorModel = args.tensorModel
-    noX = args.nx
-    noY = args.ny
-    noZ = args.nz
-    dataRepr = args.repr
-    b_value = args.b
-    stepWidth = args.sw
+
     minimumStreamlineLength = args.minLength
     maximumStreamlineLength = args.maxLength
-    shOrder = args.sh
     noStreamlines = args.noStreamlines
-    faThreshold = args.fa
-    unitTangent = args.unittangent
     visStreamlines = args.visStreamlines
-    useISMRM = args.ISMRM2015data
-    hcpCaseID = args.HCPid
-    rotateTrainingData = args.rotateTrainingData
-    pPrecomputedStreamlines = args.precomputedStreamlines
+
+    myState.isISMRM = args.ISMRM2015data
+    myState.hcpID = args.HCPid
+    myState.addRandomDataForEndpointPrediction = args.addRandomDataForEndpointPrediction
+    myState.tensorModel = args.tensorModel
+    myState.dim = [args.nx, args.ny, args.nz]
+    myState.repr = args.repr
+    myState.b_value = args.b
+    myState.stepWidth = args.sw
+    myState.shOrder = args.sh
+    myState.faThreshold = args.fa
+    myState.unitTangent = args.unittangent
+    myState.rotateData = args.rotateTrainingData
+    myState.pPrecomputedStreamlines = args.precomputedStreamlines
     
     print('Parameters:')
     print(str(args))
-  
+
+    myState.nameDWIdataset = ''
     
-    nameDWIDataset = ''
-    
-    if(useISMRM):
-        nameDWIDataset = 'ISMRM_2015_Tracto_challenge_data'
-        useDenoising = False
-        bvals,bvecs,gtab,dwi,aff,t1 = dwi_tools.loadISMRMData('data/%s' % (nameDWIDataset), denoiseData = useDenoising, resliceToHCPDimensions=False)
+    if(myState.isISMRM):
+        myState.nameDWIdataset = 'ISMRM_2015_Tracto_challenge_data'
+        myState.useDenoising = False
+        bvals,bvecs,gtab,dwi,aff,t1 = dwi_tools.loadISMRMData('data/%s' % (myState.nameDWIdataset), denoiseData = myState.useDenoising, resliceToHCPDimensions=False)
         b0_mask, binarymask = median_otsu(dwi[:,:,:,0], 2, 1)
-        nameDWIDataset = 'ISMRM_2015_Tracto_challenge_data_denoised_preproc'
+        myState.nameDWIdataset = 'ISMRM_2015_Tracto_challenge_data_denoised_preproc'
     else:
-        nameDWIDataset = 'HCP%s' % (hcpCaseID)
-        bvals,bvecs,gtab,dwi,aff,t1,binarymask = dwi_tools.loadHCPData('data/HCP/%s' % (hcpCaseID))
+        myState.nameDWIdataset = 'HCP%s' % (myState.hcpID)
+        bvals,bvecs,gtab,dwi,aff,t1,binarymask = dwi_tools.loadHCPData('data/HCP/%s' % (myState.hcpID))
     
     wholebrainseeds = seeds_from_mask(binarymask, affine=aff)
     
-    if(pPrecomputedStreamlines != ''):
-        streamlines_filtered = dwi_tools.loadVTKstreamlines(pPrecomputedStreamlines)
+    if(myState.pPrecomputedStreamlines != ''):
+        streamlines_filtered = dwi_tools.loadVTKstreamlines(myState.pPrecomputedStreamlines)
         print("step width " + str(np.linalg.norm(streamlines_filtered[0][1] - streamlines_filtered[0][0])) + " mm")
-        tensorModel = 'precomp'
-        tInfo = pPrecomputedStreamlines
-        pTrainDataDir = '/data/nico/trainingdata/%s/%s/' % (nameDWIDataset, pPrecomputedStreamlines)
-        pTrainData = '/data/nico/trainingdata/%s/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotateD%d_ep%d.h5' % (nameDWIDataset, pPrecomputedStreamlines, b_value, dataRepr, stepWidth, noX,noY,noZ,unitTangent,rotateTrainingData,addRandomDataForEndpointPrediction)
+        myState.tensorModel = 'precomp'
+        tInfo = myState.pPrecomputedStreamlines
+        pTrainDataDir = '/data/nico/trainingdata/%s/%s/' % (myState.nameDWIdataset, myState.pPrecomputedStreamlines)
+        pTrainData = '/data/nico/trainingdata/%s/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotateD%d_ep%d.h5' % \
+                     (myState.nameDWIdataset, myState.pPrecomputedStreamlines, myState.b_value, myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
+                      myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction)
     
-    if(tensorModel == 'dti'):
+    if(myState.tensorModel == 'dti'):
         start_time = time.time()
         dti_model = dti.TensorModel(gtab)
         dti_fit = dti_model.fit(dwi, mask=binarymask)
@@ -130,7 +130,7 @@ def main():
         runtime = time.time() - start_time
         print('DTI Runtime ' + str(runtime) + 's')       
 
-    elif(tensorModel == 'csd'):
+    elif(myState.tensorModel == 'csd'):
         response, ratio = auto_response(gtab, dwi, roi_radius=10, fa_thr=0.7)
         csd_model = ConstrainedSphericalDeconvModel(gtab, response)
         sphere = get_sphere('symmetric724')
@@ -154,19 +154,21 @@ def main():
         start_time = time.time()       
         directionGetter = csd_peaks
 
-    if(tensorModel != 'precomp'):
-        classifier = ThresholdTissueClassifier(dti_fit.fa, faThreshold)
-        streamlines_generator = LocalTracking(directionGetter, classifier, wholebrainseeds, aff, step_size=stepWidth)
+    if(myState.tensorModel != 'precomp'):
+        classifier = ThresholdTissueClassifier(dti_fit.fa, myState.faThreshold)
+        streamlines_generator = LocalTracking(directionGetter, classifier, wholebrainseeds, aff, step_size=myState.stepWidth)
         streamlines = Streamlines(streamlines_generator)
         streamlines_filtered = dwi_tools.filterStreamlinesByLength(streamlines, minimumStreamlineLength)
         streamlines_filtered = dwi_tools.filterStreamlinesByMaxLength(streamlines_filtered, maximumStreamlineLength)
         runtime = time.time() - start_time
         print('LocalTracking Runtime ' + str(runtime) + 's')
-        tInfo = '%s_sw%.1f_minL%d_maxL%d_fa%.2f' % (tensorModel,stepWidth,minimumStreamlineLength,maximumStreamlineLength,faThreshold)
-        pTrainData = '/data/nico/trainingdata/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotated%d_ep%d.h5' % (nameDWIDataset, b_value, dataRepr, stepWidth, noX,noY,noZ,unitTangent,rotateTrainingData,addRandomDataForEndpointPrediction)
+        tInfo = '%s_sw%.1f_minL%d_maxL%d_fa%.2f' % (myState.tensorModel,myState.stepWidth,minimumStreamlineLength,maximumStreamlineLength,myState.faThreshold)
+        pTrainData = '/data/nico/trainingdata/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotated%d_ep%d.h5' % (myState.nameDWIdataset, myState.b_value,
+                                                                                                   myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
+                                                                                                   myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction)
         pTrainDataDir = '/data/nico/trainingdata/'
         
-        dwi_tools.saveVTKstreamlines(streamlines_filtered, 'data/%s_%s.vtk' % (nameDWIDataset,tInfo))
+        dwi_tools.saveVTKstreamlines(streamlines_filtered, 'data/%s_%s.vtk' % (myState.nameDWIdataset,tInfo))
 
     
     if(visStreamlines):
@@ -175,7 +177,7 @@ def main():
     
     
     # crop DWI data
-    dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(b_value, bvals, bvecs, dwi)
+    dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(myState.b_value, bvals, bvecs, dwi)
     b0_idx = bvals < 10
     b0 = dwi[..., b0_idx].mean(axis=3)
     #dwi_singleShell = np.concatenate((dwi_subset, dwi[..., b0_idx]), axis=3)
@@ -184,27 +186,27 @@ def main():
     #bvecs_singleShell = np.concatenate((bvecs_subset, bvecs[b0_idx,]), axis=0)
     #gtab_singleShell = gradient_table(bvals=bvals_singleShell, bvecs=bvecs_singleShell, b0_threshold = 10)
     
-    if(dataRepr == 'sh'):
-        t_data = dwi_tools.get_spherical_harmonics_coefficients(bvals=bvals_subset,bvecs=bvecs_subset,sh_order=shOrder, dwi=dwi_subset, b0 = b0)
-    elif(dataRepr == 'res100'):
-        t_data, resamplingSphere = dwi_tools.resample_dwi(dwi_subset, b0, bvals_subset, bvecs_subset, sh_order=shOrder, smooth=0, mean_centering=False)
-    elif(dataRepr == 'raw'):
+    if(myState.repr == 'sh'):
+        t_data = dwi_tools.get_spherical_harmonics_coefficients(bvals=bvals_subset,bvecs=bvecs_subset,sh_order=myState.shOrder, dwi=dwi_subset, b0 = b0)
+    elif(myState.repr == 'res100'):
+        t_data, resamplingSphere = dwi_tools.resample_dwi(dwi_subset, b0, bvals_subset, bvecs_subset, sh_order=myState.shOrder, smooth=0, mean_centering=False)
+    elif(myState.repr == 'raw'):
         t_data = dwi_subset
     
     del dwi_subset
     
     if(noStreamlines>0):
         streamlines_filtered = np.random.choice(streamlines_filtered,noStreamlines, replace=False)
-        nameDWIDataset = nameDWIDataset + "_" + str(noStreamlines) + "sl_"
+        myState.nameDWIdataset = myState.nameDWIdataset + "_" + str(noStreamlines) + "sl_"
    
     print('Generating training data... ')
 
     start_time = time.time()
-    train_DWI,train_prevDirection, train_nextDirection = dwi_tools.generateTrainingData(streamlines_filtered, t_data, unitTension = unitTangent, affine=aff, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossingFibres, step = 1, rotateTrainingData = rotateTrainingData)
+    train_DWI,train_prevDirection, train_nextDirection = dwi_tools.generateTrainingData(streamlines_filtered, t_data, affine=aff, state=myState)
     
-    if(addRandomDataForEndpointPrediction):
+    if(myState.addRandomDataForEndpointPrediction):
         print('Generate random data for endpoint prediction')
-        train_DWI2,train_prevDirection2, train_nextDirection2 = dwi_tools.generateTrainingData(streamlines_filtered, t_data, unitTension = unitTangent, affine=aff, noX=noX,noY=noY,noZ=noZ,coordinateScaling=coordinateScaling,distToNeighbours=1, noCrossings = noCrossingFibres, step = 1, rotateTrainingData = rotateTrainingData, generateRandomData = True)
+        train_DWI2,train_prevDirection2, train_nextDirection2 = dwi_tools.generateTrainingData(streamlines_filtered, t_data, affine=aff, generateRandomData = True, state = myState)
         train_DWI = np.concatenate((train_DWI,train_DWI2))
         train_prevDirection = np.concatenate((train_prevDirection,train_prevDirection2))
         train_nextDirection = np.concatenate((train_nextDirection,train_nextDirection2))
