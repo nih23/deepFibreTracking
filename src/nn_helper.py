@@ -98,7 +98,7 @@ def cropped_relu(x):
 
 
 # the cnn multi input architecture leads to some ambiguities.. 
-def get_2DCNN(inputShapeDWI, trainingState, decayrate=0, pDropout=0.5, kernelSz=3, poolSz = (2,2)):
+def get_2DCNN(trainingState, inputShapeDWI, decayrate=0, pDropout=0.5, kernelSz=3, poolSz = (2,2)):
     '''
     predict direction of past/next streamline position using simple CNN architecture
     Input: DWI subvolume centered at current streamline position
@@ -113,12 +113,12 @@ def get_2DCNN(inputShapeDWI, trainingState, decayrate=0, pDropout=0.5, kernelSz=
         layers.append(Conv2D(trainingState.noFeatures, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
         if(trainingState.useBatchNormalization):
             layers.append(BatchNormalization()(layers[-1]))
-        layers.append(trainingState.activation_function(layers[-1]))
+        layers.append(trainingState.activationFunction(layers[-1]))
         
         layers.append(Conv2D(trainingState.noFeatures, kernelSz, padding='same', kernel_initializer = 'he_normal')(layers[-1]))
         if(trainingState.useBatchNormalization):
             layers.append(BatchNormalization()(layers[-1]))
-        layers.append(trainingState.activation_function(layers[-1]))
+        layers.append(trainingState.activationFunction(layers[-1]))
             
 #        layersEncoding.append(layers[-1])
 #        layers.append(MaxPooling2D(pool_size=poolSz)(layers[-1]))
@@ -128,7 +128,7 @@ def get_2DCNN(inputShapeDWI, trainingState, decayrate=0, pDropout=0.5, kernelSz=
     layers.append(Flatten()(layers[-1]))
     
     layers.append(Dense(trainingState.noFeatures, kernel_initializer = 'he_normal')(layers[-1]))
-    layers.append(trainingState.activation_function(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
     layers.append(Dense(trainingState.noOutputNeurons, kernel_initializer = 'he_normal')(layers[-1]))
     layerNextDirection = layers[-1]
         
@@ -146,7 +146,7 @@ def get_2DCNN(inputShapeDWI, trainingState, decayrate=0, pDropout=0.5, kernelSz=
     return mlp
 
 # the cnn multi input architecture leads to some ambiguities.. 
-def get_3DCNN(inputShapeDWI, trainingState, decayrate=0, pDropout=0.5, kernelSz=3, poolSz = (2,2,2), dilationRate = (1,1,1)):
+def get_3DCNN(trainingState, inputShapeDWI, decayrate=0, pDropout=0.5, kernelSz=3, poolSz = (2,2,2), dilationRate = (1,1,1)):
     '''
     predict direction of past/next streamline position using simple CNN architecture
     Input: DWI subvolume centered at current streamline position
@@ -161,12 +161,12 @@ def get_3DCNN(inputShapeDWI, trainingState, decayrate=0, pDropout=0.5, kernelSz=
         layers.append(Conv3D(trainingState.noFeatures, kernelSz, padding='same', kernel_initializer = 'he_normal', dilation_rate = dilationRate)(layers[-1]))
         if(trainingState.useBatchNormalization):
             layers.append(BatchNormalization()(layers[-1]))
-        layers.append(trainingState.activation_function(layers[-1]))
+        layers.append(trainingState.activationFunction(layers[-1]))
         
         layers.append(Conv3D(trainingState.noFeatures, kernelSz, padding='same', kernel_initializer = 'he_normal', dilation_rate = dilationRate)(layers[-1]))
         if(trainingState.useBatchNormalization):
             layers.append(BatchNormalization()(layers[-1]))
-        layers.append(trainingState.activation_function(layers[-1]))
+        layers.append(trainingState.activationFunction(layers[-1]))
             
         layersEncoding.append(layers[-1])
 #        layers.append(MaxPooling3D(pool_size=poolSz)(layers[-1]))
@@ -176,7 +176,7 @@ def get_3DCNN(inputShapeDWI, trainingState, decayrate=0, pDropout=0.5, kernelSz=
     layers.append(Flatten()(layers[-1]))
     
     layers.append(Dense(trainingState.noFeatures, kernel_initializer = 'he_normal')(layers[-1]))
-    layers.append(trainingState.activation_function(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
     layers.append(Dense(trainingState.noOutputNeurons, kernel_initializer = 'he_normal')(layers[-1]))
     layerNextDirection = layers[-1]
         
@@ -194,13 +194,13 @@ def get_3DCNN(inputShapeDWI, trainingState, decayrate=0, pDropout=0.5, kernelSz=
     return mlp
 
 
-def get_rcnn(inputShapeDWI, trainingState, decayrate=0, pDropout=0.5, kernelSz=3, poolSz = (2,2)):
+def get_rcnn(trainingState, inputShapeDWI, decayrate=0, pDropout=0.5, kernelSz=3, poolSz = (2,2)):
 
     inputs = Input(inputShapeDWI)
     layers = [inputs]
 
     for i in range(1, trainingState.depth + 1):
-        layers.append(RCL_block(layers[-1], activation_function=trainingState.activation_function, features=trainingState.noFeatures,
+        layers.append(RCL_block(layers[-1], activation_function=trainingState.activationFunction, features=trainingState.noFeatures,
                                 name="RCL-" + str(i)))
         if(trainingState.useBatchNormalization):
             layers.append(BatchNormalization()(layers[-1]))
@@ -212,7 +212,7 @@ def get_rcnn(inputShapeDWI, trainingState, decayrate=0, pDropout=0.5, kernelSz=3
     layers.append(Dense(trainingState.noFeatures, kernel_initializer = 'he_normal')(layers[-1]))
     if(trainingState.useBatchNormalization):
         layers.append(BatchNormalization()(layers[-1]))
-    layers.append(trainingState.activation_function(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
     layers.append(Dense(trainingState.noOutputNeurons, kernel_initializer = 'he_normal')(layers[-1]))
 
     layerNextDirection = layers[-1]
@@ -288,7 +288,7 @@ def RCL_block(l, activation_function=LeakyReLU(), features=32, kernel_size=3, na
 
 
 
-def get_mlp_singleOutput(inputShapeDWI, trainingState, decayrate = 0):
+def get_mlp_singleOutput(trainingState, inputShapeDWI, decayrate = 0):
     '''
     predict direction of past/next streamline position using simple MLP architecture
     Input: DWI subvolume centered at current streamline position
@@ -303,18 +303,18 @@ def get_mlp_singleOutput(inputShapeDWI, trainingState, decayrate = 0):
         if(trainingState.useBatchNormalization):
             layers.append(BatchNormalization()(layers[-1]))
         
-        layers.append(trainingState.activation_function(layers[-1]))
+        layers.append(trainingState.activationFunction(layers[-1]))
         
         if(trainingState.useDropout):
             layers.append(Dropout(0.5)(layers[-1]))
     
     i1 = layers[-1]
     layers.append(Dense(trainingState.noFeatures, kernel_initializer = 'he_normal')(layers[-1]))
-    layers.append(trainingState.activation_function(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
     layers.append(Dense(trainingState.noOutputNeurons, kernel_initializer = 'he_normal')(layers[-1]))
     
-    if(trainingState.unitTangent):
-        layers.append( Lambda(lambda x: tf.div(x, K.expand_dims( K.sqrt(K.sum(x ** 2, axis = 1)))  ), name='nextDirection')(layers[-1]) ) # normalize output to unit vector 
+#    if(trainingState.unitTangent):
+#        layers.append( Lambda(lambda x: tf.div(x, K.expand_dims( K.sqrt(K.sum(x ** 2, axis = 1)))  ), name='nextDirection')(layers[-1]) ) # normalize output to unit vector 
     layerNextDirection = layers[-1]
         
     optimizer = optimizers.Adam(lr=trainingState.lr, decay=decayrate)
@@ -330,7 +330,7 @@ def get_mlp_singleOutput(inputShapeDWI, trainingState, decayrate = 0):
     
     return mlp
 
-def get_mlp_singleOutputWEP(inputShapeDWI, trainingState, decayrate=0):
+def get_mlp_singleOutputWEP(trainingState, inputShapeDWI, decayrate=0):
     '''
     predict direction of past/next streamline position using simple MLP architecture
     Input: DWI subvolume centered at current streamline position
@@ -354,7 +354,7 @@ def get_mlp_singleOutputWEP(inputShapeDWI, trainingState, decayrate=0):
         if(trainingState.useBatchNormalization):
             layers.append(BatchNormalization()(layers[-1]))
         
-        layers.append(trainingState.activation_function(layers[-1]))
+        layers.append(trainingState.activationFunction(layers[-1]))
         
         if(trainingState.useDropout):
             layers.append(Dropout(0.5)(layers[-1]))
@@ -365,9 +365,9 @@ def get_mlp_singleOutputWEP(inputShapeDWI, trainingState, decayrate=0):
     dirLayer = layers[-1]
     
     layers.append(Dense(trainingState.noFeatures, kernel_initializer = 'he_normal')(l1))
-    layers.append(trainingState.activation_function(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
     layers.append(Dense(trainingState.noFeatures, kernel_initializer = 'he_normal')(layers[-1]))
-    layers.append(trainingState.activation_function(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
     layers.append(Dense(1, kernel_initializer = 'he_normal', activation='sigmoid', name = 'signLayer')(layers[-1]))
     signLayer = layers[-1]
     layers.append(concatenate(  [layers[-1], layers[-1], layers[-1]], axis = -1))
@@ -384,7 +384,7 @@ def get_mlp_singleOutputWEP(inputShapeDWI, trainingState, decayrate=0):
 
     mlp = Model((layers[0]), outputs=(layerNextDirection, signLayer))
     
-    mlp.compile(loss=[squared_cosine_proximity_2, losses.binary_crossentropy], optimizer=optimizer)
+    mlp.compile(loss=[losses.mse, losses.binary_crossentropy], optimizer=optimizer)
 
         
     

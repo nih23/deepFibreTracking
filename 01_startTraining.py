@@ -109,7 +109,7 @@ def main():
    
     # train simple MLP
     params = "%s_%s_dx_%d_dy_%d_dz_%d_dd_%d_%s_feat_%d_depth_%d_output_%d_lr_%.4f_dropout_%d_bn_%d_unitTangent_%d_wz_%d" % \
-             (myTrainingState.modelToUse,myTrainingState.loss,noX,noY,noZ,noD,myTrainingState.activation_function.__class__.__name__,myTrainingState.noFeatures,
+             (myTrainingState.modelToUse,myTrainingState.loss,noX,noY,noZ,noD,myTrainingState.activationFunction.__class__.__name__,myTrainingState.noFeatures,
               myTrainingState.depth,3,myTrainingState.lr,myTrainingState.useDropout,myTrainingState.useBatchNormalization,myState.unitTangent,myTrainingState.keepZeroVectors)
     pModel = "results/" + pModelOutput + '/models/' + params + "-{val_loss:.6f}.h5"
     pCSVLog = "results/" + pModelOutput + '/logs/' + params + ".csv"
@@ -151,7 +151,7 @@ def main():
     ####################
     ####################
     elif (myTrainingState.modelToUse == '3Dcnn'):
-        cnn = nn_helper.get_3DCNN(myTrainingState)
+        cnn = nn_helper.get_3DCNN(myTrainingState, inputShapeDWI = train_DWI.shape[1:])
         cnn.summary()
         cnn.fit([train_DWI], [train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
     ###
@@ -160,7 +160,7 @@ def main():
         train_DWI = np.reshape(train_DWI, [noSamples,16,16])
         train_DWI = train_DWI[..., np.newaxis]
         print(str(train_DWI.shape))
-        cnn = nn_helper.get_rcnn(myTrainingState)
+        cnn = nn_helper.get_rcnn(myTrainingState, inputShapeDWI = train_DWI.shape[1:])
         cnn.summary()
         cnn.fit([train_DWI], [train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
     ###
@@ -185,11 +185,11 @@ def main():
             print(str(train_nextDirection.shape))
             print(str(labels.shape))
         
-            mlp_simple = nn_helper.get_mlp_singleOutputWEP(myTrainingState)
+            mlp_simple = nn_helper.get_mlp_singleOutputWEP(myTrainingState, inputShapeDWI = train_DWI.shape[1:])
             mlp_simple.summary()
             mlp_simple.fit([train_DWI], [train_nextDirection, labels], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger], class_weight=class_weight)
         else:
-            mlp_simple = nn_helper.get_mlp_singleOutput(myTrainingState)
+            mlp_simple = nn_helper.get_mlp_singleOutput(myTrainingState, inputShapeDWI = train_DWI.shape[1:])
             mlp_simple.summary()
             mlp_simple.fit([train_DWI], [train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
     ###
