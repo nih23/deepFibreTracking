@@ -27,26 +27,28 @@ from dipy.data import get_sphere
 from dipy.align.reslice import reslice
 
 
-def projectIntoAppropriateSpace(myState, dwi, projectionShOrder = 8):
+def projectIntoAppropriateSpace(myState, dwi):
     if(myState.repr == 'sh'):
-        print('Spherical Harmonics (ours)')
+        #print('Spherical Harmonics (ours)')
         start_time = time.time()
-        tracking_data = get_spherical_harmonics_coefficients(bvals=myState.bvals,bvecs=myState.bvecs,sh_order=myState.shOrder, dwi=dwi, b0 = myState.b0)
+        tracking_data = get_spherical_harmonics_coefficients(bvals=myState.bvals,bvecs=myState.bvecs,sh_order=myState.shOrder, dwi=dwi, b0 = None) # assuming normnalized dwi data
         runtime = time.time() - start_time
-        print('Runtime ' + str(runtime) + 's')
+        #print('Runtime ' + str(runtime) + 's')
     elif(myState.use2DProjection):
-        print('2D projection')
+        #print('2D projection')
         start_time = time.time()
-        tracking_data, resamplingSphere = resample_dwi_2D(dwi, myState.b0, myState.bvals, myState.bvecs, sh_order=projectionShOrder, smooth=0, mean_centering=False)
+        tracking_data, resamplingSphere = resample_dwi_2D(dwi, myState.b0, myState.bvals, myState.bvecs, sh_order=myState.shOrder, smooth=0, mean_centering=False)
         runtime = time.time() - start_time
-        print('Runtime ' + str(runtime) + 's')
-        print('Shape: ' + str(tracking_data.shape))
+        #print('Runtime ' + str(runtime) + 's')
+        #print('Shape: ' + str(tracking_data.shape))
     elif(myState.repr == 'res100'):
-        print('Resampling to 100 directions')
+        #print('Resampling to 100 directions')
         start_time = time.time()
-        tracking_data, resamplingSphere = resample_dwi(dwi, myState.b0, myState.bvals, myState.bvecs, sh_order=projectionShOrder, smooth=0, mean_centering=False)
+        tracking_data, resamplingSphere = resample_dwi(dwi, myState.b0, myState.bvals, myState.bvecs, sh_order=myState.shOrder, smooth=0, mean_centering=False)
         runtime = time.time() - start_time
-        print('Runtime ' + str(runtime) + 's')
+        #print('Runtime ' + str(runtime) + 's')
+    elif(myState.repr == 'raw'):
+        tracking_data = dwi
     else:
         print('[ERROR] no data representation specified (raw, sh, res100, 2D')
         return None
@@ -239,7 +241,7 @@ def resample_dwi_2D(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0
     ndarray
         Diffusion weights resampled according to `sphere`.
     """
-    data_sh = get_spherical_harmonics_coefficients(dwi, b0=b0, bvals=bvals, bvecs=bvecs, sh_order=sh_order, smooth=smooth)
+    data_sh = get_spherical_harmonics_coefficients(dwi, bvals=bvals, bvecs=bvecs, sh_order=sh_order, smooth=smooth)
 
     # sphere = get_sphere('repulsion100')
     # sphere = get_sphere('repulsion724')
@@ -288,6 +290,8 @@ def normalize_dwi(weights, b0):
     ndarray
         Diffusion weights normalized by the B0.
     """
+    print('Normalizing DWI signals')
+
     if(b0 is None):
         print('[W] no normalisation')
         return weights
@@ -337,10 +341,12 @@ def get_spherical_harmonics_coefficients(dwi, b0, bvecs, sh_order=8, smooth=0.00
     dwi_weights = dwi.astype("float32")
 
     # normalize by the b0.
-    dwi_weights = normalize_dwi(dwi_weights, b0)
+### never normalize DWI signals..
+#    if(not b0 is None):
+#        dwi_weights = normalize_dwi(dwi_weights, b0)
 
     # Assuming all directions lie on the hemisphere.
-    raw_sphere = Sphere(xyz=bvecs)
+    raw_sphere = HemiSphere(xyz=bvecs)
 
     # Fit SH to signal
     sph_harm_basis = sph_harm_lookup.get('mrtrix')
@@ -543,8 +549,24 @@ def _spheToEuclidean(r,theta,psi):
     zz = r * np.cos(theta)
     return xx,yy,zz
 
+
+def getSizeOfDataRepresentation(myState):
+    reprSize = -1
+    if (myState.repr == 'sh'):
+        if(myState.shOrder == 4):
+            return 15
+        elif(myState.shOrder == 8):
+            return 45
+        else:
+            return -1
+    elif(myState.repr == 'res100'):
+        return 100
+
+    return len(myState.bvals)
+
+
 def interpolateDWIVolume(myState, dwi, positions, x_,y_,z_, rotations = None):
-    # positions: noPoints x 3 
+    # positions: noPoints x 3
     szDWI = dwi.shape
     noPositions = len(positions)
     start_time = time.time()
@@ -566,9 +588,8 @@ def interpolateDWIVolume(myState, dwi, positions, x_,y_,z_, rotations = None):
     for i in range(0,szDWI[-1]):
         x[:,:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(dwi[:,:,:,i],cvF)[0], [noPositions,myState.dim[0],myState.dim[1],myState.dim[2]])
 
-    # project X into respective domain as specified by myState.repr
-
     return x
+
 
 def rotateByMatrix(vectorsToRotate,rotationMatrix,rotationCenterVector = np.array([0,0,0])):    
     return np.dot(rotationMatrix,vectorsToRotate - rotationCenterVector[:,None]) + rotationCenterVector[:,None]
@@ -763,7 +784,8 @@ def generateTrainingData(streamlines, dwi, affine, state, generateRandomData = F
 
     '''
     sfa = np.asarray(streamlines)
-    dx,dy,dz,dw = dwi.shape
+    dx,dy,dz,_ = dwi.shape
+    dw = getSizeOfDataRepresentation(state)
     noNeighbours = 2*state.noCrossingFibres + 1
     sl_pos = sfa[0]
     noStreamlines = len(streamlines)
@@ -811,6 +833,9 @@ def generateTrainingData(streamlines, dwi, affine, state, generateRandomData = F
         streamlinevec_ijk = (M.dot(streamlinevec.T) + abc).T
         
         streamlinevec_all_next = streamlines[streamlineIndex][1:]
+
+        dNextAll = np.concatenate(  (streamlinevec_all_next - streamlinevec[0:-1,], np.array([[0,0,0]])))
+        dPrevAll = np.concatenate( (np.array([[0,0,0]]), -1 * dNextAll[0:-1,]) )
         
         rot = None
         
@@ -819,24 +844,29 @@ def generateTrainingData(streamlines, dwi, affine, state, generateRandomData = F
             vv = state.getReferenceOrientation()
             
             # compute tangents
-            tangents = streamlinevec_ijk[0:-1] - streamlinevec_ijk[1:] # tangents represents the tangents starting from the 2nd streamline position
+            tangents = streamlinevec_ijk[0:-1] - streamlinevec_ijk[1:] # tangents represents the tangents starting from the 2nd streamline position previousPosition - currentPosition
             
             # compute rotation matrices
             rot = np.zeros([noPoints,3,3])
             rot[0,:] = np.eye(3)
 
-            for k in range(noPoints-1):
-                R_2vect(rot[k+1,:],vector_orig=tangents[k,],vector_fin=vv)
+            #TODO: IS THIS CORRECT? SHOULDNT WE START WITH 1?
+            for k in range(1,noPoints):
+                R_2vect(rot[k,:],vector_orig=tangents[k-1,],vector_fin=vv)
+
+                #vecs = dNextAll[k,]
+                #np.transpose(vecs[..., np.newaxis])
+                #res = np.dot(vecs, np.linalg.inv(rot[k,]))
+
                 if(generateRandomData):
-                    rot[k+1,:] += np.random.rand(3,3) - 0.5 # randomely rotate our data (and hope that there no other streamline coming from that direction)
+                    rot[k,:] += np.random.rand(3,3) - 0.5 # randomely rotate our data (and hope that there no other streamline coming from that direction)
                 
                 
         # interpolate
-        interp_slv_ijk = interpolateDWIVolume(dwi,streamlinevec_ijk, rotations=rot, state=state ,x_ = x_,y_ = y_,z_ = z_)
-        
-        dNextAll = np.concatenate(  (streamlinevec_all_next - streamlinevec[0:-1,], np.array([[0,0,0]])))
-        dPrevAll = np.concatenate( (np.array([[0,0,0]]), -1 * dNextAll[0:-1,]) )
-        
+        interp_slv_ijk = interpolateDWIVolume(state,dwi,streamlinevec_ijk, rotations=rot, x_ = x_,y_ = y_,z_ = z_)
+        interp_slv_ijk = projectIntoAppropriateSpace(state, interp_slv_ijk)
+        #print(str(interp_slv_ijk))
+
         if(generateRandomData):
             dNextAll = np.zeros([noPoints,3])
             dPrevAll = np.zeros([noPoints,3])

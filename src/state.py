@@ -101,6 +101,9 @@ class TractographyInformation:
             print('Spherical Harmonics activated due to 15C or 45C.')
             self.repr = 'sh'
 
+        if (self.model.find("_raw_") > 0):
+            self.repr = 'raw'
+
         return self
 
 
@@ -108,7 +111,7 @@ class TrainingInformation:
 
     def __init__(self, pTrainData, loss, noFeatures, learningRate, depth, batch_size, epochs,
                  activationFunction, useDropout, useBatchNormalization, model, keepZeroVectors,
-                 noGPUs = 1, usePretrainedModel = False, noOutputNeurons = 3, pDropout = 0.5):
+                 noGPUs = 1, usePretrainedModel = False, noOutputNeurons = 3, pDropout = 0.5, pPretrainedModel = '', dilationRate = 1):
 
         self.noGPUs = noGPUs
         self.pTrainData = pTrainData
@@ -126,3 +129,5 @@ class TrainingInformation:
         self.activationFunction = activationFunction
         self.noOutputNeurons = noOutputNeurons
         self.pDropout = pDropout
+        self.pPretrainedModel = pPretrainedModel
+        self.dilationRate = dilationRate

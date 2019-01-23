@@ -71,13 +71,9 @@ def main():
     dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(myState.b_value, bvals, bvecs, dwi)
     b0_idx = bvals < 10
     b0 = dwi[..., b0_idx].mean(axis=3)
-    myState.b0 = b0
-    myState.bvals = bvals_subset
-    myState.bvecs = bvecs_subset
-    tracking_data = dwi_tools.projectIntoAppropriateSpace(myState, dwi_subset)
-    
+
     if(not myState.magicModel):
-        print('DTI Peak Direction/odf estimation')   
+        print('FA estimation')
         dwi_singleShell = np.concatenate((dwi_subset, dwi[..., b0_idx]), axis=3)
         bvals_singleShell = np.concatenate((bvals_subset, bvals[..., b0_idx]), axis=0)
         bvecs_singleShell = np.concatenate((bvecs_subset, bvecs[b0_idx,]), axis=0)
@@ -89,6 +85,12 @@ def main():
         runtime = time.time() - start_time
         print('Runtime ' + str(runtime) + 's')
 
+    dwi_subset = dwi_tools.normalize_dwi(dwi_subset, b0)
+    myState.b0 = b0
+    myState.bvals = bvals_subset
+    myState.bvecs = bvecs_subset
+
+
     print("Tractography")
     # whole brain seeds
     seedsToUse = seeds_from_mask(binarymask, affine=aff)
@@ -97,12 +99,12 @@ def main():
     if(myState.magicModel and myState.model.find('2mlp_single')>0):
         # magic 2mlp_single with aggregation
         start_time = time.time()
-        streamlines_joined_sc,vNorms,stopProb = tracking.startAggregatedMagicModel(myState, printfProfiling = False, printProgress = True, mask=binarymask, inverseDirection=False, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, noIterations = noTrackingSteps)
+        streamlines_joined_sc,vNorms,stopProb = tracking.startAggregatedMagicModel(myState, printfProfiling = False, printProgress = True, mask=binarymask, inverseDirection=False, seeds=seedsToUse, data=dwi_subset, affine=aff, model=tracker, noIterations = noTrackingSteps)
         runtime = time.time() - start_time
     else:
         # standard models
         start_time = time.time()
-        streamlines_joined_sc,vNorms = tracking.start(myState, printfProfiling = False, printProgress = True, mask=binarymask,fa=dti_fit.fa, seeds=seedsToUse, data=tracking_data, affine=aff, model=tracker, noIterations = noTrackingSteps)
+        streamlines_joined_sc,vNorms = tracking.start(myState, printfProfiling = False, printProgress = True, mask=binarymask,fa=dti_fit.fa, seeds=seedsToUse, data=dwi_subset, affine=aff, model=tracker, noIterations = noTrackingSteps)
         runtime = time.time() - start_time
 
    

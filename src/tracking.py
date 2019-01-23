@@ -93,7 +93,7 @@ def makeStep(myState, predictedDirection,lastDirections,curStreamlinePos_ras,M,a
     ####
     ####
     # compute next streamline position and check if this position is valid wrt. our stopping criteria1
-    candidatePosition_ras = curStreamlinePos_ras - myState.stepWidth * predictedDirection
+    candidatePosition_ras = curStreamlinePos_ras - myState.stepWidth * predictedDirection 
     candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T   #projectRAStoIJK(candidatePosition,M,abc)
     
     return candidatePosition_ras, candidatePosition_ijk
@@ -101,26 +101,33 @@ def makeStep(myState, predictedDirection,lastDirections,curStreamlinePos_ras,M,a
 
 def getNextDirection(myState, dwi,curPosition_ijk, model, lastDirections = None, batch_size = 2**12, x_ = [0], y_ = [0], z_ = [0], validIdx = None):
     rot = None
+    rot_val = None
 
     if(validIdx is None):
         validIdx = list(range(len(curPosition_ijk)))
        
     if(myState.rotateData):
-        #print('rotating data')
+        print('   rotating data')
         start_time = time.time()
         # reference orientation
-        vv = dwi_tools.getReferenceOrientation()
+        vv = myState.getReferenceOrientation()
 
         noPositions = len(lastDirections)
-
+        noValPositions = len(validIdx)
         # compute rotation matrices
-        rot = np.zeros([noPositions,3,3])
+        rot = np.zeros([noValPositions,3,3])
+        rot_val = np.zeros([noValPositions,3,3])
 
-        for k in range(noPositions):
-            dwi_tools.R_2vect(rot[k,:,:],vector_orig=lastDirections[k,],vector_fin=vv)
-        print(" -> " + str(time.time() - start_time) + "s")
+        for k in range(noValPositions):
+            valIdx = validIdx[k]
+            dwi_tools.R_2vect(rot_val[k,:,:],vector_orig=lastDirections[valIdx,],vector_fin=vv) # network predicts current - previous, network was trained with rotations computed from the direction previous - current position
+            #dwi_tools.R_2vect(rot[k,:,:],vector_orig=lastDirections[k,],vector_fin=vv) # network predicts current - previous, network was trained with rotations computed from the direction previous - current position
+        print("   -> " + str(time.time() - start_time) + "s")
 
-    dwi_at_curPosition = dwi_tools.interpolateDWIVolume(myState, dwi, curPosition_ijk[validIdx,], x_,y_,z_, rotations = rot)
+        #rot_val = rot[validIdx,]
+
+    dwi_at_curPosition = dwi_tools.interpolateDWIVolume(myState, dwi, curPosition_ijk[validIdx,], x_,y_,z_, rotations = rot_val)
+    dwi_at_curPosition = dwi_tools.projectIntoAppropriateSpace(myState, dwi_at_curPosition)
 
     if(myState.use2DProjection):
         noSamples,dx,dy,dz,dw = dwi_at_curPosition.shape
@@ -144,6 +151,15 @@ def getNextDirection(myState, dwi,curPosition_ijk, model, lastDirections = None,
             networkInput = [dwi_at_curPosition, lastDirections]
 
     predictedDirectionAtIdx = model.predict(networkInput, batch_size=batch_size)
+
+# dont need that yet
+# project direction from streamline coordinate system to RAS
+#    for j in range(0,len(validIdx)):
+#        if(rot is not None):
+#            vecs = predictedDirectionAtIdx[j,]
+#            np.transpose(vecs[..., np.newaxis])
+#            res = np.dot(vecs, np.linalg.inv(rot_val[j,]))
+#            predictedDirectionAtIdx[j,] = np.squeeze(res)
         
     if(len(predictedDirectionAtIdx) == 2):
         #multi output models
@@ -181,7 +197,8 @@ def getNextDirectionMagicModel(myState, dwi,curPosition_ijk, model, lastDirectio
         rot = rot[validIdx,]
 
     dwi_at_curPosition = dwi_tools.interpolateDWIVolume(myState, dwi, curPosition_ijk[validIdx,], x_,y_,z_, rotations = rot)
-       
+    dwi_at_curPosition = dwi_tools.projectIntoAppropriateSpace(myState, dwi_at_curPosition)
+
     if(myState.use2DProjection):
         noSamples,dx,dy,dz,dw = dwi_at_curPosition.shape
         dim = np.concatenate([[-1,], model.get_input_shape_at(0)[0][1:]])
@@ -220,13 +237,11 @@ def getNextDirectionMagicModel(myState, dwi,curPosition_ijk, model, lastDirectio
     return predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability
 
 
-def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, nverseDirection = False, printfProfiling = False, noIterations = 200):
+def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, nverseDirection = False, printfProfiling = False, noIterations = 115):
     '''
     fibre tracking using neural networks
     '''    
-    
-    print('Reshape: ' + str(myState.use2DProjection))
-    
+
     mask = mask.astype(np.float)
     
     noSeeds = len(seeds)
@@ -276,9 +291,11 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
     candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
     
     if(myState.use2DProjection and myState.usePreviousDirection):
+        print('test')
         cp = streamlinePositions[:,0,] 
         cp_ijk = (M.dot(cp.T) + abc).T
         dwi_at_curPosition = dwi_tools.interpolateDWIVolume(myState, data, cp_ijk, x_,y_,z_)
+        dwi_at_curPosition = dwi_tools.projectIntoAppropriateSpace(myState, dwi_at_curPosition)
         noSamples,dx,dy,dz,dw = dwi_at_curPosition.shape
         dwi_at_curPosition = np.reshape(dwi_at_curPosition, [noSamples,16,16])
         dwi_at_curPosition = dwi_at_curPosition[..., np.newaxis]
@@ -287,11 +304,10 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
     validSls = None
     start_time = time.time()
     for iter in range(1,noIterations):
-        if(printProgress and iter > 1):
-            print(str(iter-1) + "/" + str(noIterations) + " [" + str(time.time() - start_time) + "s]")
         ####
         ####
         # compute current position and last direction
+        print('\nIteration %d' % iter)
         curStreamlinePos_ras = candidatePosition_ras
         curStreamlinePos_ijk = candidatePosition_ijk
         lastDirections = (streamlinePositions[:,iter-1,] - streamlinePositions[:,iter,]) # previousPosition - currentPosition
@@ -331,7 +347,9 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
             print(" -> 5 " + str(time.time() - start_time) + "s]")
         
         if(printProgress):
-            print("valid ratio %d / %d (%.2f)" % (sum(validPoints), 2*noSeeds, float(sum(validPoints)) / float(2*noSeeds)))
+            print("   valid ratio %d of %d (%.2f)" % (sum(validPoints), 2*noSeeds, float(sum(validPoints)) / float(2*noSeeds)))
+            print("   runtime: " +  str(time.time() - start_time) + "s")
+
             
         for j in range(0,2*noSeeds):
             if(validPoints[j]):
