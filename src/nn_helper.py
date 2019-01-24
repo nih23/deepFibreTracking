@@ -97,6 +97,56 @@ def cropped_relu(x):
     return K.relu(x, max_value=1)
 
 
+# the cnn multi input architecture leads to some ambiguities..
+def get_1DCNN(trainingState, inputShapeDWI, decayrate=0, pDropout=0.5, kernelSz=3, poolSz=(2, 2)):
+    '''
+    predict direction of past/next streamline position using simple CNN architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    i1 = Input(inputShapeDWI)
+    layers = [i1]
+
+    layersEncoding = []
+
+    # DOWNSAMPLING STREAM
+    for i in range(1, trainingState.depth + 1):
+        layers.append(
+            Conv1D(trainingState.noFeatures, kernelSz, padding='same', kernel_initializer='he_normal')(layers[-1]))
+        if (trainingState.useBatchNormalization):
+            layers.append(BatchNormalization()(layers[-1]))
+        layers.append(trainingState.activationFunction(layers[-1]))
+
+        layers.append(
+            Conv1D(trainingState.noFeatures, kernelSz, padding='same', kernel_initializer='he_normal')(layers[-1]))
+        if (trainingState.useBatchNormalization):
+            layers.append(BatchNormalization()(layers[-1]))
+        layers.append(trainingState.activationFunction(layers[-1]))
+
+    #        layersEncoding.append(layers[-1])
+    #        layers.append(MaxPooling1D(pool_size=poolSz)(layers[-1]))
+
+    # final prediction layer w/ previous input
+    layers.append(Flatten()(layers[-1]))
+
+    layers.append(Dense(trainingState.noFeatures, kernel_initializer='he_normal')(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
+    layers.append(Dense(trainingState.noOutputNeurons, kernel_initializer='he_normal')(layers[-1]))
+    layerNextDirection = layers[-1]
+
+    optimizer = optimizers.Adam(lr=trainingState.lr, decay=decayrate)
+
+    mlp = Model([layers[0]], outputs=[layerNextDirection])
+
+    if (trainingState.loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    elif (trainingState.loss == 'cos'):
+        mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer)  # use in case of directional vectors
+    elif (trainingState.loss == 'sqCos2'):
+        mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+
+    return mlp
+
+
 # the cnn multi input architecture leads to some ambiguities.. 
 def get_2DCNN(trainingState, inputShapeDWI, decayrate=0, pDropout=0.5, kernelSz=3, poolSz = (2,2)):
     '''

@@ -95,6 +95,8 @@ def main():
         train_prevDirection = train_prevDirection[idxNoZeroVectors,]
     
     noSamples,noX,noY,noZ,noD = train_DWI.shape
+
+    myState.dim = [noX,noY,noZ,noD]
     
     print('\n**************')
     print('** Training **')
@@ -105,8 +107,7 @@ def main():
           str(myTrainingState.useDropout) + ' bn  ' + str(myTrainingState.useBatchNormalization) + ' batch size ' + str(myTrainingState.batch_size))
     print('dataset ' + str(myTrainingState.pTrainData) + " " + str(noSamples))
     print('**************\n')
-    
-   
+
     # train simple MLP
     params = "%s_%s_dx_%d_dy_%d_dz_%d_dd_%d_%s_feat_%d_depth_%d_output_%d_lr_%.4f_dropout_%d_bn_%d_unitTangent_%d_wz_%d" % \
              (myTrainingState.modelToUse,myTrainingState.loss,noX,noY,noZ,noD,myTrainingState.activationFunction.__class__.__name__,myTrainingState.noFeatures,
@@ -143,9 +144,16 @@ def main():
 
     ####################
     ####################
+    if (myTrainingState.modelToUse == '1Dcnn'):
+        train_DWI = np.reshape(train_DWI,[noSamples,myState.dim[0]*myState.dim[1]*myState.dim[2],noD])
+        cnn = nn_helper.get_1DCNN(myTrainingState, inputShapeDWI = train_DWI.shape[1:])
+        cnn.summary()
+        cnn.fit([train_DWI], [train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+    ####################
+    ####################
     if (myTrainingState.modelToUse == '2Dcnn'):
         print(str(train_DWI.shape))
-        cnn = nn_helper.get_2Dcnn(myTrainingState)
+        cnn = nn_helper.get_2DCNN(myTrainingState, inputShapeDWI = train_DWI.shape[1:])
         cnn.summary()
         cnn.fit([train_DWI], [train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
     ####################
