@@ -5,8 +5,9 @@ class TractographyInformation:
 
     def __init__(self, model = 'MLP', representation = 'sh', tensormodel = 'dti', stepwidth = 1, b_value = 1000, dim = [1,1,1],
                  unitTangent = 0, faThreshold = 0.15, shOrder = 4, pPrecomputedStreamlines = '', rotateData = False, addRandomDataForEndpointPrediction = False,
-                 gridSpacing = 1, noCrossingFibres = 1, nameDWIdataset = '', isISMRM = False, hcpID = '', usePreviousDirection = False, use2DProjection = False,
+                 gridSpacing = 0.25, noCrossingFibres = 1, nameDWIdataset = '', isISMRM = False, hcpID = '', usePreviousDirection = False, use2DProjection = False,
                  magicModel = False, pStopTracking = 0.5):
+        ## 01/24/19: changed the default value to 0.25 as this is required by the rotation approach
         self.dim = dim
         self.model = model
         self.repr = representation
@@ -24,7 +25,7 @@ class TractographyInformation:
         self.nameDWIdataset = nameDWIdataset
         self.isISMRM = isISMRM
         self.hcpID = hcpID
-        self.referenceOrientation = np.array([0, 1, 0])
+        self.referenceOrientation = np.array([1, 1, 1])
         self.usePreviousDirection = usePreviousDirection
         self.use2DProjection = use2DProjection
         self.magicModel = magicModel

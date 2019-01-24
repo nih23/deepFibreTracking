@@ -572,7 +572,8 @@ def interpolateDWIVolume(myState, dwi, positions, x_,y_,z_, rotations = None):
     start_time = time.time()
     noElem = myState.dim[0] * myState.dim[1] * myState.dim[2]
     cvF = np.ones([noPositions*noElem,3])
-
+    curIdx = -1
+    prevIdx = -1
     grid = np.array(np.meshgrid(x_,y_,z_)).reshape(3,-1)
     for j in range(0,noPositions):
         grid_rotated = grid
@@ -582,11 +583,27 @@ def interpolateDWIVolume(myState, dwi, positions, x_,y_,z_, rotations = None):
         il = j * noElem
         ir = (j+1) * noElem 
         cvF[il:ir] = coordVecs
+        #print('C_1: ' + str(np.squeeze(positions[j,:,None])))
 
+        i = np.argmin(np.sum(np.abs(coordVecs - positions[j,:,None].T), axis = 1))
+        curIdx = i
+        #print("  -> " + str(i) + " " + str(coordVecs[i,].T))
+        if(j>0):
+            #print('C_2: ' + str(np.squeeze(positions[j-1, :, None])))
+            i = np.argmin(np.sum(np.abs(coordVecs - positions[j-1, :, None].T), axis=1))
+            prevIdx = i
+            #print("  -> " + str(i) + " " + str(coordVecs[i,].T))
+
+        #print('%d: %d,%d' % (j, curIdx, prevIdx))
+
+    #print('%d,%d' % (curIdx, prevIdx))
     x = np.zeros([noPositions,myState.dim[0],myState.dim[1],myState.dim[2],szDWI[-1]])
     
     for i in range(0,szDWI[-1]):
-        x[:,:,:,:,i] = np.reshape(vfu.interpolate_scalar_3d(dwi[:,:,:,i],cvF)[0], [noPositions,myState.dim[0],myState.dim[1],myState.dim[2]])
+        interpRes = vfu.interpolate_scalar_3d(dwi[:,:,:,i],cvF)[0]
+        interpRes[curIdx,] = -1000
+        interpRes[prevIdx,] = +2000
+        x[:,:,:,:,i] = np.reshape(interpRes, [noPositions,myState.dim[0],myState.dim[1],myState.dim[2]])
 
     return x
 
@@ -850,9 +867,10 @@ def generateTrainingData(streamlines, dwi, affine, state, generateRandomData = F
             rot = np.zeros([noPoints,3,3])
             rot[0,:] = np.eye(3)
 
-            #TODO: IS THIS CORRECT? SHOULDNT WE START WITH 1?
             for k in range(1,noPoints):
-                R_2vect(rot[k,:],vector_orig=tangents[k-1,],vector_fin=vv)
+                #R_2vect(rot[k,:],vector_orig=tangents[k-1,],vector_fin=vv) ## wrong direction.. haha..what a shame :o
+                R_2vect(rot[k, :], vector_orig=vv, vector_fin=tangents[k - 1,]) ##TODO: This only seems to work with a small grid spacing (quarter of the step length)
+
 
                 #vecs = dNextAll[k,]
                 #np.transpose(vecs[..., np.newaxis])

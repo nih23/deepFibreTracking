@@ -120,7 +120,8 @@ def getNextDirection(myState, dwi,curPosition_ijk, model, lastDirections = None,
 
         for k in range(noValPositions):
             valIdx = validIdx[k]
-            dwi_tools.R_2vect(rot_val[k,:,:],vector_orig=lastDirections[valIdx,],vector_fin=vv) # network predicts current - previous, network was trained with rotations computed from the direction previous - current position
+            dwi_tools.R_2vect(rot_val[k, :, :], vector_orig=vv, vector_fin=lastDirections[valIdx,]) # fixed 01/24/19. see @dwi_tools
+            #dwi_tools.R_2vect(rot_val[k,:,:],vector_orig=lastDirections[valIdx,],vector_fin=vv) # network predicts current - previous, network was trained with rotations computed from the direction previous - current position
             #dwi_tools.R_2vect(rot[k,:,:],vector_orig=lastDirections[k,],vector_fin=vv) # network predicts current - previous, network was trained with rotations computed from the direction previous - current position
         print("   -> " + str(time.time() - start_time) + "s")
 
@@ -190,7 +191,9 @@ def getNextDirectionMagicModel(myState, dwi,curPosition_ijk, model, lastDirectio
         rot = np.zeros([noPositions,3,3])
 
         for k in range(noPositions):
-            dwi_tools.R_2vect(rot[k,:,:],vector_orig=lastDirections[k,],vector_fin=vv)
+            #dwi_tools.R_2vect(rot[k,:,:],vector_orig=lastDirections[k,],vector_fin=vv)
+            dwi_tools.R_2vect(rot[k, :, :], vector_orig=vv,
+                              vector_fin=lastDirections[k,])  # fixed 01/24/19. see @dwi_tools
         print(" -> " + str(time.time() - start_time) + "s")
 
     if(not rot == None):

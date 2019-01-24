@@ -45,7 +45,6 @@ def main():
     myState.faThreshold = args.fa
     myState.rotateData = args.rotateData
     myState.model = args.model
-    myState.gridSpacing = 1
     myState.hcpID = args.caseid
 
     minimumStreamlineLength = args.minLength
