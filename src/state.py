@@ -3,9 +3,9 @@ import numpy as np
 
 class TractographyInformation:
 
-    def __init__(self, model = 'MLP', representation = 'sh', tensormodel = 'dti', stepwidth = 1, b_value = 1000, dim = [1,1,1],
+    def __init__(self, model = 'MLP', representation = 'raw', tensormodel = 'dti', stepwidth = 1, b_value = 1000, dim = [1,1,1],
                  unitTangent = 0, faThreshold = 0.15, shOrder = 4, pPrecomputedStreamlines = '', rotateData = False, addRandomDataForEndpointPrediction = False,
-                 gridSpacing = 0.25, noCrossingFibres = 1, nameDWIdataset = '', isISMRM = False, hcpID = '', usePreviousDirection = False, use2DProjection = False,
+                 gridSpacing = 1, noCrossingFibres = 1, nameDWIdataset = '', isISMRM = False, hcpID = '', usePreviousDirection = False, use2DProjection = False,
                  magicModel = False, pStopTracking = 0.5):
         ## 01/24/19: changed the default value to 0.25 as this is required by the rotation approach
         self.dim = dim
@@ -25,7 +25,7 @@ class TractographyInformation:
         self.nameDWIdataset = nameDWIdataset
         self.isISMRM = isISMRM
         self.hcpID = hcpID
-        self.referenceOrientation = np.array([1, 1, 1])
+        self.referenceOrientation = np.array([0, 0, 1])
         self.usePreviousDirection = usePreviousDirection
         self.use2DProjection = use2DProjection
         self.magicModel = magicModel
@@ -72,12 +72,24 @@ class TractographyInformation:
             noC = -1
             noX = 1
             noY = 1
+            noZ = 5 
             self.usePreviousDirection = False
-            self.use2DProjection = True
+            self.use2DProjection = False
+            self.rotateData = False
+
+        if (self.model.find("1Dcnn") > 0):
+            self.repr = '1Dcnn'
+            noSamples, noX, noY, noZ = tracker.get_input_shape_at(0)
+            noC = -1
+            noX = 1
+            noY = 1
+            self.usePreviousDirection = False
+            self.use2DProjection = False
             self.rotateData = False
 
         elif (self.model.find("3Dcnn") > 0):
             self.repr = '3Dcnn'
+            self.repr = 'raw'
             noSamples, noX, noY, noZ, noC = tracker.get_input_shape_at(0)
             self.usePreviousDirection = False
             self.use2DProjection = False
@@ -102,8 +114,8 @@ class TractographyInformation:
             print('Spherical Harmonics activated due to 15C or 45C.')
             self.repr = 'sh'
 
-        if (self.model.find("_raw_") > 0):
-            self.repr = 'raw'
+        #if (self.model.find("_raw_") > 0):
+            #self.repr = 'raw'
 
         return self
 

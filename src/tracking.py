@@ -100,12 +100,14 @@ def makeStep(myState, predictedDirection,lastDirections,curStreamlinePos_ras,M,a
 
 
 def getNextDirection(myState, dwi,curPosition_ijk, model, lastDirections = None, batch_size = 2**12, x_ = [0], y_ = [0], z_ = [0], validIdx = None):
-    rot = None
     rot_val = None
 
     if(validIdx is None):
         validIdx = list(range(len(curPosition_ijk)))
-       
+
+    ###################
+    ### compute rotation matrices
+    ###################
     if(myState.rotateData):
         print('   rotating data')
         start_time = time.time()
@@ -115,18 +117,19 @@ def getNextDirection(myState, dwi,curPosition_ijk, model, lastDirections = None,
         noPositions = len(lastDirections)
         noValPositions = len(validIdx)
         # compute rotation matrices
-        rot = np.zeros([noValPositions,3,3])
         rot_val = np.zeros([noValPositions,3,3])
 
         for k in range(noValPositions):
             valIdx = validIdx[k]
             dwi_tools.R_2vect(rot_val[k, :, :], vector_orig=vv, vector_fin=lastDirections[valIdx,]) # fixed 01/24/19. see @dwi_tools
-            #dwi_tools.R_2vect(rot_val[k,:,:],vector_orig=lastDirections[valIdx,],vector_fin=vv) # network predicts current - previous, network was trained with rotations computed from the direction previous - current position
-            #dwi_tools.R_2vect(rot[k,:,:],vector_orig=lastDirections[k,],vector_fin=vv) # network predicts current - previous, network was trained with rotations computed from the direction previous - current position
-        print("   -> " + str(time.time() - start_time) + "s")
+        print("     -> " + str(time.time() - start_time) + "s")
 
         #rot_val = rot[validIdx,]
 
+    ###################
+    ### interpolate, rotate
+    ### and project data
+    ###################
     dwi_at_curPosition = dwi_tools.interpolateDWIVolume(myState, dwi, curPosition_ijk[validIdx,], x_,y_,z_, rotations = rot_val)
     dwi_at_curPosition = dwi_tools.projectIntoAppropriateSpace(myState, dwi_at_curPosition)
 
@@ -151,20 +154,26 @@ def getNextDirection(myState, dwi,curPosition_ijk, model, lastDirections = None,
             lastDirections = -1 * lastDirections
             networkInput = [dwi_at_curPosition, lastDirections]
 
+    ###################
+    ### make prediction
+    ###################
     predictedDirectionAtIdx = model.predict(networkInput, batch_size=batch_size)
 
-# dont need that yet
-# project direction from streamline coordinate system to RAS
-#    for j in range(0,len(validIdx)):
-#        if(rot is not None):
-#            vecs = predictedDirectionAtIdx[j,]
-#            np.transpose(vecs[..., np.newaxis])
-#            res = np.dot(vecs, np.linalg.inv(rot_val[j,]))
-#            predictedDirectionAtIdx[j,] = np.squeeze(res)
-        
+    ###################
+    ### postprocess prediction
+    ###################
+    # multi output models
     if(len(predictedDirectionAtIdx) == 2):
-        #multi output models
         predictedDirectionAtIdx = predictedDirectionAtIdx[0]
+
+    # the output of the neural network is rotated just as the input meaning that we need to rotate it back to get the
+    # direction in standard IJK coordinate system
+    if(myState.rotateData):
+        print('   rotating prediction of the neural network back :D')
+        start_time = time.time()
+        for i in range(noPositions):
+            predictedDirectionAtIdx[k,] = np.dot(rot_val[k, :].T, predictedDirectionAtIdx[k,].T).T # transpose is inverse in case of rotation matrices
+        print("     -> " + str(time.time() - start_time) + "s")
 
     vecNorms[validIdx] = np.sqrt(np.sum(predictedDirectionAtIdx ** 2 , axis = 1))
     predictedDirection[validIdx,] = np.nan_to_num(predictedDirectionAtIdx / vecNorms[validIdx,None])
@@ -278,12 +287,15 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
     
     ld_input = lastDirections
 
+    # never rotate the data of the first step
+    oldRotationState = myState.rotateData
+    myState.rotateData = False
     # predict direction but in never rotate data
     if(myState.magicModel):
         predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(myState,data,curPosition_ijk=curStreamlinePos_ijk,model=model,lastDirections=ld_i,x_=x_,y_=y_,z_=z_)
     else:
         predictedDirection, vecNorms, dwi_at_curPosition = getNextDirection(myState, data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = ld_input, x_ = x_, y_ = y_, z_ = z_)
-        
+    myState.rotateData = oldRotationState
     # compute next streamline position
     candidatePosition_ras, candidatePosition_ijk = makeStep(myState, printfProfiling=printfProfiling, predictedDirection = predictedDirection, lastDirections = lastDirections, curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc)
     
@@ -302,14 +314,15 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
         noSamples,dx,dy,dz,dw = dwi_at_curPosition.shape
         dwi_at_curPosition = np.reshape(dwi_at_curPosition, [noSamples,16,16])
         dwi_at_curPosition = dwi_at_curPosition[..., np.newaxis]
-    
+
+
     ### START ITERATION UNTIL NOITERATIONS REACHED ###
     validSls = None
     start_time = time.time()
     for iter in range(1,noIterations):
         ####
         ####
-        # compute current position and last direction
+        # estimate tangent at current position
         print('\nIteration %d' % iter)
         curStreamlinePos_ras = candidatePosition_ras
         curStreamlinePos_ijk = candidatePosition_ijk
@@ -319,8 +332,6 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
         ####
         # compute direction
         ld_input = lastDirections
-#        if(reshapeForConvNet):
-#            ld_input = dwi_at_curPosition
         if(myState.magicModel):
             predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirectionMagicModel(
                 myState, data, curPosition_ijk=curStreamlinePos_ijk, model=model, lastDirections=ld_input,

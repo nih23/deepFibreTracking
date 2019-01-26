@@ -113,9 +113,9 @@ def main():
         print("step width " + str(np.linalg.norm(streamlines_filtered[0][1] - streamlines_filtered[0][0])) + " mm")
         myState.tensorModel = 'precomp'
         tInfo = myState.pPrecomputedStreamlines
-        pTrainDataDir = '/data/nico/trainingdataNEW/%s/%s/' % (myState.nameDWIdataset, myState.pPrecomputedStreamlines)
-        pTrainData = '/data/nico/trainingdataNEW/%s/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotateD%d_ep%d.h5' % \
-                     (myState.nameDWIdataset, myState.pPrecomputedStreamlines, myState.b_value, myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
+        pTrainDataDir = '/data/nico/%s/' % (myState.pPrecomputedStreamlines)
+        pTrainData = '/data/nico/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedNewIJKRAS4%d_ep%d.h5' % \
+                     (myState.pPrecomputedStreamlines, myState.b_value, myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
                       myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction)
     
     if(myState.tensorModel == 'dti'):
@@ -161,10 +161,10 @@ def main():
         runtime = time.time() - start_time
         print('LocalTracking Runtime ' + str(runtime) + 's')
         tInfo = '%s_sw%.1f_minL%d_maxL%d_fa%.2f' % (myState.tensorModel,myState.stepWidth,minimumStreamlineLength,maximumStreamlineLength,myState.faThreshold)
-        pTrainData = '/data/nico/trainingdataNEW/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotated%d_ep%d.h5' % (myState.nameDWIdataset, myState.b_value,
+        pTrainData = '/data/nico/train/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedNewIJKRAS4%d_ep%d.h5' % (myState.nameDWIdataset, myState.b_value,
                                                                                                    myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
                                                                                                    myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction)
-        pTrainDataDir = '/data/nico/trainingdataNEW/'
+        pTrainDataDir = '/data/nico/trainingdata/'
         
         dwi_tools.saveVTKstreamlines(streamlines_filtered, 'data/%s_%s.vtk' % (myState.nameDWIdataset,tInfo))
 

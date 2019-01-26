@@ -28,6 +28,7 @@ from dipy.align.reslice import reslice
 
 
 def projectIntoAppropriateSpace(myState, dwi):
+    #print(myState.repr)
     if(myState.repr == 'sh'):
         #print('Spherical Harmonics (ours)')
         start_time = time.time()
@@ -49,6 +50,9 @@ def projectIntoAppropriateSpace(myState, dwi):
         #print('Runtime ' + str(runtime) + 's')
     elif(myState.repr == 'raw'):
         tracking_data = dwi
+    elif(myState.repr == '2Dcnn'):
+        dwi = np.squeeze(dwi)
+        tracking_data = dwi[..., np.newaxis]
     else:
         print('[ERROR] no data representation specified (raw, sh, res100, 2D')
         return None
@@ -199,7 +203,9 @@ def resample_dwi(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=0.00
     # sphere = get_sphere('repulsion724')
        
     if directions is not None:
-        sphere = Sphere(xyz=bvecs[1:])
+        sphere = Sphere(xyz=directions)
+        #sphere = Sphere(xyz=bvecs[1:]) #TODO LOOK INTO THAT LINE!!!  WHY DO WE OMIT THE FIRST BVEC?!?!?!?!?!?!
+        #print('WARNING THERE MIGHT BE A BUG HERE!!!')
 
     sph_harm_basis = sph_harm_lookup.get('mrtrix')
     Ba, m, n = sph_harm_basis(sh_order, sphere.theta, sphere.phi)
@@ -565,15 +571,41 @@ def getSizeOfDataRepresentation(myState):
     return len(myState.bvals)
 
 
+def _getCoordinateGrid(state):
+    '''
+    generate a grid of provided spatial extent which is used to interpolate data
+    '''
+    x_ = state.gridSpacing * np.linspace(-1 * state.dim[0], state.dim[0], state.dim[0])
+    y_ = state.gridSpacing * np.linspace(-1 * state.dim[1], state.dim[1], state.dim[1])
+    z_ = state.gridSpacing * np.linspace(-1, state.dim[2]-2, state.dim[2])
+
+    # x_ = state.gridSpacing * np.linspace(-1 * state.dim[0], 0, state.dim[0])
+    # y_ = state.gridSpacing * np.linspace(-1 * state.dim[1], 0, state.dim[1])
+    # z_ = state.gridSpacing * np.linspace(-1 * state.dim[2], 0, state.dim[2])
+
+    #x_ = state.gridSpacing * np.linspace(0, state.dim[0], state.dim[0])
+    # y_ = state.gridSpacing * np.linspace(0, state.dim[1], state.dim[1])
+    # z_ = state.gridSpacing * np.linspace(0, state.dim[2], state.dim[2])
+
+    # dirty hack ...
+    if (state.dim[0] == 1):
+        x_ = [0]
+
+    if (state.dim[1] == 1):
+        y_ = [0]
+
+    if (state.dim[2] == 1):
+        z_ = [0]
+
+    return x_, y_, z_
+
+
 def interpolateDWIVolume(myState, dwi, positions, x_,y_,z_, rotations = None):
     # positions: noPoints x 3
     szDWI = dwi.shape
     noPositions = len(positions)
-    start_time = time.time()
     noElem = myState.dim[0] * myState.dim[1] * myState.dim[2]
     cvF = np.ones([noPositions*noElem,3])
-    curIdx = -1
-    prevIdx = -1
     grid = np.array(np.meshgrid(x_,y_,z_)).reshape(3,-1)
     for j in range(0,noPositions):
         grid_rotated = grid
@@ -583,27 +615,21 @@ def interpolateDWIVolume(myState, dwi, positions, x_,y_,z_, rotations = None):
         il = j * noElem
         ir = (j+1) * noElem 
         cvF[il:ir] = coordVecs
-        #print('C_1: ' + str(np.squeeze(positions[j,:,None])))
 
-        i = np.argmin(np.sum(np.abs(coordVecs - positions[j,:,None].T), axis = 1))
-        curIdx = i
-        #print("  -> " + str(i) + " " + str(coordVecs[i,].T))
-        if(j>0):
-            #print('C_2: ' + str(np.squeeze(positions[j-1, :, None])))
-            i = np.argmin(np.sum(np.abs(coordVecs - positions[j-1, :, None].T), axis=1))
-            prevIdx = i
-            #print("  -> " + str(i) + " " + str(coordVecs[i,].T))
-
-        #print('%d: %d,%d' % (j, curIdx, prevIdx))
-
-    #print('%d,%d' % (curIdx, prevIdx))
     x = np.zeros([noPositions,myState.dim[0],myState.dim[1],myState.dim[2],szDWI[-1]])
-    
+
     for i in range(0,szDWI[-1]):
         interpRes = vfu.interpolate_scalar_3d(dwi[:,:,:,i],cvF)[0]
-        interpRes[curIdx,] = -1000
-        interpRes[prevIdx,] = +2000
         x[:,:,:,:,i] = np.reshape(interpRes, [noPositions,myState.dim[0],myState.dim[1],myState.dim[2]])
+
+    if(rotations is None):
+        return x
+
+    # resample the diffusion gradients wrt. to the rotation matrix
+    for j in range(noPositions):
+        bvecs_rot = np.dot(rotations[j,], myState.bvecs.T).T
+        x_rot, _ = resample_dwi(x[j,], b0=myState.b0, bvals=myState.bvals, bvecs=myState.bvecs, directions=bvecs_rot, mean_centering=False)
+        x[j, ] = x_rot
 
     return x
 
@@ -774,28 +800,6 @@ def filterStreamlinesByMaxLength(streamlines, maxLength = 200):
     '''
     return [x for x in streamlines if metrics.length(x) < maxLength]
 
-
-def _getCoordinateGrid(state):
-    '''
-    generate a grid of provided spatial extent which is used to interpolate data
-    '''
-    x_ = state.gridSpacing * np.linspace(-1 * state.dim[0]/2, state.dim[0]/2, state.dim[0])
-    y_ = state.gridSpacing * np.linspace(-1 * state.dim[1]/2, state.dim[1]/2, state.dim[1])
-    z_ = state.gridSpacing * np.linspace(-1 * state.dim[2]/2, state.dim[2]/2, state.dim[2])
-    
-    # dirty hack ...
-    if(state.dim[0] == 1):
-        x_ = [0]
-        
-    if(state.dim[1] == 1):
-        y_ = [0]
-        
-    if(state.dim[2] == 1):
-        z_ = [0]
-    
-    return x_,y_,z_
-
-
 def generateTrainingData(streamlines, dwi, affine, state, generateRandomData = False):
     '''
 
@@ -855,30 +859,28 @@ def generateTrainingData(streamlines, dwi, affine, state, generateRandomData = F
         dPrevAll = np.concatenate( (np.array([[0,0,0]]), -1 * dNextAll[0:-1,]) )
         
         rot = None
-        
+
         if(state.rotateData):
             # reference orientation
             vv = state.getReferenceOrientation()
             
             # compute tangents
             tangents = streamlinevec_ijk[0:-1] - streamlinevec_ijk[1:] # tangents represents the tangents starting from the 2nd streamline position previousPosition - currentPosition
-            
+
             # compute rotation matrices
             rot = np.zeros([noPoints,3,3])
             rot[0,:] = np.eye(3)
 
+            rot_ras = np.zeros([noPoints, 3, 3])
+            rot_ras[0, :] = np.eye(3)
+
             for k in range(1,noPoints):
-                #R_2vect(rot[k,:],vector_orig=tangents[k-1,],vector_fin=vv) ## wrong direction.. haha..what a shame :o
-                R_2vect(rot[k, :], vector_orig=vv, vector_fin=tangents[k - 1,]) ##TODO: This only seems to work with a small grid spacing (quarter of the step length)
-
-
-                #vecs = dNextAll[k,]
-                #np.transpose(vecs[..., np.newaxis])
-                #res = np.dot(vecs, np.linalg.inv(rot[k,]))
+                R_2vect(rot[k, :], vector_orig=vv, vector_fin=tangents[k - 1,])
+                dNextAll[k,] = np.dot(rot[k, :], dNextAll[k,].T).T
 
                 if(generateRandomData):
                     rot[k,:] += np.random.rand(3,3) - 0.5 # randomely rotate our data (and hope that there no other streamline coming from that direction)
-                
+
                 
         # interpolate
         interp_slv_ijk = interpolateDWIVolume(state,dwi,streamlinevec_ijk, rotations=rot, x_ = x_,y_ = y_,z_ = z_)
