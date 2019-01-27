@@ -25,6 +25,23 @@ from scipy.interpolate import griddata
 from dipy.data import get_sphere
 
 from dipy.align.reslice import reslice
+from sklearn.neighbors import NearestNeighbors
+
+
+def discretizeTangents(bvecs, tangents):
+    if(len(tangents) == 1):
+        return np.argmin( np.sum((bvecs - tangents)**2, axis = 1) )
+    start_time = time.time()
+    nbrs = NearestNeighbors(n_neighbors=1, algorithm='kd_tree').fit(bvecs)
+    distances, indices = nbrs.kneighbors(tangents)
+    runtime = time.time() - start_time
+    print('Mean discretization error: ' + str(np.mean(distances)))
+    print('Runtime ' + str(runtime) + ' s')
+    return indices
+
+
+def projectDiscretizedTangentsBack(bvecs, label):
+    return [bvecs[i,] for i in label]
 
 
 def projectIntoAppropriateSpace(myState, dwi):
@@ -871,12 +888,9 @@ def generateTrainingData(streamlines, dwi, affine, state, generateRandomData = F
             rot = np.zeros([noPoints,3,3])
             rot[0,:] = np.eye(3)
 
-            rot_ras = np.zeros([noPoints, 3, 3])
-            rot_ras[0, :] = np.eye(3)
-
             for k in range(1,noPoints):
                 R_2vect(rot[k, :], vector_orig=vv, vector_fin=tangents[k - 1,])
-                dNextAll[k,] = np.dot(rot[k, :], dNextAll[k,].T).T
+                #dNextAll[k,] = np.dot(rot[k, :], dNextAll[k,].T).T
 
                 if(generateRandomData):
                     rot[k,:] += np.random.rand(3,3) - 0.5 # randomely rotate our data (and hope that there no other streamline coming from that direction)

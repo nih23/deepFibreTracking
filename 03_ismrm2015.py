@@ -30,7 +30,6 @@ def main():
     parser.add_argument('-sh', '--shOrder', dest='sh', type=int, default=4, help='order of spherical harmonics (if used)')
     parser.add_argument('-nt', '--noThreads', type=int, default=4, help='number of parallel threads of the data generator. Note: this also increases the memory demand.')
     parser.add_argument('--denoise', help='denoise dataset', dest='denoise' , action='store_true')
-    parser.add_argument('--nodenoise', help='dont denoise dataset', dest='denoise' , action='store_false')
     parser.add_argument('--reslice', help='reslice datase to 1.25mm^3', dest='reslice' , action='store_true')
     parser.add_argument('--rotateData', help='reslice datase to 1.25mm^3', dest='rotateData' , action='store_true')
     parser.set_defaults(denoise=False)   
