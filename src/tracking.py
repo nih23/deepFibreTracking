@@ -33,9 +33,9 @@ import src.SelectiveDropout as SelectiveDropout
 from dipy.tracking.streamline import values_from_volume
 import dipy.align.vector_fields as vfu
 from dipy.core.sphere import Sphere
-from dipy.core import subdivide_octahedron 
+from dipy.core import subdivide_octahedron
 from scipy.spatial import KDTree
-from dipy.core import subdivide_octahedron 
+from dipy.core import subdivide_octahedron
 
 from dipy.tracking.local import LocalTracking
 from dipy.viz import window, actor
@@ -55,14 +55,14 @@ from keras.models import load_model
 
 def joinTwoAlignedStreamlineLists(streamlines_left,streamlines_right):
     assert(len(streamlines_left) == len(streamlines_right), "The two lists of streamlines need to have the same number of elements.")
-    
+
     streamlines_joined = []
-    
+
     for i in range(0,len(streamlines_left)):
         sl_l = np.flipud(streamlines_left[i][1:])
         sl_r = streamlines_right[i][1:]
         streamlines_joined.append(np.concatenate([sl_l, sl_r]))
-        
+
     return streamlines_joined
 
 
@@ -71,16 +71,16 @@ def makeStep(myState, predictedDirection,lastDirections,curStreamlinePos_ras,M,a
     ####
     # check predicted direction and flip it if necessary
     noSeeds = len(predictedDirection)
-    
+
     if(printfProfiling):
         print(" -> 3 " + str(time.time() - start_time) + "s]")
-        
+
     #predictedDirection[np.where(theta < 0),] = -1 * predictedDirection[np.where(theta < 0),] ### probably a little bit faster
     for j in range(0,noSeeds):
         lv1 = predictedDirection[j,]
         pv1 = lastDirections[j,]
         #print(str(lv1) + '--' + str(pv1))
-        #theta = np.arcsin(np.dot(pv1,lv1) / (np.linalg.norm(pv1)*np.linalg.norm(lv1)))   
+        #theta = np.arcsin(np.dot(pv1,lv1) / (np.linalg.norm(pv1)*np.linalg.norm(lv1)))
 
         theta = np.dot(pv1,lv1)
 
@@ -93,9 +93,9 @@ def makeStep(myState, predictedDirection,lastDirections,curStreamlinePos_ras,M,a
     ####
     ####
     # compute next streamline position and check if this position is valid wrt. our stopping criteria1
-    candidatePosition_ras = curStreamlinePos_ras - myState.stepWidth * predictedDirection 
+    candidatePosition_ras = curStreamlinePos_ras - myState.stepWidth * predictedDirection
     candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T   #projectRAStoIJK(candidatePosition,M,abc)
-    
+
     return candidatePosition_ras, candidatePosition_ijk
 
 
@@ -159,6 +159,27 @@ def getNextDirection(myState, dwi,curPosition_ijk, model, lastDirections = None,
     ###################
     predictedDirectionAtIdx = model.predict(networkInput, batch_size=batch_size)
 
+
+
+    if(len(predictedDirectionAtIdx) == 0):
+        print('##########################################')
+        print('##########################################')
+        print('##########################################')
+        print('##########################################')
+        print('im gonna fail. len predictions equals zero')
+        print('returning zeros ... ')
+        print(str(validIdx))
+        print(len(predictedDirectionAtIdx))
+        print(str(networkInput.shape))
+        print('##########################################')
+        print('##########################################')
+        print('##########################################')
+        print('##########################################')
+        return predictedDirection, vecNorms, dwi_at_curPosition
+
+    mupred = np.mean(predictedDirectionAtIdx, axis=0)
+    stdpred = np.std(predictedDirectionAtIdx, axis=0)
+    print(" prediction stats1 %.3f+-%.3f %.3f+-%.3f %.3f+-%.3f" % (mupred[0], stdpred[0], mupred[1], stdpred[1], mupred[2], stdpred[2]))
     ###################
     ### postprocess prediction
     ###################
@@ -171,23 +192,35 @@ def getNextDirection(myState, dwi,curPosition_ijk, model, lastDirections = None,
     if(myState.rotateData):
         print('   rotating prediction of the neural network back :D')
         start_time = time.time()
-        for i in range(noPositions):
-            predictedDirectionAtIdx[k,] = np.dot(rot_val[k, :].T, predictedDirectionAtIdx[k,].T).T # transpose is inverse in case of rotation matrices
-        print("     -> " + str(time.time() - start_time) + "s")
 
+        for i in range(noValPositions):
+            predictedDirectionAtIdx[i,] = np.dot(rot_val[i, :].T, predictedDirectionAtIdx[i,].T).T # transpose is inverse in case of rotation matrices
+
+        print("     -> " + str(time.time() - start_time) + "s")
+        mupred2 = np.mean(predictedDirectionAtIdx, axis=0)
+        stdpred2 = np.std(predictedDirectionAtIdx, axis=0)
+
+        print(" prediction stats2 %.3f+-%.3f %.3f+-%.3f %.3f+-%.3f" % (mupred2[0], stdpred2[0], mupred2[1], stdpred2[1], mupred2[2], stdpred2[2]))
     vecNorms[validIdx] = np.sqrt(np.sum(predictedDirectionAtIdx ** 2 , axis = 1))
     predictedDirection[validIdx,] = np.nan_to_num(predictedDirectionAtIdx / vecNorms[validIdx,None])
-        
+
+    if (myState.rotateData):
+        print("     -> " + str(time.time() - start_time) + "s")
+        mupred = np.mean(predictedDirection[validIdx,], axis=0)
+        stdpred = np.std(predictedDirection[validIdx,], axis=0)
+        print(" prediction stats2 %.3f+-%.3f %.3f+-%.3f %.3f+-%.3f" % (
+        mupred[0], stdpred[0], mupred[1], stdpred[1], mupred[2], stdpred[2]))
+
     return predictedDirection, vecNorms, dwi_at_curPosition
 
 
 def getNextDirectionMagicModel(myState, dwi,curPosition_ijk, model, lastDirections = None, x_ = [0], y_ = [0], z_ = [0], batch_size = 2**10, validIdx = None):
-    
+
     if(validIdx is None):
         validIdx = list(range(len(curPosition_ijk)))
 
     rot = None
-       
+
     if(myState.rotateData):
         #print('rotating data')
         start_time = time.time()
@@ -215,11 +248,11 @@ def getNextDirectionMagicModel(myState, dwi,curPosition_ijk, model, lastDirectio
         noSamples,dx,dy,dz,dw = dwi_at_curPosition.shape
         dim = np.concatenate([[-1,], model.get_input_shape_at(0)[0][1:]])
         dwi_at_curPosition = np.reshape(dwi_at_curPosition, dim)
-    
+
     predictedDirection = np.zeros([len(curPosition_ijk),3])
     stopTrackingProbability = np.zeros([len(curPosition_ijk),1])
-    
-    
+
+
     if(not myState.usePreviousDirection):
         predictedDirectionAtIdx, stopTrackingProbabilityAtIdx = model.predict([dwi_at_curPosition], batch_size = batch_size)
     else:
@@ -236,39 +269,39 @@ def getNextDirectionMagicModel(myState, dwi,curPosition_ijk, model, lastDirectio
 
     if(len(predictedDirectionAtIdx) == 2):
         predictedDirectionAtIdx = predictedDirectionAtIdx[0]
-            
+
     predictedDirection[validIdx,] = predictedDirectionAtIdx
     stopTrackingProbability[validIdx,] = stopTrackingProbabilityAtIdx
     #predictedDirection = predictedDirection * 2 - 1
-        
+
     vecNorms = np.sqrt(np.sum(predictedDirection ** 2 , axis = 1))
     predictedDirection = np.nan_to_num(predictedDirection / vecNorms[:,None])
-    
+
     stopTrackingProbability = np.squeeze(stopTrackingProbability)
-        
+
     return predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability
 
 
 def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, nverseDirection = False, printfProfiling = False, noIterations = 115):
     '''
     fibre tracking using neural networks
-    '''    
+    '''
 
     mask = mask.astype(np.float)
-    
+
     noSeeds = len(seeds)
 
     # initialize streamline positions data
     vNorms = np.zeros([2*noSeeds,noIterations+1])
     streamlinePositions = np.zeros([2*noSeeds,noIterations+1,3])
-    
+
     streamlinePositions[0:noSeeds,0,] = seeds[0:noSeeds] ## FORWARD
     streamlinePositions[noSeeds:,1,] = seeds[0:noSeeds] ## BACKWARD
-    
+
     indexLastStreamlinePosition = noIterations * np.ones([2*noSeeds], dtype=np.intp)
 
     del seeds # its not supposed to use the seeds anymore
-    
+
     # interpolate data given these coordinates for each channel
     x_,y_,z_ = dwi_tools._getCoordinateGrid(myState)
 
@@ -277,14 +310,14 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
     M = aff_ras_ijk[:3, :3]
     abc = aff_ras_ijk[:3, 3]
     abc = abc[:,None]
-    
-    
+
+
     ### FIRST STEP PREDICTION ###
     # just predict the forward direction (the first half of streamlinePositions)
     curStreamlinePos_ras = streamlinePositions[0:noSeeds,0,]
     curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras.T) + abc).T
     lastDirections = np.zeros([noSeeds,3])
-    
+
     ld_input = lastDirections
 
     # never rotate the data of the first step
@@ -298,16 +331,16 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
     myState.rotateData = oldRotationState
     # compute next streamline position
     candidatePosition_ras, candidatePosition_ijk = makeStep(myState, printfProfiling=printfProfiling, predictedDirection = predictedDirection, lastDirections = lastDirections, curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc)
-    
+
     # update positions
     streamlinePositions[0:noSeeds,1,] = candidatePosition_ras
     streamlinePositions[noSeeds:,0,] = candidatePosition_ras
     candidatePosition_ras = streamlinePositions[:,1,]
     candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
-    
+
     if(myState.use2DProjection and myState.usePreviousDirection):
-        print('test')
-        cp = streamlinePositions[:,0,] 
+        print('2D projection')
+        cp = streamlinePositions[:,0,]
         cp_ijk = (M.dot(cp.T) + abc).T
         dwi_at_curPosition = dwi_tools.interpolateDWIVolume(myState, data, cp_ijk, x_,y_,z_)
         dwi_at_curPosition = dwi_tools.projectIntoAppropriateSpace(myState, dwi_at_curPosition)
@@ -327,7 +360,7 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
         curStreamlinePos_ras = candidatePosition_ras
         curStreamlinePos_ijk = candidatePosition_ijk
         lastDirections = (streamlinePositions[:,iter-1,] - streamlinePositions[:,iter,]) # previousPosition - currentPosition
-        
+
         ####
         ####
         # compute direction
@@ -343,7 +376,7 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
             predictedDirection, vecNorms, dwi_at_curPosition = getNextDirection(myState, data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections = ld_input, x_ = x_, y_ = y_, z_ = z_, validIdx = validSls)
 
         vNorms[:,iter,] = vecNorms
-        
+
         ####
         ####
         # compute next streamline position and check if this position is valid wrt. our stopping criteria1
@@ -356,38 +389,38 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
 
         if (len(validSls) == 0):
             break
-        
+
         if(printfProfiling):
             print(" -> 5 " + str(time.time() - start_time) + "s]")
-        
+
         if(printProgress):
             print("   valid ratio %d of %d (%.2f)" % (sum(validPoints), 2*noSeeds, float(sum(validPoints)) / float(2*noSeeds)))
             print("   runtime: " +  str(time.time() - start_time) + "s")
 
-            
+
         for j in range(0,2*noSeeds):
             if(validPoints[j]):
                 streamlinePositions[j,iter+1,] = candidatePosition_ras[j,]
             else:
                 #streamlinePositions[j,iter+1,] = candidatePosition_ras[j,]
                 indexLastStreamlinePosition[j] = np.min((indexLastStreamlinePosition[j],iter))
-        
-        
+
+
     streamlinePositions = streamlinePositions.tolist()
-    
+
     ####
     ####
-    # 
+    #
     # crop streamlines to length specified by stopping criteria
     vNorms = vNorms.tolist()
-    
+
     for seedIdx in range(0,2*noSeeds):
         currentStreamline = np.array(streamlinePositions[seedIdx])
         currentStreamline = currentStreamline[0:indexLastStreamlinePosition[seedIdx],]
-        
+
         currentNorm = np.array(vNorms[seedIdx])
         currentNorm = currentNorm[0:indexLastStreamlinePosition[seedIdx],]
-        
+
         streamlinePositions[seedIdx] = currentStreamline
         vNorms[seedIdx] = currentNorm
 
@@ -397,21 +430,21 @@ def start(myState, seeds, data, model, affine, mask, fa, printProgress = False, 
 
     # join directions
     streamlines = Streamlines(joinTwoAlignedStreamlineLists(sl_backward, sl_forward))
-    
+
     return streamlines, vNorms
 
 
 def areVoxelsValidStreamlinePoints(nextCandidatePositions_ijk,mask,fa,fa_threshold):
     return np.logical_and( np.greater(vfu.interpolate_scalar_3d(mask,nextCandidatePositions_ijk)[0], 0), np.greater(vfu.interpolate_scalar_3d(fa,nextCandidatePositions_ijk)[0], fa_threshold)  )
-    
 
-def isVoxelValidStreamlinePoint(nextCandidatePosition_ijk,mask,fa,fa_threshold):  
+
+def isVoxelValidStreamlinePoint(nextCandidatePosition_ijk,mask,fa,fa_threshold):
     if(vfu.interpolate_scalar_3d(mask,nextCandidatePosition_ijk)[0] == 0):
         return False
 
     if(vfu.interpolate_scalar_3d(fa,nextCandidatePosition_ijk)[0] < fa_threshold):
         return False
-    
+
     return True
 
 
