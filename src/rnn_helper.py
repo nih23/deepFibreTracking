@@ -110,6 +110,31 @@ def build_model(inputShapeDWI=[1,100], features=512, units=10, useDropout=True, 
     return rnn
 
 
+def build_streamlineDirectionRNN(features=512, units=128, useDropout=True, activation_function=ReLU(), lr=1e-4, decayrate=0):
+    pDropout = 0.0
+
+    if (useDropout):
+        pDropout = 0.2
+
+    inputs = Input((1,3), batch_shape=(1,1,3))
+    layers = [inputs]
+
+    ####
+    # predicting next direction stream
+    ####
+    #layers.append(CuDNNLSTM(stateful=True, return_state=False, return_sequences=True, units=units)(layers[0])) # maybe use return sequence and feed that into another CNN or GAP layer
+    #layers.append(CuDNNLSTM(stateful=True, return_state=False, return_sequences=False, units=units)(layers[-1]))
+    layers.append(LSTM(stateful=True, return_state=False, return_sequences=False, units=units)(layers[-1]))
+    layers.append(Dense(3, kernel_initializer='he_normal', activation='tanh', name='tangentPrediction')(layers[-1]))
+    #outputPredictedTangent = layers[-1]
+
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+
+    rnn = Model((layers[0]), outputs=(layers[-1]))
+    rnn.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+    return rnn
+
+
 def train(pStreamlineData, noEpochs = 50, lr = 1e-4, batchSize = 2**9, features = 128, units = 20):
     model = build_model(lr=lr, features=features, units = units)
     model.summary()
