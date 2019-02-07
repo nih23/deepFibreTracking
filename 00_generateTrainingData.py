@@ -1,3 +1,8 @@
+from numpy.random import seed
+seed(2342)
+from tensorflow import set_random_seed
+set_random_seed(4223)
+
 import time
 import nrrd
 import os
@@ -51,6 +56,7 @@ def main():
     parser.add_argument('-b', dest='b',default=1000, type=int, help='b-value')
     parser.add_argument('-fa', dest='fa',default=0.15, type=float, help='fa threshold for the tracking')
     parser.add_argument('-sw', dest='sw',default=1.0, type=float, help='tracking step width [mm]')
+    parser.add_argument('-spc', dest='spc', default=1.0, type=float, help='grid spacing [pixels/IJK]')
     parser.add_argument('-mil', dest='minLength', type=int, default=40, help='minimal length of a streamline [mm]')
     parser.add_argument('-mal', dest='maxLength', type=int, default=200, help='maximum length of a streamline [mm]')
     parser.add_argument('-repr', dest='repr',default='res100', help='data representation: [raw,sh,res100,2D]: raw, spherical harmonics, resampled to 100 directions, 16x16 2D resampling (256 directions) ')
@@ -64,7 +70,8 @@ def main():
     parser.add_argument('--precomputedStreamlines', default='', help='load precomputed streamlines instead of applying a tensor model')
     parser.add_argument('--addRandomDataForEndpointPrediction', default='', help='should we generate additional random data for endpoint prediction?', action='store_true')
     parser.add_argument('-nt', '--noThreads', type=int, default=4, help='number of parallel threads of the data generator. Note: this also increases the memory demand.')
-    
+    parser.add_argument('--dontRotateGradients', help='rotate gradients', dest='rotateGradients', action='store_false')
+    parser.set_defaults(rotateGradients=True)
     parser.set_defaults(rotateData=False)
     parser.set_defaults(unittangent=False)   
     parser.set_defaults(visStreamlines=False)   
@@ -90,7 +97,9 @@ def main():
     myState.unitTangent = args.unittangent
     myState.rotateData = args.rotateData
     myState.pPrecomputedStreamlines = args.precomputedStreamlines
-    
+    myState.gridSpacing = args.spc
+    myState.resampleDWIAfterRotation = args.rotateGradients
+ 
     print('Parameters:')
     print(str(args))
 
@@ -113,10 +122,13 @@ def main():
         print("step width " + str(np.linalg.norm(streamlines_filtered[0][1] - streamlines_filtered[0][0])) + " mm")
         myState.tensorModel = 'precomp'
         tInfo = myState.pPrecomputedStreamlines
-        pTrainDataDir = '/data/nico/%s/' % (myState.pPrecomputedStreamlines)
-        pTrainData = '/data/nico/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedNewIJKRAS4%d_ep%d.h5' % \
-                     (myState.pPrecomputedStreamlines, myState.b_value, myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
-                      myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction)
+        pFilename = os.path.split(myState.pPrecomputedStreamlines)[-1].replace('.vtk','')
+        pTrainDataDir = '/data/nico/train/b0/%s/' % (pFilename)
+        pTrainData = '/data/nico/train/b0/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedN5%d_ep%d_spc%.2f_rotDir%d.h5' % \
+                     (pFilename, myState.b_value, myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
+                      myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction, myState.gridSpacing, myState.resampleDWIAfterRotation)
+        print(pTrainDataDir)
+        print(pTrainData)
     
     if(myState.tensorModel == 'dti'):
         start_time = time.time()
@@ -161,9 +173,9 @@ def main():
         runtime = time.time() - start_time
         print('LocalTracking Runtime ' + str(runtime) + 's')
         tInfo = '%s_sw%.1f_minL%d_maxL%d_fa%.2f' % (myState.tensorModel,myState.stepWidth,minimumStreamlineLength,maximumStreamlineLength,myState.faThreshold)
-        pTrainData = '/data/nico/train/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedNewIJKRAS4%d_ep%d.h5' % (myState.nameDWIdataset, myState.b_value,
+        pTrainData = '/data/nico/train/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedN5%d_ep%d_spc%.2f.h5' % (myState.nameDWIdataset, myState.b_value,
                                                                                                    myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
-                                                                                                   myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction)
+                                                                                                   myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction, myState.gridSpacing)
         pTrainDataDir = '/data/nico/trainingdata/'
         
         dwi_tools.saveVTKstreamlines(streamlines_filtered, 'data/%s_%s.vtk' % (myState.nameDWIdataset,tInfo))
@@ -185,18 +197,22 @@ def main():
 
     if(noStreamlines>0):
         streamlines_filtered = np.random.choice(streamlines_filtered,noStreamlines, replace=False)
+        print('no SL :' + str(len(streamlines_filtered)))
         myState.nameDWIdataset = myState.nameDWIdataset + "_" + str(noStreamlines) + "sl_"
-   
-    print('Generating training data... ')
 
+    #print('resampling to 100 directions')
+    #print(str(myState.bvecs.shape))
+    #dwi_subset, resamplingSphere = dwi_tools.resample_dwi(dwi_subset, myState.b0, myState.bvals, myState.bvecs, sh_order=myState.shOrder, smooth=0, mean_centering=False)
+    #myState.bvecs = resamplingSphere.vertices
+
+    print('Generating training data... ')
     start_time = time.time()
-    train_DWI,train_prevDirection, train_nextDirection = dwi_tools.generateTrainingData(streamlines_filtered, dwi_subset, affine=aff, state=myState)
+    train_DWI, train_nextDirection, allRotations, streamlineIndices = dwi_tools.generateTrainingData(streamlines_filtered, dwi_subset, affine=aff, state=myState)
     
     if(myState.addRandomDataForEndpointPrediction):
         print('Generate random data for endpoint prediction')
-        train_DWI2,train_prevDirection2, train_nextDirection2 = dwi_tools.generateTrainingData(streamlines_filtered, dwi_subset, affine=aff, generateRandomData = True, state = myState)
+        train_DWI2, train_nextDirection2, allRotations, streamlineIndices = dwi_tools.generateTrainingData(streamlines_filtered, dwi_subset, affine=aff, generateRandomData = True, state = myState)
         train_DWI = np.concatenate((train_DWI,train_DWI2))
-        train_prevDirection = np.concatenate((train_prevDirection,train_prevDirection2))
         train_nextDirection = np.concatenate((train_nextDirection,train_nextDirection2))
 
     runtime = time.time() - start_time
@@ -207,11 +223,10 @@ def main():
     print('Writing training data: ' + pTrainData )
     os.makedirs(pTrainDataDir, exist_ok = True)
     with h5py.File(pTrainData,"w") as f:
+        f.create_dataset('allRotations',data=allRotations)
         f.create_dataset('train_DWI',data=train_DWI)
-    #    f.create_dataset('train_DWI_pastAgg',data=train_DWI_pastAggregated)
-        f.create_dataset('train_curPosition',data=train_prevDirection)   
-    #   f.create_dataset('train_LikelyFibreDirections',data=train_LikelyFibreDirections)   
         f.create_dataset('train_NextFibreDirection',data=train_nextDirection)
+        f.create_dataset('streamlineIndices', data=streamlineIndices)
     
 if __name__ == "__main__":
     main()
