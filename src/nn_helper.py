@@ -1,4 +1,4 @@
-from keras.layers import Dense, Activation, Input, concatenate, Conv1D, MaxPooling1D, Conv2DTranspose, Lambda, Flatten, BatchNormalization, UpSampling2D, LeakyReLU, PReLU, Dropout, AveragePooling1D, Reshape, Permute, Add, ELU, Conv3D, MaxPooling3D, UpSampling3D, Conv2D, MaxPooling2D, Multiply, LSTM, multiply
+from keras.layers import Dot, dot, Dense, Activation, Input, concatenate, Conv1D, AveragePooling3D, TimeDistributed, MaxPooling1D, Conv2DTranspose, Lambda, Flatten, BatchNormalization, UpSampling2D, UpSampling1D, LeakyReLU, PReLU, Dropout, AveragePooling1D, Reshape, Permute, Add, ELU, Conv3D, MaxPooling3D, UpSampling3D, Conv2D, MaxPooling2D, Multiply, LSTM, multiply, Concatenate, Permute
 from keras.callbacks import ModelCheckpoint, CSVLogger, ReduceLROnPlateau, EarlyStopping, TensorBoard
 from keras.models import Model, load_model
 from keras.constraints import nonneg
@@ -337,8 +337,345 @@ def RCL_block(l, activation_function=LeakyReLU(), features=32, kernel_size=3, na
     return stack15
 
 
+def get_mlp_discr(trainingState, inputShapeDWI, decayrate=0):
+    '''
+    predict direction of past/next streamline position using simple MLP architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    inputs = Input(inputShapeDWI)
+    layers = [inputs]
+    layers.append(Flatten()(layers[-1]))
 
-def get_mlp_singleOutput(trainingState, inputShapeDWI, decayrate = 0):
+    for i in range(trainingState.depth):
+        layers.append(Dense(trainingState.noFeatures, kernel_initializer='he_normal')(layers[-1]))
+
+        if (trainingState.useBatchNormalization):
+            layers.append(BatchNormalization()(layers[-1]))
+
+        layers.append(trainingState.activationFunction(layers[-1]))
+
+        if (trainingState.useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+
+
+
+    i1 = layers[-1]
+    layers.append(Dense(trainingState.noFeatures, kernel_initializer='he_normal')(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
+    layers.append(Dense(trainingState.noOutputNeurons, kernel_initializer='he_normal', activation='softmax')(layers[-1]))
+
+    optimizer = optimizers.Adam(lr=trainingState.lr, decay=decayrate)
+
+    mlp = Model((layers[0]), outputs=(layers[-1]))
+
+    mlp.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=['accuracy'])
+
+    return mlp
+
+def getConv1DBlock(prevLayer, trainingState, kernelSz):
+
+    layers = []
+
+    layers.append( Conv1D(trainingState.noFeatures, kernelSz, padding='same', kernel_initializer='he_normal')(prevLayer))
+    if (trainingState.useBatchNormalization):
+        layers.append(BatchNormalization()(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
+
+    layers.append( Conv1D(trainingState.noFeatures, kernelSz, padding='same', kernel_initializer='he_normal')(layers[-1]))
+    if (trainingState.useBatchNormalization):
+        layers.append(BatchNormalization()(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
+
+#    layers.append(MaxPooling2D(pool_size=poolSz)(layers[-1]))
+
+    return layers[-1]
+
+def getConv2DBlock(prevLayer, trainingState, kernelSz):
+
+    layers = []
+
+    layers.append( Conv2D(trainingState.noFeatures, kernelSz, padding='same', kernel_initializer='he_normal')(prevLayer))
+    if (trainingState.useBatchNormalization):
+        layers.append(BatchNormalization()(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
+
+    layers.append(
+        Conv2D(trainingState.noFeatures, kernelSz, padding='same', kernel_initializer='he_normal')(layers[-1]))
+    if (trainingState.useBatchNormalization):
+        layers.append(BatchNormalization()(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
+
+#    layers.append(MaxPooling2D(pool_size=poolSz)(layers[-1]))
+
+    return layers[-1]
+
+def getTDConv3DBlock(prevLayer, trainingState, kernelSz, stride = 1,padding='valid'):
+    # assume diffusion direction is  the first dimension
+
+    layers = []
+
+    layers.append( TimeDistributed(Conv3D(trainingState.noFeatures, kernelSz, padding=padding, kernel_initializer='he_normal', strides = stride))(prevLayer))
+    if (trainingState.useBatchNormalization):
+        layers.append(BatchNormalization()(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
+
+    #layers.append(
+    #    Conv3D(trainingState.noFeatures, kernelSz, padding='valid', kernel_initializer='he_normal')(layers[-1]))
+    #if (trainingState.useBatchNormalization):
+    #    layers.append(BatchNormalization()(layers[-1]))
+    #layers.append(trainingState.activationFunction(layers[-1]))
+
+#    layers.append(MaxPooling2D(pool_size=poolSz)(layers[-1]))
+
+    return layers[-1]
+
+
+def getConv3DBlock(prevLayer, trainingState, kernelSz, stride = 1,padding='valid'):
+
+    layers = []
+
+    layers.append( Conv3D(trainingState.noFeatures, kernelSz, padding=padding, kernel_initializer='he_normal', strides = stride)(prevLayer))
+    if (trainingState.useBatchNormalization):
+        layers.append(BatchNormalization()(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
+
+    #layers.append(
+    #    Conv3D(trainingState.noFeatures, kernelSz, padding='valid', kernel_initializer='he_normal')(layers[-1]))
+    #if (trainingState.useBatchNormalization):
+    #    layers.append(BatchNormalization()(layers[-1]))
+    #layers.append(trainingState.activationFunction(layers[-1]))
+
+#    layers.append(MaxPooling2D(pool_size=poolSz)(layers[-1]))
+
+    return layers[-1]
+
+
+def get_1Dcnn_discr(trainingState, inputShapeDWI, decayrate=0, kernelSz=3, poolSz = 2):
+    '''
+    predict direction of past/next streamline position using simple MLP architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    noFold = trainingState.noFeatures
+    layersEncoding = []
+    noDW = inputShapeDWI[-1]
+
+    inputs = Input(inputShapeDWI)
+    layers = [inputs]
+
+    trainingState.noFeatures = noDW
+    layers.append(getConv3DBlock(layers[-1], trainingState, kernelSz))
+    layers.append(MaxPooling3D(pool_size=3)(layers[-1]))
+
+    trainingState.noFeatures = noFold
+    layers.append(Reshape((noDW,1))(layers[-1]))
+
+    # DOWNSAMPLING STREAM
+    for i in range(trainingState.depth):
+        layers.append(getConv1DBlock(layers[-1],  trainingState, kernelSz))
+        layersEncoding.append(layers[-1])
+        layers.append(MaxPooling1D(pool_size=poolSz)(layers[-1]))
+
+    layers.append(getConv1DBlock(layers[-1], trainingState, kernelSz))
+    layers.append(getConv1DBlock(layers[-1], trainingState, kernelSz))
+
+    for i in range(trainingState.depth):
+        print('i' + str(i))
+        #layers.append(concatenate( [UpSampling2D()(layers[-1]), UpSampling2D()(layers[-1]) ] ))
+        layers.append(concatenate([UpSampling1D()(layers[-1]), layersEncoding[-(1 + i)]]))
+
+        layers.append(getConv1DBlock(layers[-1], trainingState, kernelSz))
+
+    # final prediction layer w/ previous input
+    layers.append(Flatten()(layers[-1]))
+
+    layers.append(Dense(trainingState.noFeatures, kernel_initializer='he_normal')(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
+    layers.append(Dense(trainingState.noOutputNeurons, kernel_initializer='he_normal', activation='softmax')(layers[-1]))
+    layerNextDirection = layers[-1]
+
+    optimizer = optimizers.Adam(lr=trainingState.lr, decay=decayrate)
+
+    mlp = Model((layers[0]), outputs=(layers[-1]))
+
+    mlp.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=['accuracy'])
+
+    return mlp
+
+
+def get_3Dcnn_mlp_discr(trainingState, inputShapeDWI, decayrate=0, kernelSz=3, poolSz = 2):
+    '''
+    predict direction of past/next streamline position using simple MLP architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+    noFold = trainingState.noFeatures
+    layersEncoding = []
+    noDW = inputShapeDWI[-1]
+
+    inputs = Input(inputShapeDWI)
+    layers = [inputs]
+
+    trainingState.noFeatures = noDW
+    layers.append(getConv3DBlock(layers[-1], trainingState, inputShapeDWI[0:3]))
+    #layers.append(MaxPooling3D(pool_size=3)(layers[-1]))
+
+    trainingState.noFeatures = noFold
+
+    layers.append(Flatten()(layers[-1]))
+
+    for i in range(trainingState.depth):
+        layers.append(Dense(trainingState.noFeatures, kernel_initializer='he_normal')(layers[-1]))
+
+        if (trainingState.useBatchNormalization):
+            layers.append(BatchNormalization()(layers[-1]))
+
+        layers.append(trainingState.activationFunction(layers[-1]))
+
+        if (trainingState.useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+
+    i1 = layers[-1]
+    layers.append(Dense(trainingState.noFeatures, kernel_initializer='he_normal')(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
+    layers.append(Dense(trainingState.noOutputNeurons, kernel_initializer='he_normal', activation='softmax')(layers[-1]))
+
+    optimizer = optimizers.Adam(lr=trainingState.lr, decay=decayrate)
+
+    mlp = Model((layers[0]), outputs=(layers[-1]))
+
+    mlp.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=['accuracy'])
+
+    return mlp
+
+
+def get_3Dcnn_fcn_singleOutput(trainingState, tractographyState, inputShapeDWI, kernelSz = 3, decayrate=0):
+    '''
+    predict direction of past/next streamline position using simple MLP architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+
+    noFold = trainingState.noFeatures
+    layersEncoding = []
+    noDW = inputShapeDWI[-1]
+
+    inputs = Input(inputShapeDWI)
+    layers = [inputs]
+
+    #trainingState.noFeatures = noDW
+    #layers.append(Reshape((5,5,-1,1))(layers[-1]))
+
+
+    # permute 1st and last dimension for time distributed layer. We'll need to fake the depthwise
+    # separable convolution using that approach
+
+    layers.append(Permute((4,2,3,1))(layers[-1]))
+    layers.append(Reshape((32, 5, 5, 5, 1))(layers[-1]))
+
+    layers.append(getTDConv3DBlock(layers[-1], trainingState, kernelSz=5, stride=1, padding='same'))
+    layers.append(getTDConv3DBlock(layers[-1], trainingState, kernelSz=5, stride=1, padding='same'))
+
+    #layers.append(getConv3DBlock(layers[-1], trainingState, inputShapeDWI[0:3], stride = 5, padding = 'same'))
+
+    #layers.append(Reshape((5, 5, 5, -1))(layers[-1]))
+    #layers.append(AveragePooling3D(pool_size=(5, 5, 5))(layers[-1]))
+
+    layers.append(Permute((4,2,3,1,5))(layers[-1]))
+
+    layers.append(Reshape((5, 5, 5, -1))(layers[-1]))
+
+    layers.append(
+        Conv3D(3, 1, padding='valid', kernel_initializer='he_normal', activation='tanh')(
+            layers[-1]))
+
+    layers.append(AveragePooling3D(pool_size=(5, 5, 5))(layers[-1]))
+    layers.append(Flatten()(layers[-1]))
+
+    #if (tractographyState.unitTangent):
+    #    print('unit tangent')
+    #    layers.append(Lambda(lambda x: tf.div(x, K.expand_dims(K.sqrt(K.sum(x ** 2, axis=1)))), name='nextDirection')(
+    #        layers[-1]))  # normalize output to unit vector
+
+
+    layerNextDirection = layers[-1]
+
+    optimizer = optimizers.Adam(lr=trainingState.lr, decay=decayrate)
+
+    mlp = Model((layers[0]), outputs=(layerNextDirection))
+
+    if (trainingState.loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    elif (trainingState.loss == 'cos'):
+        mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer)  # use in case of directional vectors
+    elif (trainingState.loss == 'sqCos2'):
+        mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+
+    return mlp
+
+
+
+def get_3Dcnn_mlp_singleOutput(trainingState, tractographyState, inputShapeDWI, kernelSz = 3, decayrate=0):
+    '''
+    predict direction of past/next streamline position using simple MLP architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+
+    noFold = trainingState.noFeatures
+    layersEncoding = []
+    noDW = inputShapeDWI[-1]
+
+    inputs = Input(inputShapeDWI)
+    layers = [inputs]
+
+    trainingState.noFeatures = noDW
+    layers.append(Reshape((5,5,-1,1))(layers[-1]))
+    layers.append(getConv3DBlock(layers[-1], trainingState, inputShapeDWI[0:3], stride = 5))
+    #layers.append(MaxPooling3D(pool_size=inputShapeDWI[0:3])(layers[-1]))
+
+    trainingState.noFeatures = noFold
+
+    layers.append(Flatten()(layers[-1]))
+
+    for i in range(1, trainingState.depth + 1):
+        layers.append(Dense(trainingState.noFeatures, kernel_initializer='he_normal')(layers[-1]))
+
+        if (trainingState.useBatchNormalization):
+            layers.append(BatchNormalization()(layers[-1]))
+
+        layers.append(trainingState.activationFunction(layers[-1]))
+
+        if (trainingState.useDropout):
+            layers.append(Dropout(0.5)(layers[-1]))
+
+    i1 = layers[-1]
+    layers.append(Dense(trainingState.noFeatures, kernel_initializer='he_normal')(layers[-1]))
+    layers.append(trainingState.activationFunction(layers[-1]))
+    layers.append(Dense(trainingState.noOutputNeurons, kernel_initializer='he_normal')(layers[-1]))
+
+#    print('magic')
+#    layers.append(Lambda(lambda x: x + K.expand_dims(tf.constant([0,0,1], dtype=tf.float32),axis=0))(layers[-1]))  # normalize output to unit vector
+
+    if (tractographyState.unitTangent):
+        print('unit tangent')
+        layers.append(Lambda(lambda x: tf.div(x, K.expand_dims(K.sqrt(K.sum(x ** 2, axis=1)))), name='nextDirection')(
+            layers[-1]))  # normalize output to unit vector
+
+
+    layerNextDirection = layers[-1]
+
+    optimizer = optimizers.Adam(lr=trainingState.lr, decay=decayrate)
+
+    mlp = Model((layers[0]), outputs=(layerNextDirection))
+
+    if (trainingState.loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    elif (trainingState.loss == 'cos'):
+        mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer)  # use in case of directional vectors
+    elif (trainingState.loss == 'sqCos2'):
+        mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+
+    return mlp
+
+
+def get_mlp_singleOutput(trainingState, tractographyState, inputShapeDWI, decayrate = 0):
     '''
     predict direction of past/next streamline position using simple MLP architecture
     Input: DWI subvolume centered at current streamline position
@@ -363,8 +700,9 @@ def get_mlp_singleOutput(trainingState, inputShapeDWI, decayrate = 0):
     layers.append(trainingState.activationFunction(layers[-1]))
     layers.append(Dense(trainingState.noOutputNeurons, kernel_initializer = 'he_normal')(layers[-1]))
     
-#    if(trainingState.unitTangent):
-#        layers.append( Lambda(lambda x: tf.div(x, K.expand_dims( K.sqrt(K.sum(x ** 2, axis = 1)))  ), name='nextDirection')(layers[-1]) ) # normalize output to unit vector 
+    if(tractographyState.unitTangent):
+        print('unit tangent')
+        layers.append( Lambda(lambda x: tf.div(x, K.expand_dims( K.sqrt(K.sum(x ** 2, axis = 1)))  ), name='nextDirection')(layers[-1]) ) # normalize output to unit vector 
     layerNextDirection = layers[-1]
         
     optimizer = optimizers.Adam(lr=trainingState.lr, decay=decayrate)
@@ -377,6 +715,7 @@ def get_mlp_singleOutput(trainingState, inputShapeDWI, decayrate = 0):
         mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer) # use in case of directional vectors
     elif(trainingState.loss == 'sqCos2'):
         mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+
     
     return mlp
 
@@ -661,4 +1000,64 @@ def get_mlp_singleOutput_bayesian(inputShapeDWI, loss='mse', outputShape = 3, de
     elif(loss == 'sqCos2'):
         mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
     
+    return mlp
+
+def get_fancyModel(trainingState, inputShapeDWI, inputShapeGradients, decayrate=0):
+    '''
+    predict direction of past/next streamline position using simple MLP architecture
+    Input: DWI subvolume centered at current streamline position
+    '''
+
+    noFold = trainingState.noFeatures
+    layersEncoding = []
+    noDW = inputShapeDWI[-1]
+
+    inputs = Input(inputShapeDWI)
+    layers = [inputs]
+    layers.append(Reshape((7,32))(layers[-1]))
+    ##layers.append(Permute((1,2,4,3))(layers[-1]))
+    ##trainingState.noFeatures = noDW
+    #layers.append(getConv3DBlock(layers[-1], trainingState, inputShapeDWI[0:3]))
+    ##layers.append(getConv3DBlock(layers[-1], trainingState, [1,1,32]))
+    #layers.append(MaxPooling3D(pool_size=inputShapeDWI[0:3])(layers[-1]))
+    ##trainingState.noFeatures = noFold
+
+    ###layers.append(Flatten()(layers[-1]))
+    if(False):
+        for i in range(trainingState.depth):
+            layers.append(Dense(trainingState.noFeatures, kernel_initializer='he_normal')(layers[-1]))
+
+            if (trainingState.useBatchNormalization):
+                layers.append(BatchNormalization()(layers[-1]))
+
+            layers.append(trainingState.activationFunction(layers[-1]))
+
+            if (trainingState.useDropout):
+                layers.append(Dropout(0.5)(layers[-1]))
+
+        layers.append(Dense(trainingState.noFeatures, kernel_initializer='he_normal')(layers[-1]))
+        layers.append(trainingState.activationFunction(layers[-1]))
+    #layers.append(Reshape((inputShapeDWI[2],trainingState.noFeatures))(layers[-1]))
+    layers.append(LSTM(128)(layers[-1]))
+    ###layers.append(Flatten()(layers[-1]))
+    #layers.append(Dense(inputShapeGradients[0], kernel_initializer='he_normal', activation='softmax')(layers[-1])) # maybe softmax?
+
+    #inputsGradients = Input(inputShapeGradients)
+
+    #layers.append(Dot(axes=1)([inputsGradients, layers[-1]]))
+
+    layers.append(Dense(3, kernel_initializer='he_normal', activation='tanh')(layers[-1]))
+    layerNextDirection = layers[-1]
+
+    optimizer = optimizers.Adam(lr=trainingState.lr, decay=decayrate)
+
+    mlp = Model( (layers[0]), outputs=(layerNextDirection))
+
+    if (trainingState.loss == 'mse'):
+        mlp.compile(loss=[losses.mse], optimizer=optimizer)  # use in case of spherical coordinates
+    elif (trainingState.loss == 'cos'):
+        mlp.compile(loss=[losses.cosine_proximity], optimizer=optimizer)  # use in case of directional vectors
+    elif (trainingState.loss == 'sqCos2'):
+        mlp.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+
     return mlp
