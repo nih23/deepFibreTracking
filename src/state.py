@@ -3,10 +3,10 @@ import numpy as np
 
 class TractographyInformation:
 
-    def __init__(self, model = 'MLP', representation = 'raw', tensormodel = 'dti', stepwidth = 1, b_value = 1000, dim = [1,1,1],
+    def __init__(self, model = 'MLP', representation = 'raw', tensormodel = 'dti', stepwidth = 0.25, b_value = 1000, dim = [1,1,1],
                  unitTangent = 0, faThreshold = 0.15, shOrder = 4, pPrecomputedStreamlines = '', rotateData = False, addRandomDataForEndpointPrediction = False,
                  gridSpacing = 1, noCrossingFibres = 1, nameDWIdataset = '', isISMRM = False, hcpID = '', usePreviousDirection = False, use2DProjection = False,
-                 magicModel = False, pStopTracking = 0.5, useParallelizedResampling = True, resampleDWIAfterRotation = False):
+                 magicModel = False, pStopTracking = 0.5, useParallelizedResampling = True, resampleDWIAfterRotation = False, predictionInIJK = True):
         self.dim = dim
         self.model = model
         self.repr = representation
@@ -25,6 +25,7 @@ class TractographyInformation:
         self.isISMRM = isISMRM
         self.hcpID = hcpID
         self.referenceOrientation = np.array([0., 0., 1.])
+        #self.referenceOrientation = np.array([1., 0., 0.])
         self.usePreviousDirection = usePreviousDirection
         self.use2DProjection = use2DProjection
         self.magicModel = magicModel
@@ -34,6 +35,9 @@ class TractographyInformation:
         self.pStopTracking = pStopTracking
         self.useParallelizedResampling = useParallelizedResampling
         self.resampleDWIAfterRotation = resampleDWIAfterRotation
+        self.predictionInIJK = predictionInIJK
+        print('!!! REFERENCE ORIENTATION: ' + str(self.referenceOrientation))
+        print('!!! PREDICTION IN IJK: ' + str(self.predictionInIJK))
 
     def getReferenceOrientation(self):
         return self.referenceOrientation

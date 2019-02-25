@@ -78,13 +78,18 @@ def main():
     epochs = 100
     lr = 1e-4
 
-    pData = '/data/nico/train/b0/ismrm_csd_fa015_20mm_noreslicing_mrtrixDenoised_curated/b1000_raw_sw1.0_5x5x5_ut0_rotatedN50_ep0_spc0.50_rotDir1_100.h5'
+    pData = '/data/nico/train/ijk/ismrm_csd_fa015_20mm_noreslicing_mrtrixDenoised_curated/b1000_raw_sw1.0_3x3x3_ut0_rotatedN50_epN0_spc0.50_rotDir1_m001.h5'
 
-    rnn = rnn_helper.build_streamlineDirectionRNN(features=64)
+    #rnn = rnn_helper.build_streamlineDirectionRNN(units=32)
+
+    noUnits = (32,32)
+
+    rnn = rnn_helper.build_fancyRNN(units=noUnits)
+
     rnn.summary()
 
     f = h5py.File(pData, "r")
-    # train_DWI = np.array(f["train_DWI"].value)
+    train_DWI = np.array(f["train_DWI"].value)
     train_nextDirection = np.array(f["train_NextFibreDirection"].value)
     streamlineIndices = np.array(f["streamlineIndices"].value)
     f.close()
@@ -92,46 +97,74 @@ def main():
     noMicroBatches = 100
     noStreamlines = len(streamlineIndices)
     start_time = time.time()
+
+    pFile = 'b1000_raw_sw1.0_3x3x3_ut0_rotatedN50_epN0_spc0.50_rotDir1_m001.h5'
+
+    pSave = 'lstm_%s_%d_%d.h5' % (pFile, noUnits[0], noUnits[1])
+
+    print('[INFO] Writing model to: %s' % (pSave))
+
     for epoch in range(1000):
         acc = []
         for microBatchIndex in range(noMicroBatches):
-            i = np.random.randint(noStreamlines-1)
-            idxBegin = int(streamlineIndices[i, 0])
-            idxEnd = int(streamlineIndices[i + 1, 0] - 1)
+            k = np.random.randint(noStreamlines-1)
+            idxBegin = int(streamlineIndices[k, 0])
+            idxEnd = int(streamlineIndices[k + 1, 0])
             trajectory = train_nextDirection[idxBegin:idxEnd, ]
+            data = train_DWI[idxBegin:idxEnd,]
 
-            #traj_in = trajectory[0:-2,]
-            #traj_in = traj_in[np.newaxis, ...]
-
-            #traj_out = trajectory[1:-1,]
-            #traj_out = traj_out[np.newaxis, ...]
-
-            #print("%d %d %d " % (i, idxBegin, idxEnd))
-
-            for i in range(0, len(trajectory) - 1):
+            # forward
+            for i in range(0, len(trajectory) - 2):
                 traj_cur = trajectory[i,]
                 traj_cur = traj_cur[np.newaxis, np.newaxis, ...]
+                data_cur = data[i,]
+                data_cur = data_cur[np.newaxis, ...]
                 traj_next = trajectory[i + 1,]
+                pStop = np.sum(np.squeeze(traj_next) ** 2) > 0
                 traj_next = traj_next[np.newaxis, ...]
-                hist = rnn.fit([traj_cur], [traj_next], verbose=0, shuffle=False, batch_size=1)
+                pStop = np.array(pStop[np.newaxis, ...])
+                hist = rnn.fit([data_cur], [traj_next, pStop], verbose=0, shuffle=False, batch_size=1)
                 acc.append(hist.history['loss'])
+
+            data_cur = data[-1,]
+            data_cur = data_cur[np.newaxis, ...]
+            traj_next = trajectory[-1,]
+            pStop = np.sum(np.squeeze(traj_next) ** 2) > 0
+            traj_next = traj_next[np.newaxis, ...]
+            pStop = np.array(pStop[np.newaxis, ...])
+
+            hist = rnn.fit([data_cur], [traj_next, pStop], verbose=0, shuffle=False, batch_size=1)
+            acc.append(hist.history['loss'])
 
             rnn.reset_states()
 
-            #print("[mini-b " + str(microBatchIndex+1) + " epoch " + str(epoch) + "] " + str(time.time() - start_time) + "s --> " + str(hist.history) + "s --> " + str(np.mean(acc)))
+            # backward
+            for i in range(1, len(trajectory)-2):
+                traj_cur = -1*trajectory[-i,]
+                traj_cur = traj_cur[np.newaxis, np.newaxis, ...]
+                data_cur = data[i,]
+                data_cur = data_cur[np.newaxis, ...]
+                traj_next = -1*trajectory[-(i + 1),]
+                pStop = np.sum(np.squeeze(traj_next) ** 2) > 0
+                traj_next = traj_next[np.newaxis, ...]
+                pStop = np.array(pStop[np.newaxis, ...])
+                hist = rnn.fit([data_cur], [traj_next, pStop], verbose=0, shuffle=False, batch_size=1)
+                acc.append(hist.history['loss'])
+
+            data_cur = data[0,]
+            data_cur = data_cur[np.newaxis, ...]
+            traj_next = trajectory[-1,]
+            pStop = np.sum(np.squeeze(traj_next) ** 2) > 0
+            traj_next = traj_next[np.newaxis, ...]
+            pStop = np.array(pStop[np.newaxis, ...])
+            hist = rnn.fit([data_cur], [traj_next, pStop], verbose=0, shuffle=False, batch_size=1)
+            acc.append(hist.history['loss'])
+
+
+            rnn.reset_states()
+
         print("[" + str(epoch) + "] " + str(time.time() - start_time) + "s --> " + str(np.mean(acc)))
-        rnn.save('trainedRNN.h5')
+        rnn.save(pSave)
 
-    
-
-
-    
 if __name__ == "__main__":
     main()
-
-
-
-
-
-    print(str(epoch) + ': ' + str(hist.history))
-    rnn.reset_states()

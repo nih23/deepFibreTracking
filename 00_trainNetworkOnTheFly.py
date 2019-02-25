@@ -47,6 +47,7 @@ from keras.models import load_model
 from dipy.core.gradients import gradient_table, gradient_table_from_bvals_bvecs
 from keras.callbacks import LambdaCallback
 import argparse
+from src.state import TractographyInformation, TrainingInformation
 
 def main():
     '''
@@ -65,70 +66,80 @@ def main():
     parser.add_argument('-a', '--activationfunction', default='relu', help='relu, leakyrelu, swish')
     parser.add_argument('-m', '--modeltouse', default='mlp_single', help='mlp_single, mlp_doublein_single, cnn_special, cnn_special_pd, rcnn')
     parser.add_argument('-l', '--loss', default='sqCos2', help='cos, mse, sqCos2,sqCos2WEP')
-    parser.add_argument('-b', '--batchsize', default=2**12, type=int, help='no. tracking steps')
+    parser.add_argument('-b', '--batchsize', default=2**10, type=int, help='no. tracking steps')
     parser.add_argument('-e','--epochs', default=1000, type=int, help='no. epochs')
     parser.add_argument('-lr','--learningrate', type=float, default=1e-4, help='minimal length of a streamline [mm]')
     parser.add_argument('-sh', '--shOrder', type=int, default=4, dest='sh', help='order of spherical harmonics (if used)')
     parser.add_argument('-lm','--loadModel', dest='lm',default='', help='continue training with a pretrained model ')
     parser.add_argument('--repr', dest='repr',default='res100', help='data representation: [raw,sph,res100,2D]: raw, spherical harmonics, resampled to 100 directions, 16x16 2D resampling (256 directions) ')
     parser.add_argument('--unitTangent', help='unit tangent', dest='unittangent' , action='store_true')
-    parser.add_argument('--nounitTangent', help='no unit tangent', dest='unittangent' , action='store_false')
     parser.add_argument('--dropout', help='dropout regularization', dest='dropout', action='store_true')
     parser.add_argument('--keepZeroVectors', help='keep zero vectors at the outer positions of streamline to indicate termination.', dest='keepzero' , action='store_true')
     parser.add_argument('-bn','--batchnormalization', help='batchnormalization', dest='dropout' , action='store_true')
     parser.add_argument('--bvalue',type=int, default=1000, help='b-value of our DWI data')
     parser.add_argument('--storeTemporaryData',help='store temporary data on disk to save computational time', action='store_true')
-    parser.add_argument('-nt', '--noThreads', type=int, default=2, help='number of parallel threads of the data generator. Note: this also increases the memory demand.')
-    
+    parser.add_argument('-nt', '--noThreads', dest='noThreads', type=int, default=2, help='number of parallel threads of the data generator. Note: this also increases the memory demand.')
+    parser.add_argument('--addRandomDataForEndpointPrediction', default='',
+                        help='should we generate additional random data for endpoint prediction?', action='store_true')
+    parser.add_argument('-sw', dest='sw', default=1.0, type=float, help='tracking step width [mm]')
+    parser.add_argument('--rotateData', help='rotate data wrt. tangent [default]', dest='rotateData',
+                        action='store_true')
+
+    parser.set_defaults(rotateData=False)
     parser.set_defaults(unittangent=False)   
     parser.set_defaults(dropout=False)   
     parser.set_defaults(keepzero=False)
     parser.set_defaults(batchnormalization=False)   
-    parser.set_defaults(storeTemporaryData=False)   
+    parser.set_defaults(storeTemporaryData=False)
+    parser.set_defaults(addRandomDataForEndpointPrediction=False)
     args = parser.parse_args()
-    
-    pPretrainedModel = args.lm
-    noThreads = args.noThreads
-    noX = args.nx
-    noY = args.ny
-    noZ = args.nz
-    dataRepr = args.repr
-    noGPUs = 1
-    b_value = args.bvalue
-    pStreamlines = args.streamlines
-    loss = args.loss
-    noFeatures = args.features
-    depth = args.depth
-    batch_size = args.batchsize
-    epochs = args.epochs
-    lr = args.learningrate
-    useDropout = args.dropout
-    useBatchNormalization = args.batchnormalization
-    usePretrainedModel = False
-    unitTangent = args.unittangent
-    modelToUse = args.modeltouse
-    keepZeroVectors = args.keepzero
-    shOrder = args.sh
-    storeTemporaryData = args.storeTemporaryData
-    dilationRate = (args.dilationRate,args.dilationRate,1)
-    endpointPrediction = False
-    if(loss == 'sqCos2WEP'):
-        endpointPrediction = True
-    
+
     activation_function = {
-          'relu': lambda x: ReLU(),
-          'leakyrelu': lambda x: LeakyReLU(),
-          'swish': lambda x: Activation(swish)
-        }[args.activationfunction](0)
+        'relu': lambda x: ReLU(),
+        'leakyrelu': lambda x: LeakyReLU(),
+        'swish': lambda x: Activation(swish)
+    }[args.activationfunction](0)
+
+    dilationRate = (args.dilationRate, args.dilationRate, 1)
+
+    myState = TractographyInformation()
+    myState.isISMRM = True
+    myState.hcpID = ''
+    myState.addRandomDataForEndpointPrediction = args.addRandomDataForEndpointPrediction
+    myState.tensorModel = 'precomp'
+    myState.dim = [args.nx, args.ny, args.nz]
+    myState.repr = args.repr
+    myState.b_value = args.bvalue
+    myState.stepWidth = args.sw
+    myState.shOrder = args.sh
+    myState.faThreshold = 0
+    myState.unitTangent = args.unittangent
+    myState.rotateData = args.rotateData
+    myState.pPrecomputedStreamlines = args.streamlines
+
+    myTrainingState = TrainingInformation(pTrainData='', loss=args.loss, noFeatures=args.features,
+                                          depth=args.depth, epochs=args.epochs,
+                                          learningRate=args.learningrate, useDropout=args.dropout,
+                                          useBatchNormalization=args.batchnormalization,
+                                          model=args.modeltouse, keepZeroVectors=args.keepzero,
+                                          activationFunction=activation_function, batch_size=args.batchsize,
+                                          pPretrainedModel=args.lm, dilationRate=dilationRate
+                                          )
+
+
+    usePretrainedModel = False
+    storeTemporaryData = args.storeTemporaryData
+    endpointPrediction = False
+    if(myTrainingState.loss == 'sqCos2WEP'):
+        endpointPrediction = True
+
     
-    useSphericalCoordinates = False
-    pModelOutput = pStreamlines.replace('.vtk','').replace('data/','')
+    pModelOutput = myState.pPrecomputedStreamlines.replace('.vtk','').replace('data/','')
     noOutputNeurons = 3 # euclidean coordinates
     
-
     # load streamlines
-    streamlines = dwi_tools.loadVTKstreamlines(pStreamlines)
-    streamlines = streamlines[0:30000] 
+    streamlines = dwi_tools.loadVTKstreamlines(myState.pPrecomputedStreamlines)
+    #streamlines = streamlines[0:30000]
     
     # load DWI dataset
     nameDWIDataset = 'ISMRM_2015_Tracto_challenge_data'
@@ -137,56 +148,52 @@ def main():
     b0_mask, binarymask = median_otsu(dwi[:,:,:,0], 2, 1)
     nameDWIDataset = 'ISMRM_2015_Tracto_challenge_data_denoised_preproc'
     
-    dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(b_value, bvals, bvecs, dwi)
+    dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(myState.b_value, bvals, bvecs, dwi)
     b0_idx = bvals < 10
     b0 = dwi[..., b0_idx].mean(axis=3)
+    dwi_subset = dwi_tools.normalize_dwi(dwi_subset, b0)
+    myState.b0 = b0
+    myState.bvals = bvals_subset
+    myState.bvecs = bvecs_subset
+
     dwi_singleShell = np.concatenate((dwi_subset, dwi[..., b0_idx]), axis=3)
     #    dwi_singleShell_norm = dwi_tools.normalize_dwi(dwi_singleShell, b0)
     bvals_singleShell = np.concatenate((bvals_subset, bvals[..., b0_idx]), axis=0)
     bvecs_singleShell = np.concatenate((bvecs_subset, bvecs[b0_idx,]), axis=0)
     gtab_singleShell = gradient_table(bvals=bvals_singleShell, bvecs=bvecs_singleShell, b0_threshold = 10)
-    
-    if(dataRepr == 'sh'):
-        t_data = dwi_tools.get_spherical_harmonics_coefficients(bvals=bvals_subset,bvecs=bvecs_subset,sh_order=shOrder, dwi=dwi_subset, b0 = b0)
-    elif(dataRepr == 'res100'):
-        t_data, resamplingSphere = dwi_tools.resample_dwi(dwi_subset, b0, bvals_subset, bvecs_subset, sh_order=shOrder, smooth=0, mean_centering=False)
-    elif(dataRepr == 'raw'):
-        t_data = dwi_subset
-    elif(dataRepr == '2D' or dataRepr == '3D'):
-        t_data, resamplingSphere = dwi_tools.resample_dwi_2D(dwi_subset, b0, bvals_subset, bvecs_subset, sh_order=shOrder, smooth=0, mean_centering=False)
-    
-    noDiffusionSignals = t_data.shape[-1]
+
+    noD=-1
+
     ####################
     ####################
-    if(dataRepr == '2D'):
+    if(myState.repr == '2D'):
         if(endpointPrediction):
-            warning('not implemented yet')
+            print('Endpoint prediction not implemented yet')
             return
-        noX = 1
-        noY = 1
-        noZ = 1
         modelToUse = '2D_cnn'
-        model = nn_helper.get_simpleCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[8,8,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs)  
+        myState.repr = '2D'
+        model = nn_helper.get_2Dcnn_fcn_singleOutput(myTrainingState, myState, inputShapeDWI=[16,16,args.nz])
         model.summary()
         # data generator
-        training_generator = TwoDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
-        validation_generator = TwoDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
-        
+        training_generator = TwoDimensionalTractographyDataGenerator(dwi_subset,streamlines,aff,np.array(list(range(len(streamlines)-5000))), myState=myState, myTrainingState=myTrainingState, storeTemporaryData = storeTemporaryData)
+        validation_generator = TwoDimensionalTractographyDataGenerator(dwi_subset,streamlines,aff,np.array(list(range(len(streamlines)-5000+1,len(streamlines)))), myState=myState, myTrainingState=myTrainingState, storeTemporaryData = storeTemporaryData)
+
         noTrainingSamples = len( list(range(len(streamlines)-1000)) )
         noValidationSamples = len( list(range(len(streamlines)-1000,len(streamlines))) )
         print('samples tra/val %d/%d' % (noTrainingSamples, noValidationSamples) )
     ####################
     ####################
-    elif(dataRepr == '3D'):
+    elif(myState.repr == '3D'):
         if(endpointPrediction):
-            warning('not implemented yet')
+            print('Endpoint prediction not implemented yet')
             return
         modelToUse = '3D_cnn_dr%d' % (dilationRate[0])
-        model = nn_helper.get_simple3DCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX*8,noY*8,noZ,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, dilationRate = dilationRate)  
+        #model = nn_helper.get_simple3DCNN(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX*8,noY*8,noZ,1], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, dilationRate = dilationRate)
+        model = nn_helper.get_3DCNN(myTrainingState, inputShapeDWI=[myState[0]*8,myState[1]*8,myState[2],1])
         model.summary()
         # data generator
-        training_generator = ThreeDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
-        validation_generator = ThreeDimensionalTractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-10000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData)
+        training_generator = ThreeDimensionalTractographyDataGenerator(dwi_subset,streamlines,aff,np.array(list(range(len(streamlines)-10000))), dim=myState.dim, batch_size=myTrainingState.batch_size, storeTemporaryData = storeTemporaryData)
+        validation_generator = ThreeDimensionalTractographyDataGenerator(dwi_subset,streamlines,aff,np.array(list(range(len(streamlines)-10000,len(streamlines)))), dim=myState.dim , batch_size=myTrainingState.batch_size, storeTemporaryData = storeTemporaryData)
         noTrainingSamples = len( list(range(len(streamlines)-1000)) )
         noValidationSamples = len( list(range(len(streamlines)-1000,len(streamlines))) )
         print('samples tra/val %d/%d' % (noTrainingSamples, noValidationSamples) )
@@ -198,35 +205,39 @@ def main():
         ### ### ###
         if(endpointPrediction):
             print('wep model')
-            model = nn_helper.get_mlp_singleOutputWEP(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX,noY,noZ,noDiffusionSignals], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, normalizeOutput = unitTangent)
+            model = nn_helper.get_mlp_singleOutputWEP(myTrainingState, inputShapeDWI=train_DWI.shape[1:])
         else:
             print('raw model')
-            model = nn_helper.get_mlp_singleOutput(loss=loss, lr=lr, useDropout = useDropout, useBN = useBatchNormalization, inputShapeDWI=[noX,noY,noZ,noDiffusionSignals], outputShape = noOutputNeurons, activation_function = activation_function, features = noFeatures, depth = depth, noGPUs=noGPUs, normalizeOutput = unitTangent)  
-            
+            mlp_simple = nn_helper.get_mlp_singleOutput(myTrainingState, inputShapeDWI=train_DWI.shape[1:])
+
         model.summary()
-        
-        training_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData, endpointPrediction = endpointPrediction)
-        validation_generator = TractographyDataGenerator(t_data,streamlines,aff,np.array(list(range(len(streamlines)-1000,len(streamlines)))), dim=[noX,noY,noZ], batch_size=batch_size, storeTemporaryData = storeTemporaryData, endpointPrediction = endpointPrediction)
-        
+
+        training_generator = TractographyDataGenerator(dwi_subset,streamlines,aff,np.array(list(range(len(streamlines)-1000))), dim=myState.dim, batch_size=myTrainingState.batch_size, storeTemporaryData = storeTemporaryData, endpointPrediction = endpointPrediction)
+        validation_generator = TractographyDataGenerator(dwi_subset,streamlines,aff,np.array(list(range(len(streamlines)-1000,len(streamlines)))), dim=myState.dim, batch_size=myTrainingState.batch_size, storeTemporaryData = storeTemporaryData, endpointPrediction = endpointPrediction)
+
         noTrainingSamples = len( list(range(len(streamlines)-1000)) )
         noValidationSamples = len( list(range(len(streamlines)-1000,len(streamlines))) )
         print('samples tra/val %d/%d' % (noTrainingSamples, noValidationSamples) )
     
-    if(pPretrainedModel != ''):
-        model = load_model(pPretrainedModel, custom_objects={'tf':tf, 'swish':Activation(swish), 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'mse_directionInvariant': mse_directionInvariant})
+    if(myTrainingState.pPretrainedModel != ''):
+        model = load_model(myTrainingState.pPretrainedModel, custom_objects={'tf':tf, 'swish':Activation(swish), 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'mse_directionInvariant': mse_directionInvariant})
     
     print('\n**************')
     print('** Training **')
     print('**************\n')
-    print('model ' + str(modelToUse) + ' loss ' + loss)
-    print('dx ' + str(noX) + ' dy ' + str(noY) + ' dz  ' + str(noZ))
-    print('features ' + str(noFeatures) + ' depth ' + str(depth) + ' lr ' + str(lr) + '\ndropout ' + str(useDropout) + ' bn  ' + str(useBatchNormalization) + ' batch size ' + str(batch_size))
-    print('dataset ' + str(pStreamlines) + " " + str(len(streamlines)))
+    print('model ' + str(myTrainingState.modelToUse) + ' loss ' + myTrainingState.loss)
+    print('dx ' + str(myState.dim[0]) + ' dy ' + str(myState.dim[1]) + ' dz  ' + str(myState.dim[2]))
+    print('features ' + str(myTrainingState.noFeatures) + ' depth ' + str(myTrainingState.depth) + ' lr ' + str(myTrainingState.lr) + '\ndropout ' +
+          str(myTrainingState.useDropout) + ' bn  ' + str(myTrainingState.useBatchNormalization) + ' batch size ' + str(myTrainingState.batch_size))
     print('**************\n')
-    
    
     # train simple MLP
-    params = "dg_%s_%s_dx_%d_dy_%d_dz_%d_%s_feat_%d_depth_%d_output_%d_lr_%.4f_dropout_%d_bn_%d_unitTangent_%d_wz_%d" % (modelToUse,loss,noX,noY,noZ,activation_function.__class__.__name__,noFeatures, depth,noOutputNeurons,lr,useDropout,useBatchNormalization,unitTangent,keepZeroVectors)
+    params = "%s_%s_dx_%d_dy_%d_dz_%d_dd_%d_%s_feat_%d_depth_%d_output_%d_lr_%.4f_dropout_%d_bn_%d_unitTangent_%d_wz_%d" % \
+             (myTrainingState.modelToUse,myTrainingState.loss,myState.dim[0],myState.dim[1],myState.dim[2],noD,myTrainingState.activationFunction.__class__.__name__,myTrainingState.noFeatures,
+              myTrainingState.depth,3,myTrainingState.lr,myTrainingState.useDropout,myTrainingState.useBatchNormalization,myState.unitTangent,myTrainingState.keepZeroVectors)
+
+    pModel = "results/" + pModelOutput + '/models/' + params + ".h5"  # "-{val_loss:.6f}.h5"
+    pCSVLog = "results/" + pModelOutput + '/logs/' + params + ".csv"
    
     newpath = r'results/' + pModelOutput + '/models/'
     if not os.path.exists(newpath):
@@ -239,8 +250,6 @@ def main():
 
 
     # Train model on dataset
-    pModel = "results/" + pModelOutput + '/models/' + params + "-{val_loss:.6f}.h5"
-    pCSVLog = "results/" + pModelOutput + '/logs/' + params + ".csv"
     checkpoint = ModelCheckpoint(pModel, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
     csv_logger = CSVLogger(pCSVLog)
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2,
@@ -251,13 +260,13 @@ def main():
     model.fit_generator(generator=training_generator,
         validation_data=validation_generator,
         use_multiprocessing=True,
-        workers=noThreads,
-        steps_per_epoch=int(noTrainingSamples/batch_size),
-        epochs=epochs,
+        workers=args.noThreads,
+        steps_per_epoch=int(noTrainingSamples/myTrainingState.batch_size),
+        epochs=myTrainingState.epochs,
         verbose=1,
-        validation_steps=int(noValidationSamples/batch_size),
+        validation_steps=int(noValidationSamples/myTrainingState.batch_size),
         callbacks=callbacks,
-        max_queue_size=noThreads)
+        max_queue_size=args.noThreads)
             
 
         

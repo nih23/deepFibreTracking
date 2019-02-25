@@ -55,6 +55,18 @@ from dipy.segment.mask import median_otsu
 
 import random
 
+
+def squared_cosine_proximity_WEP(y_true, y_pred):
+    '''
+    squares cosine loss function (variant 2)
+    This loss function allows the network to be invariant wrt. to the streamline orientation. The direction of a vector v_i (forward OR backward (-v_i)) doesn't affect the loss.
+    '''
+    y_true = K.l2_normalize(y_true, axis=-1)
+    y_pred = K.l2_normalize(y_pred, axis=-1)
+    # ||y_gt||_2 * cos^2(y_gt,y_est) - (||y_gt||_2 - 1) * ||y_pred||_2
+    return - tf.multiply( (K.sum(y_true**2, axis=1)), (K.sum(y_true * y_pred, axis=-1) ** 2) ) - tf.multiply( (K.sum(y_true**2, axis=1) - 1), (K.sum(y_pred**2, axis=1) - 1))
+
+
 def build_model(inputShapeDWI=[1,100], features=512, units=10, useDropout=True, activation_function=ReLU(),lr=1e-4,decayrate=0):
 
     pDropout = 0.0
@@ -110,7 +122,7 @@ def build_model(inputShapeDWI=[1,100], features=512, units=10, useDropout=True, 
     return rnn
 
 
-def build_streamlineDirectionRNN(features=512, units=128, useDropout=True, activation_function=ReLU(), lr=1e-4, decayrate=0):
+def build_streamlineDirectionRNN(units=128, useDropout=True, activation_function=ReLU(), lr=1e-4, decayrate=0):
     pDropout = 0.0
 
     if (useDropout):
@@ -124,7 +136,7 @@ def build_streamlineDirectionRNN(features=512, units=128, useDropout=True, activ
     ####
     #layers.append(CuDNNLSTM(stateful=True, return_state=False, return_sequences=True, units=units)(layers[0])) # maybe use return sequence and feed that into another CNN or GAP layer
     #layers.append(CuDNNLSTM(stateful=True, return_state=False, return_sequences=False, units=units)(layers[-1]))
-    layers.append(LSTM(stateful=True, return_state=False, return_sequences=False, units=units)(layers[-1]))
+    #layers.append(LSTM(stateful=True, return_state=False, return_sequences=False, units=units, recurrent_dropout = 0.3, dropout = 0.3)(layers[-1]))
     layers.append(Dense(3, kernel_initializer='he_normal', activation='tanh', name='tangentPrediction')(layers[-1]))
     #outputPredictedTangent = layers[-1]
 
@@ -132,6 +144,77 @@ def build_streamlineDirectionRNN(features=512, units=128, useDropout=True, activ
 
     rnn = Model((layers[0]), outputs=(layers[-1]))
     rnn.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+    return rnn
+
+
+
+def build_mightyRNN(units=(32,128), useDropout=True, activation_function=ReLU(), lr=1e-4, decayrate=0, inputShapeDWI = (3,3,3,32)):
+    pDropout = 0.0
+
+    if (useDropout):
+        pDropout = 0.2
+
+    i1 = Input((1,3), batch_shape=(1,1,3))
+
+    i2 = Input((1, 3), batch_shape= (1,) + inputShapeDWI)
+
+    layers = [i1]
+    layers.append(LSTM(stateful=True, return_state=False, return_sequences=True, units=units[0], recurrent_dropout = 0.3, dropout = 0.3)(
+        layers[0]))  # maybe use return sequence and feed that into another CNN or GAP layer
+    layLSTMdirection = layers[-1]
+    layers.append([i2])
+    layI2 = layers[-1]
+    layers.append(LSTM(stateful=True, return_state=False, return_sequences=True, units=units[1], recurrent_dropout = 0.3, dropout = 0.3)(
+        layers[0]))  # maybe use return sequence and feed that into another CNN or GAP layer
+    layLSTMdwi = layers[-1]
+
+    ####
+    # predict next direction stream
+    ####
+    layers.append(concatenate([layLSTMdirection,layLSTMdwi]))
+    layers.append(LSTM(stateful=True, return_state=False, return_sequences=False, units=units[1], recurrent_dropout = 0.3, dropout = 0.3)(layers[-1]))
+    layers.append(Dense(3, kernel_initializer='he_normal', activation='tanh', name='tangentPrediction')(layers[-1]))
+
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+
+    rnn = Model((i1, i2), outputs=(layers[-1]))
+    rnn.compile(loss=[squared_cosine_proximity_2], optimizer=optimizer)
+    return rnn
+
+
+def build_fancyRNN(units=(32,128), useDropout=True, activation_function=ReLU(), lr=1e-4, decayrate=0, inputShapeDWI = (3,3,3,32)):
+    pDropout = 0.0
+
+    if (useDropout):
+        pDropout = 0.2
+
+    #i1 = Input((1, 3), batch_shape= (1,1,np.prod(inputShapeDWI)))
+    i1 = Input((1, 3), batch_shape=(1,) + inputShapeDWI)
+
+    layers = [i1]
+
+    layers.append(Reshape((-1,np.prod(inputShapeDWI)))(layers[-1]))
+
+    layers.append(LSTM(stateful=True, return_state=False, return_sequences=True, units=units[0], input_dim=inputShapeDWI, recurrent_dropout = 0.3, dropout = 0.3)(
+        layers[-1]))  # maybe use return sequence and feed that into another CNN or GAP layer
+
+    ####
+    # predict next direction stream
+    ####
+    #layers.append(LSTM(stateful=True, return_state=False, return_sequences=False, units=units[1], recurrent_dropout = 0.3, dropout = 0.3)(layers[-1]))
+    layers.append(Flatten()(layers[-1]))
+    layers.append(Dense(3, kernel_initializer='he_normal', activation='tanh', name='tangentPrediction')(layers[-1]))
+    o_tangent = layers[-1]
+
+    ####
+    # predict next direction stream
+    ####
+    layers.append(Dense(1, kernel_initializer='he_normal', activation='sigmoid', name='stoppingProb')(layers[-1]))
+    o_pStop = layers[-1]
+    optimizer = optimizers.Adam(lr=lr, decay=decayrate)
+
+    rnn = Model((i1), outputs=(o_tangent, o_pStop))
+    rnn.compile(loss=[squared_cosine_proximity_WEP, losses.binary_crossentropy], optimizer=optimizer)
     return rnn
 
 
@@ -163,7 +246,7 @@ def train(pStreamlineData, noEpochs = 50, lr = 1e-4, batchSize = 2**9, features 
     random.shuffle(streamlines)
     noTrainSamples = 1000
     noTestSamples = 100
-    #sl_30k = np.random.choice(streamlines[0:,300, replace=False)
+
     sl_train = streamlines[0:noTrainSamples]
     sl_test = streamlines[noTrainSamples:noTrainSamples+noTestSamples]
     

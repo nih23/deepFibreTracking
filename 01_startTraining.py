@@ -71,9 +71,13 @@ def main():
 
     specialNormalization = args.specialNormalization
 
+#    if(myTrainingState.modelToUse == 'fancy_mlp'):
+#        print('Keeping zero vectors as the neural network shall predict endpoints.')
+#        myTrainingState.keepZeroVectors = True
+
     if(myTrainingState.loss == 'sqCos2WEP'):
         print('Keeping zero vectors as the neural network shall predict endpoints.')
-        myTrainingState.keepZeroVectors = True
+    myTrainingState.keepZeroVectors = True
     
     useSphericalCoordinates = False
     pModelOutput = myTrainingState.pTrainData.replace('.h5','').replace('data/','')
@@ -83,10 +87,15 @@ def main():
     f = h5py.File(myTrainingState.pTrainData, "r")
     train_DWI = np.array(f["train_DWI"].value)
     train_nextDirection = np.array(f["train_NextFibreDirection"].value)
+    directionsToAdjacentStreamlines = np.array(f["directionsToAdjacentStreamlines"].value)
     f.close()
 
-    mupred = np.mean(train_nextDirection, axis=0)
-    stdpred = np.std(train_nextDirection, axis=0)
+
+
+    #train_DWI = np.diff(train_DWI, axis = 3)
+
+    mupred = np.mean(np.abs(train_nextDirection), axis=0)
+    stdpred = np.std(np.abs(train_nextDirection), axis=0)
     print(" train data stats1 %.3f+-%.3f %.3f+-%.3f %.3f+-%.3f" % (mupred[0], stdpred[0], mupred[1], stdpred[1], mupred[2], stdpred[2]))
     
     indices = np.arange(len(train_DWI))
@@ -94,6 +103,10 @@ def main():
     np.random.shuffle(indices)
     train_DWI = train_DWI[indices,]
     train_nextDirection = train_nextDirection[indices,]
+    directionsToAdjacentStreamlines = directionsToAdjacentStreamlines[indices,]
+
+    t1 = directionsToAdjacentStreamlines[:,-1,:]
+    t2 = directionsToAdjacentStreamlines[:, 0, :]
 
     vN = np.sqrt(np.sum(train_nextDirection ** 2 , axis = 1))
     idx1 = np.where(vN > 0)[0]
@@ -106,6 +119,8 @@ def main():
     if(myTrainingState.keepZeroVectors == False):
         train_DWI = train_DWI[idxNoZeroVectors,...]
         train_nextDirection = train_nextDirection[idxNoZeroVectors,]
+        t1 = t1[idxNoZeroVectors,]
+        t2 = t2[idxNoZeroVectors,]
 
     noSamples,noX,noY,noZ,noD = train_DWI.shape
 
@@ -139,7 +154,7 @@ def main():
     if(specialNormalization):
         params += "_magic"
 
-    pModel = "results/" + pModelOutput + '/models/' + params + ".h5"  # "-{val_loss:.6f}.h5"
+    pModel = "results/" + pModelOutput + '/models/' + params + "-{val_loss:.6f}.h5"
     pCSVLog = "results/" + pModelOutput + '/logs/' + params + ".csv"
     
     newpath = r'results/' + pModelOutput + '/models/'
@@ -212,13 +227,80 @@ def main():
     ####################
     ####################
     elif (myTrainingState.modelToUse == 'fancyfcn_avPool'):
-        cnn = nn_helper.get_3Dcnn_fcn_singleOutput(myTrainingState, myState, inputShapeDWI = train_DWI.shape[1:])
+        cnn = nn_helper.get_3Dfcn(myTrainingState, myState, inputShapeDWI = train_DWI.shape[1:])
         cnn.summary()
         print("Batch size " + str(myTrainingState.batch_size))
         cnn.fit([train_DWI], [train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
-        #cnn.fit([train_DWI, np.repeat(bvecs_subset[None, :], noSamples, axis=0)], [train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+    elif (myTrainingState.modelToUse == '2T_mlp'):
 
+        #vN = np.sqrt(np.sum(t1 ** 2, axis=1))
+        #t1 = t1 / vN[:, None]
+        #vN = np.sqrt(np.sum(t2 ** 2, axis=1))
+        #t2 = t2 / vN[:, None]
+        
 
+        model = nn_helper.get_twoTensor_mlp(myTrainingState, inputShapeDWI=train_DWI.shape[1:])
+        model.summary()
+        print("Batch size " + str(myTrainingState.batch_size))
+        # -1: actual next direction
+        # 0: direction to next SL with largest angle to -1
+        #model.fit([train_DWI], [directionsToAdjacentStreamlines[:,-1,:],directionsToAdjacentStreamlines[:,0,:]], batch_size=myTrainingState.batch_size,
+        #        epochs=myTrainingState.epochs, verbose=2, validation_split=0.2, callbacks=[checkpoint, csv_logger])
+
+        model.fit([train_DWI], [t2, t1],
+                  batch_size=myTrainingState.batch_size,
+                  epochs=myTrainingState.epochs, verbose=2, validation_split=0.2, callbacks=[checkpoint, csv_logger])
+    ####################
+    ####################
+    elif (myTrainingState.modelToUse == 'fancy_3DFCN'):
+        myState.nameDWIdataset = 'ISMRM_2015_Tracto_challenge_data'
+        myState.useDenoising = False
+        bvals, bvecs, gtab, dwi, aff, t1 = dwi_tools.loadISMRMData('data/%s' % (myState.nameDWIdataset),
+                                                                   denoiseData=myState.useDenoising,
+                                                                   resliceToHCPDimensions=False)
+        dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(1000, bvals,
+                                                                                           bvecs, dwi)
+        bvecs_subset = np.concatenate([bvecs_subset, [[0., 0., 0.]]])
+        if(True):
+            f = h5py.File(myTrainingState.pTrainData, "r")
+            allRotations = np.array(f["allRotations"])
+            f.close()
+            noGradients = len(bvecs_subset)
+            rotGradients = np.zeros([noSamples, noGradients, 3])
+            for i in range(noSamples):
+                rotGradients[i,] = np.dot(allRotations[i,], bvecs_subset.T).T
+
+        print(str(train_DWI.shape[1:]))
+        print(str(rotGradients.shape))
+
+        cnn = nn_helper.get_fancy_3DFCN(myTrainingState, inputShapeDWI = train_DWI.shape[1:], inputShapeGradients=rotGradients.shape[1:])
+        cnn.summary()
+
+        cnn.fit([train_DWI, np.repeat(bvecs_subset[None, :], noSamples, axis=0)], [train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+    ####################
+    ####################
+    elif (myTrainingState.modelToUse.find('fancy_mlp_') > -1):
+        myState.nameDWIdataset = 'ISMRM_2015_Tracto_challenge_data'
+        myState.useDenoising = False
+        bvals, bvecs, gtab, dwi, aff, t1 = dwi_tools.loadISMRMData('data/%s' % (myState.nameDWIdataset),
+                                                                   denoiseData=myState.useDenoising,
+                                                                   resliceToHCPDimensions=False)
+        dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(1000, bvals,
+                                                                                           bvecs, dwi)
+#       bvecs_subset = np.concatenate([bvecs_subset, [[0., 0., 0.]]])
+        cnn = nn_helper.get_fancy_mlp(myTrainingState, inputShapeDWI = train_DWI.shape[1:], inputShapeGradients=bvecs_subset.shape)
+        cnn.summary()
+        if(myTrainingState.modelToUse.find('noRotGrad')):
+            cnn.fit([train_DWI, np.repeat(bvecs_subset[None, :], noSamples, axis=0)], [train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
+        else:
+            f = h5py.File(myTrainingState.pTrainData, "r")
+            allRotations = np.array(f["allRotations"])
+            f.close()
+            noGradients = len(bvecs_subset)
+            rotGradients = np.zeros([noSamples, noGradients, 3])
+            for i in range(noSamples):
+                rotGradients[i,] = np.dot(allRotations[i,], bvecs_subset.T).T
+            cnn.fit([train_DWI, rotGradients], [train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
     ####################
     ####################
     elif (myTrainingState.modelToUse == '3Dcnn'):
@@ -258,50 +340,20 @@ def main():
         
             mlp_simple = nn_helper.get_mlp_singleOutputWEP(myTrainingState, inputShapeDWI = train_DWI.shape[1:])
             mlp_simple.summary()
-            mlp_simple.fit([train_DWI], [train_nextDirection, labels], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger], class_weight=class_weight)
+            #mlp_simple.fit([train_DWI], [train_nextDirection, labels], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger], class_weight=class_weight)
+            mlp_simple.fit([train_DWI], [train_nextDirection, labels], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
         else:
             mlp_simple = nn_helper.get_mlp_singleOutput(myTrainingState, myState, inputShapeDWI = train_DWI.shape[1:])
             mlp_simple.summary()
             mlp_simple.fit([train_DWI], [train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
-    elif (myTrainingState.modelToUse == '3Dcnn_mlp_single'):
+    elif (myTrainingState.modelToUse == 'MLP_3DCNN'):
         class_weight = None
-
-        mlp_simple = nn_helper.get_3Dcnn_mlp_singleOutput(myTrainingState, myState, inputShapeDWI=train_DWI.shape[1:])
+        # used to be: get_3Dcnn_mlp_singleOutput
+        mlp_simple = nn_helper.get_3DMLP_CNN(myTrainingState, myState, inputShapeDWI=train_DWI.shape[1:])
         mlp_simple.summary()
         mlp_simple.fit([train_DWI], [train_nextDirection], batch_size=myTrainingState.batch_size,
                        epochs=myTrainingState.epochs, verbose=2, validation_split=0.2,
                        callbacks=[checkpoint, csv_logger])
-    ###
-        ### ### ###
-    ### 2MLP SINGLE ###
-        ### ### ###    
-    elif (myTrainingState.modelToUse == '2mlp_single'):
-        # load aggregated previous dwi coeffs
-        f = h5py.File(myTrainingState.pTrainData, "r")
-        train_DWI_pastAgg = np.array(f["train_DWI_pastAgg"].value)
-        f.close()
-
-        if(myTrainingState.loss == 'sqCos2WEP'):
-            noSamples = len(train_DWI)
-            labels = np.zeros((noSamples,1))
-            labels[idx1] = 1
-            loss = 'sqCos2'
-        
-        mlp_simple = nn_helper.get_2mlp_singleOutputWEP(myTrainingState)
-        
-        noPosSamples = len(np.where(labels == 1)[0])
-        noNegSamples = len(np.where(labels == 0)[0])
-        class_weight = {1: (noPosSamples+noNegSamples) / noPosSamples,
-                        0: 10* (noPosSamples+noNegSamples) / noNegSamples}
-        print(class_weight)
-
-        class_weight = { 'signLayer': {1: (noPosSamples+noNegSamples) / noPosSamples, 0: (noPosSamples+noNegSamples) / noNegSamples} }
-        mlp_simple.summary()
-        mlp_simple.fit([train_DWI, train_DWI_pastAgg], [train_nextDirection, labels], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])#, class_weight=class_weight)
-    ###
-    elif (myTrainingState.modelToUse == 'unet'):
-        cnn_simple = nn_helper.get_3Dunet_simpleTracker(myTrainingState)
-        cnn_simple.fit([train_DWI], [train_prevDirection, train_nextDirection], batch_size=myTrainingState.batch_size, epochs=myTrainingState.epochs, verbose=2,validation_split=0.2, callbacks=[checkpoint,csv_logger])
     ###
     elif (myTrainingState.modelToUse == 'discr'):
         # load dwi and use bvecs to discretize tangents

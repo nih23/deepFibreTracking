@@ -9,7 +9,7 @@ import src.tracking as tracking
 import h5py
 from src.tied_layers1d import Convolution2D_tied
 from src.state import TractographyInformation
-from src.nn_helper import swish, squared_cosine_proximity_2, weighted_binary_crossentropy, mse_directionInvariant
+from src.nn_helper import swish, squared_cosine_proximity_2, weighted_binary_crossentropy, mse_directionInvariant, squared_cosine_proximity_WEP
 from src.SelectiveDropout import SelectiveDropout
 from dipy.segment.mask import median_otsu
 from dipy.core.gradients import gradient_table, gradient_table_from_bvals_bvecs
@@ -35,10 +35,14 @@ def main():
     parser.add_argument('--reslice', help='reslice datase to 1.25mm^3', dest='reslice' , action='store_true')
     parser.add_argument('--rotateData', help='rotate data', dest='rotateData' , action='store_true')
     parser.add_argument('--dontRotateGradients', help='rotate gradients', dest='rotateGradients', action='store_false')
+    parser.add_argument('-r','--pathRecurrentNetwork', help='path to the trained recurrent network', dest='pathRecurrentNetwork', default='')
+    parser.add_argument('--faMask', help='use fa mask to seed tracking',
+                        dest='faMask', action='store_true')
     parser.set_defaults(denoise=False)   
     parser.set_defaults(reslice=False)   
     parser.set_defaults(rotateData=False)
     parser.set_defaults(rotateGradients=True)
+    parser.set_defaults(faMask=False)
     args = parser.parse_args()
 
     myState = TractographyInformation()
@@ -60,7 +64,7 @@ def main():
 
     # load neural network
     pResult = "results_tracking/" + myState.hcpID + os.path.sep + myState.model.replace('.h5','').replace('/models/','/').replace('results','') + 'reslice-' + str(resliceDataToHCPDimension) + '-denoising-' + str(useDenoising) + '-' + str(noTrackingSteps) + 'st-20mm-fa-' + str(myState.faThreshold)
-    tracker = load_model(myState.model , custom_objects={'tf':tf, 'swish':Activation(swish), 'SelectiveDropout': SelectiveDropout, 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'mse_directionInvariant': mse_directionInvariant})
+    tracker = load_model(myState.model , custom_objects={'tf':tf, 'squared_cosine_proximity_WEP':squared_cosine_proximity_WEP, 'swish':Activation(swish), 'SelectiveDropout': SelectiveDropout, 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'mse_directionInvariant': mse_directionInvariant})
     myState = myState.parseModel(tracker)
     print('Loaded model %s' % (myState.model))
     tracker.summary()
@@ -76,18 +80,22 @@ def main():
     b0_idx = bvals < 10
     b0 = dwi[..., b0_idx].mean(axis=3)
 
-    if(not myState.magicModel):
-        print('FA estimation')
-        dwi_singleShell = np.concatenate((dwi_subset, dwi[..., b0_idx]), axis=3)
-        bvals_singleShell = np.concatenate((bvals_subset, bvals[..., b0_idx]), axis=0)
-        bvecs_singleShell = np.concatenate((bvecs_subset, bvecs[b0_idx,]), axis=0)
-        gtab_singleShell = gradient_table(bvals=bvals_singleShell, bvecs=bvecs_singleShell, b0_threshold = 10)
+    fa = None
 
-        start_time = time.time()
-        dti_model = dti.TensorModel(gtab_singleShell, fit_method='LS')
-        dti_fit = dti_model.fit(dwi_singleShell)
-        runtime = time.time() - start_time
-        print('Runtime ' + str(runtime) + 's')
+#    if(not myState.magicModel):
+    print('FA estimation')
+    dwi_singleShell = np.concatenate((dwi_subset, dwi[..., b0_idx]), axis=3)
+    bvals_singleShell = np.concatenate((bvals_subset, bvals[..., b0_idx]), axis=0)
+    bvecs_singleShell = np.concatenate((bvecs_subset, bvecs[b0_idx,]), axis=0)
+    gtab_singleShell = gradient_table(bvals=bvals_singleShell, bvecs=bvecs_singleShell, b0_threshold = 10)
+
+    start_time = time.time()
+    dti_model = dti.TensorModel(gtab_singleShell, fit_method='LS')
+    dti_fit = dti_model.fit(dwi_singleShell)
+    runtime = time.time() - start_time
+    print('Runtime ' + str(runtime) + 's')
+
+    fa = dti_fit.fa
 
     dwi_subset = dwi_tools.normalize_dwi(dwi_subset, b0)
     myState.b0 = b0
@@ -103,18 +111,31 @@ def main():
     # whole brain seeds
     seedsToUse = seeds_from_mask(binarymask, affine=aff)
 
+    if(args.faMask):
+        print('Seeding tracking method by fa mask')
+        famask = np.zeros(binarymask.shape)
+        famask[fa > 0.2] = 1
+        famask[binarymask == 0] = 0
+        seedsToUse = seeds_from_mask(famask, affine=aff)
+        pResult += '-famask'
+
     print("rot: " + str(myState.rotateData))
 
-    if(myState.magicModel and myState.model.find('2mlp_single')>0):
-        # magic 2mlp_single with aggregation
+    if(args.pathRecurrentNetwork != ''):
+        rnn = load_model(args.pathRecurrentNetwork, custom_objects={'tf':tf, 'swish':Activation(swish), 'SelectiveDropout': SelectiveDropout, 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'mse_directionInvariant': mse_directionInvariant})
+        rnn.summary()
         start_time = time.time()
-        streamlines_joined_sc,vNorms,stopProb = tracking.startAggregatedMagicModel(myState, printfProfiling = False, printProgress = True, mask=binarymask, inverseDirection=False, seeds=seedsToUse, data=dwi_subset, affine=aff, model=tracker, noIterations = noTrackingSteps)
+        streamlines_joined_sc, vNorms = tracking.startWithRNN(myState, printfProfiling=False, printProgress=True,
+                                                       mask=binarymask, fa=fa, seeds=seedsToUse,
+                                                       data=dwi_subset, affine=aff, model=tracker,
+                                                       noIterations=noTrackingSteps, rnn_model = rnn)
         runtime = time.time() - start_time
     else:
         # standard models
         start_time = time.time()
-        streamlines_joined_sc,vNorms = tracking.start(myState, printfProfiling = False, printProgress = True, mask=binarymask,fa=dti_fit.fa, seeds=seedsToUse, data=dwi_subset, affine=aff, model=tracker, noIterations = noTrackingSteps)
+        streamlines_joined_sc,vNorms, probs = tracking.start(myState, printfProfiling = False, printProgress = True, mask=binarymask,fa=fa, seeds=seedsToUse, data=dwi_subset, affine=aff, model=tracker, noIterations = noTrackingSteps)
         runtime = time.time() - start_time
+
 
    
     print("Postprocessing streamlines and removing streamlines shorter than " + str(minimumStreamlineLength) + " mm")
@@ -126,9 +147,13 @@ def main():
     print("The data is being written to disk.")
 
     np.save(pResult + '_streamlines_joined_sc.npy',streamlines_joined_sc)
+    np.save(pResult + '_streamlines_joined_raw.npy', streamlines_joined_sc_raw)
     np.save(pResult + '_seedsToUse.npy',seedsToUse)
+    np.save(pResult + '_probs.npy', probs)
 
     dwi_tools.saveVTKstreamlines(streamlines_joined_sc,pResult + '.vtk')
+
+    dwi_tools.saveVTKstreamlinesWithPointdata(streamlines_joined_sc_raw, pResult + '_probs.vtk', probs)
 
 
 if __name__ == "__main__":

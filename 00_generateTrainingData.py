@@ -123,10 +123,10 @@ def main():
         myState.tensorModel = 'precomp'
         tInfo = myState.pPrecomputedStreamlines
         pFilename = os.path.split(myState.pPrecomputedStreamlines)[-1].replace('.vtk','')
-        pTrainDataDir = '/data/nico/train/b0/%s/' % (pFilename)
-        pTrainData = '/data/nico/train/b0/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedN5%d_ep%d_spc%.2f_rotDir%d.h5' % \
+        pTrainDataDir = '/data/nico/train/ijk/%s/' % (pFilename)
+        pTrainData = '/data/nico/train/ijk/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedN5%d_epN%d_spc%.2f_rotDir%d_m%d%d%d.h5' % \
                      (pFilename, myState.b_value, myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
-                      myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction, myState.gridSpacing, myState.resampleDWIAfterRotation)
+                      myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction, myState.gridSpacing, myState.resampleDWIAfterRotation, myState.referenceOrientation[0], myState.referenceOrientation[1], myState.referenceOrientation[2])
         print(pTrainDataDir)
         print(pTrainData)
     
@@ -173,7 +173,7 @@ def main():
         runtime = time.time() - start_time
         print('LocalTracking Runtime ' + str(runtime) + 's')
         tInfo = '%s_sw%.1f_minL%d_maxL%d_fa%.2f' % (myState.tensorModel,myState.stepWidth,minimumStreamlineLength,maximumStreamlineLength,myState.faThreshold)
-        pTrainData = '/data/nico/train/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedN5%d_ep%d_spc%.2f.h5' % (myState.nameDWIdataset, myState.b_value,
+        pTrainData = '/data/nico/train/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedN5%d_epN%d_spc%.2f.h5' % (myState.nameDWIdataset, myState.b_value,
                                                                                                    myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
                                                                                                    myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction, myState.gridSpacing)
         pTrainDataDir = '/data/nico/trainingdata/'
@@ -207,7 +207,7 @@ def main():
 
     print('Generating training data... ')
     start_time = time.time()
-    train_DWI, train_nextDirection, allRotations, streamlineIndices = dwi_tools.generateTrainingData(streamlines_filtered, dwi_subset, affine=aff, state=myState)
+    train_DWI, train_nextDirection, allRotations, streamlineIndices,directionsToAdjacentStreamlines = dwi_tools.generateTrainingData(streamlines_filtered, dwi_subset, affine=aff, state=myState)
     
     if(myState.addRandomDataForEndpointPrediction):
         print('Generate random data for endpoint prediction')
@@ -227,6 +227,7 @@ def main():
         f.create_dataset('train_DWI',data=train_DWI)
         f.create_dataset('train_NextFibreDirection',data=train_nextDirection)
         f.create_dataset('streamlineIndices', data=streamlineIndices)
+        f.create_dataset('directionsToAdjacentStreamlines',data=directionsToAdjacentStreamlines)
     
 if __name__ == "__main__":
     main()

@@ -5,6 +5,7 @@ from dipy.io import read_bvals_bvecs
 from dipy.viz import window, actor
 from dipy.tracking import metrics
 from dipy.reconst.shm import sph_harm_lookup, smooth_pinv
+from dipy.tracking.life import transform_streamlines
 
 import time
 import nrrd
@@ -15,6 +16,8 @@ import tensorflow as tf
 
 from dipy.denoise.localpca import localpca
 from dipy.denoise.pca_noise_estimate import pca_noise_estimate
+
+from scipy.spatial import KDTree
 
 #from src.state import TractographyInformation
 
@@ -172,7 +175,7 @@ def saveVTKstreamlinesWithPointdata(streamlines, pStreamlines, pointdata, normal
             linePts = line.GetPointIds()
             linePts.SetId(j,ptCtr)
             
-            scalars.InsertNextValue(pointdata[i][j,0] / normalizationFactor)
+            scalars.InsertNextValue(pointdata[i][j] / normalizationFactor)
             
             ptCtr += 1
             
@@ -298,6 +301,7 @@ def resample_dwi_old(dwi, b0, bvals, bvecs, directions=None, sh_order=8, smooth=
     data_resampled = np.dot(data_sh, Ba.T)
 
     if mean_centering:
+        print('mean centering')
         # Normalization in each direction (zero mean)
         idx = data_resampled.sum(axis=-1).nonzero()
         means = data_resampled[idx].mean(axis=0)
@@ -698,9 +702,10 @@ def _getCoordinateGrid(state):
 
 def interpolateDWIVolume(myState, dwi, positions, x_,y_,z_, rotations_ijk = None, debugMode = False):
     # positions: noPoints x 3
-
+    #print('pos dim: ' + str(len(positions.shape)))
     szDWI = dwi.shape
     noPositions = len(positions)
+    #print('no pos: ' + str(noPositions))
     noElem = myState.dim[0] * myState.dim[1] * myState.dim[2]
     cvF = np.ones([noPositions*noElem,3])
     grid = np.array(np.meshgrid(x_,y_,z_)).reshape(3,-1)
@@ -713,14 +718,15 @@ def interpolateDWIVolume(myState, dwi, positions, x_,y_,z_, rotations_ijk = None
         if(debugMode and j>-1):
             i_cur = np.argmin(np.sum(np.abs(coordVecs - positions[j,:,None].T), axis = 1))
             #i_prev = np.argmin(np.sum(np.abs(coordVecs - positions[j-1, :, None].T), axis=1))
-            print(str(coordVecs[i_cur, :]))
+            #print(str(coordVecs[i_cur, :]))
             coordVecs[i_cur,0:3] = [0,1,2]
-            if(j>1):
+            if(j>1 and j<noPositions):
+                print(str(rotations_ijk[j,]))
                 i_prev = np.argmin(np.sum(np.abs(coordVecs - positions[j - 1, :, None].T), axis=1))
                 coordVecs[i_prev,0:3] = [0,1,2]
-                i_prev = np.argmin(np.sum(np.abs(coordVecs - positions[j - 2, :, None].T), axis=1))
+                i_next = np.argmin(np.sum(np.abs(coordVecs - positions[j + 1, :, None].T), axis=1))
                 coordVecs[i_prev, 0:3] = [0, 1, 2]
-            #print("(%d %d) " % (i_cur, i_prev))
+                print("(%d %d %d) " % (i_next, i_cur, i_prev))
             #print(str(coordVecs[i_cur,:]))
             #print(str(np.where(coordVecs == [0])))
         il = j * noElem
@@ -731,7 +737,6 @@ def interpolateDWIVolume(myState, dwi, positions, x_,y_,z_, rotations_ijk = None
 #                print(str(cvF[jj,]))
 
     x = np.zeros([noPositions,myState.dim[0],myState.dim[1],myState.dim[2],szDWI[-1]])
-
     if(debugMode):
         for xx in cvF:
             print(str(xx))
@@ -742,8 +747,11 @@ def interpolateDWIVolume(myState, dwi, positions, x_,y_,z_, rotations_ijk = None
         interpRes = vfu.interpolate_scalar_3d(dwi[:,:,:,i],cvF)[0]
         x[:,:,:,:,i] = np.reshape(interpRes, [noPositions,myState.dim[0],myState.dim[1],myState.dim[2]])
 
+    ##TODO: HUHU
+    return x
+
     if(rotations_ijk is None or (myState.resampleDWIAfterRotation == False)):
-        #print('no rotation of DWI gradients')
+#        print('no rotation of DWI gradients')
         return x
     # resample the diffusion gradients wrt. to the rotation matrix
     if(myState.useParallelizedResampling == False):
@@ -764,6 +772,25 @@ def parallelResampling(i,x,rot,myState):
     x_rot, _ = resample_dwi(x, b0=myState.b0, bvals=myState.bvals, bvecs=myState.bvecs, directions=bvecs_rot,
                             mean_centering=False)
     return i,x_rot
+
+def parallelGeneration(k,kdt,streamlinevec_ijk_at_k, streamlinevec_ijk_at_k1, d_nnSearch):
+    i = kdt.query_ball_point(streamlinevec_ijk_at_k, d_nnSearch)  # acquire neighbours within a certain distance
+    n_slv = streamlinevec_ijk_at_k - kdt.data[i]  # direction to nearest streamline position
+    n_slv = np.unique(n_slv, axis=0)  # remove duplicates from our search query
+    n_slv = np.array([v for v in n_slv if sum(v ** 2) > 0])  # remove zero vector
+    tang = streamlinevec_ijk_at_k - streamlinevec_ijk_at_k1
+    d = np.abs(np.dot(n_slv, tang))  # unit vectors so we dont have to divide by the L2 norm of each
+    d = np.squeeze(d)
+    n_slv2 = n_slv[np.argsort(d),]
+
+    if (len(n_slv2) < 5):
+        dv = 5 - len(n_slv2)
+        n_slv2 = np.vstack((n_slv2, np.zeros([dv, 3])))
+
+    n_slv2 = n_slv2[0:5, ]  # 5 most orthogonal vectors
+    n_slv2 = np.vstack([n_slv2, tang])
+
+    return k, n_slv2
 
 
 def rotateByMatrix(vectorsToRotate,rotationMatrix,rotationCenterVector = np.array([0,0,0])):    
@@ -920,20 +947,29 @@ def filterStreamlinesByMaxLength(streamlines, maxLength = 200):
     return [x for x in streamlines if metrics.length(x) < maxLength]
 
 
-def generateTrainingData(streamlines, dwi, affine, state, generateRandomData = False):
+def generateTrainingData(streamlines_ras, dwi, affine, state, generateRandomData = False):
     '''
 
     '''
-    sfa = np.asarray(streamlines)
+    noCrossings = 3
+
+
+
     dx,dy,dz,_ = dwi.shape
     dw = getSizeOfDataRepresentation(state)
+
+
+    streamlines_ijk = transform_streamlines(streamlines_ras, np.linalg.inv(affine))
+    noStreamlines = len(streamlines_ijk)
+    sfa = np.asarray(streamlines_ijk)
     sl_pos = sfa[0]
-    noStreamlines = len(streamlines)
-    
+
     # Build kd-tree of streamline positions. This significantly decreases subsequent lookup times.
     for streamlineIndex in range(1,noStreamlines):
         lengthStreamline = len(sfa[streamlineIndex])
-        sl_pos = np.concatenate([sl_pos, sfa[streamlineIndex][0:lengthStreamline]], axis=0) # dont store absolute value but relative displacement
+        sl_pos = np.concatenate([sl_pos, sfa[streamlineIndex][0:lengthStreamline]], axis=0)
+
+    kdt = KDTree(sl_pos)
 
     # define spacing of the 3D grid
     x_,y_,z_ = _getCoordinateGrid(state)
@@ -953,62 +989,127 @@ def generateTrainingData(streamlines, dwi, affine, state, generateRandomData = F
     
     slOffset =  np.zeros([len(sl_pos)])
 
-    streamlineIndices = np.zeros([len(streamlines),3])
+    streamlineIndices = np.zeros([len(streamlines_ras),3])
+    directionsToAdjacentStreamlines = np.zeros([len(sl_pos), 2 * 3, 3])  # likely next streamline directions
 
     start_time = time.time()
     for streamlineIndex in range(0,noStreamlines):
         slOffset[streamlineIndex] = ctr
 
 
-        if(((streamlineIndex) % 10000) == 0 and streamlineIndex > 0):
+        if(((streamlineIndex) % 1000) == 0 and streamlineIndex > 0):
             print(str(streamlineIndex) + "/" + str(noStreamlines) + "[" + str(time.time() - start_time) + "s]")
             start_time = time.time()
                 
-        streamlinevec = streamlines[streamlineIndex]
-        noPoints = len(streamlinevec)
+        streamlinevec_ras = streamlines_ras[streamlineIndex]
+        streamlinevec_ijk = streamlines_ijk[streamlineIndex]
+        noPoints = len(streamlinevec_ijk)
 
-        streamlinevec_ijk = (M.dot(streamlinevec.T) + abc).T
-        streamlinevec_all_next = streamlines[streamlineIndex][1:]
+        #streamlinevec_ijk = (M.dot(streamlinevec_ras.T) + abc).T
 
-        dNextAll = np.concatenate(  (streamlinevec[0:-1,] - streamlinevec_all_next, np.array([[0,0,0]])))
+        streamlinevecs_next_ijk = streamlines_ijk[streamlineIndex][1:]
+
+        if(len(np.where(streamlinevec_ijk < 0)[0]) > 0):
+            print('WARNING: The trajectory of streamline %d seems to be wrong. We got negative IJK coordinates.' % (streamlineIndex))
+
+        #print('coordinate system check (should be zero): ' + str(len(np.where(streamlinevec_ijk < 0)[0])))
+
+        # RAS RAS RAS RAS
+        dNextAll_ijk = np.concatenate(  (streamlinevec_ijk[0:-1,] - streamlinevecs_next_ijk, np.array([[0,0,0]])))
 
         streamlineIndices[streamlineIndex] = ctr
-        rotijk = None
+        rot_ijk = None
+
+        # IJK
+        if(False):
+            print('Generating directions to adjacent streamlines')
+            d_nnSearch = 2 * np.sum((streamlinevec_ijk[0] - streamlinevec_ijk[1]) ** 2)  # step_size in ijk
+            d_nnSearch += 0.1 * d_nnSearch # just add a small value to circumvent any rounding issues
+
+            streamlinevec_ijk_in = np.concatenate(
+                (streamlinevec_ijk, streamlinevec_ijk[None, -1,]))
+
+            # parallelGeneration(k,kdt,streamlinevec_ijk_at_k, streamlinevec_ijk_at_k1, d_nnSearch):
+            if(True):
+                for k in range(noPoints):
+                    #print('-----------=======---------')
+                    #print('d_nn %.10f' % (d_nnSearch))
+                    i = kdt.query_ball_point(streamlinevec_ijk[k],d_nnSearch) # acquire neighbours within a certain distance
+                    #print(str(i))
+                    #print(str(streamlinevec_ijk[k]))
+                    #print(str(streamlineIndex) + '/' + str(k))
+                    #print('---')
+                    n_slv = streamlinevec_ijk[k] - kdt.data[i]  # direction to nearest streamline position
+                    n_slv = np.unique(n_slv, axis = 0) # remove duplicates from our search query
+                    n_slv = np.array([v for v in n_slv if sum(v**2) > 0]) # remove zero vector
+                    tang = streamlinevec_ijk_in[k] - streamlinevec_ijk_in[k+1]
+                    #print(str(n_slv))
+                    d = np.abs(np.dot(n_slv, tang)) # unit vectors so we dont have to divide by the L2 norm of each
+                    d = np.squeeze(d)
+                    n_slv2 = n_slv[np.argsort(d), ]
+
+                    if(len(n_slv2) < 5):
+                        dv = 5 - len(n_slv2)
+                        n_slv2 = np.vstack((n_slv2, np.zeros([dv,3])))
+
+                    n_slv2 = n_slv2[0:5,] # 5 most orthogonal vectors
+                    n_slv2 = np.vstack([n_slv2, tang])
+
+                    directionsToAdjacentStreamlines[ctr+k,:,:] = n_slv2
+
+                    #if( (k>0) and (k<(noPoints-1))):
+                    #    print('**')
+                    #    print('**')
+                    #    print(str(streamlinevec_ijk[k] - streamlinevec_ijk[k-1]))
+                    #    print(str(streamlinevec_ijk[k] - streamlinevec_ijk[k+1]))
+                    #    print('**')
+                    #    print('**')
+
+
+        # IJK
         if(state.rotateData):
             # reference orientation
             vv = state.getReferenceOrientation()
             
             # compute tangents
-            tangentsijk = streamlinevec_ijk[0:-1] - streamlinevec_ijk[1:] # tangents represents the tangents starting from the 2nd streamline position previousPosition - currentPosition in RAS
+            tangents_ijk = streamlinevec_ijk[0:-1] - streamlinevec_ijk[1:] # tangents represents the tangents starting from the 2nd streamline position previousPosition - currentPosition in RAS
             # compute rotation matrices
-            rotijk = np.zeros([noPoints,3,3])
-            rotijk[0,:,:] = np.eye(3)
+            rot_ijk = 2342*np.ones([noPoints,3,3]) # 2342 shouldnt be present in the training data otherwise we are in deep trouble :)
+            rot_ijk[0,:,:] = np.eye(3)
+
             for k in range(1,noPoints):
-                R_2vect(rotijk[k, :, :], vector_orig=vv, vector_fin=tangentsijk[k - 1,])
-                if(state.resampleDWIAfterRotation):
-                    dNextAll[k,] = np.dot(rotijk[k, :, :], dNextAll[k,].T).T
                 if(generateRandomData):
-                    print('random rot')
-                    rotijk[k,:] += np.random.rand(3,3) - 0.5 # randomely rotate our data (and hope that there no other streamline coming from that direction)
-            allRotations[ctr:ctr+noPoints, ] = rotijk
+                    R_2vect(rot_ijk[k, :, :], vector_orig=vv+np.random.rand(3), vector_fin=tangents_ijk[k - 1,]) #TODO: check that the new origin vector aint similar to a tangent
+                else:
+                    R_2vect(rot_ijk[k, :, :], vector_orig=vv, vector_fin=tangents_ijk[k - 1,])
+
+                #rot_ijk[k, :, :] = rot_ijk[k, :, :].T
+
+                if(state.resampleDWIAfterRotation):
+                    dNextAll_ijk[k,] = np.dot(rot_ijk[k, :, :], dNextAll_ijk[k,].T).T
+
+            allRotations[ctr:ctr+noPoints, ] = rot_ijk
 
         # interpolate
-        interp_slv_ijk = interpolateDWIVolume(state,dwi,streamlinevec_ijk, rotations_ijk = rotijk, x_ = x_,y_ = y_,z_ = z_)
+        interp_slv_ijk = interpolateDWIVolume(state,dwi,streamlinevec_ijk, rotations_ijk = rot_ijk, x_ = x_,y_ = y_,z_ = z_)
         interp_slv_ijk = projectIntoAppropriateSpace(state, interp_slv_ijk)
 
         if(generateRandomData):
-            dNextAll = np.zeros([noPoints,3])
+            dNextAll_ijk = np.zeros([noPoints,3])
 
         interpolatedDWISubvolume[ctr:ctr+noPoints,] = interp_slv_ijk
-        directionToNextStreamlinePoint[ctr:ctr+noPoints,] = dNextAll
-
+        directionToNextStreamlinePoint[ctr:ctr+noPoints,] = dNextAll_ijk
+#        print(str(ctr))
+#        for k in range(noPoints):
+#            print(str(k) + " " + str(dNextAll_ijk[k,]))
+#        print('----')
         ctr += noPoints
+#        print(str(ctr))
 
-        
     if(state.unitTangent):
         directionToNextStreamlinePoint = np.nan_to_num(directionToNextStreamlinePoint // np.sqrt(np.sum(directionToNextStreamlinePoint ** 2, axis = 1))) # unit vector   
 
-    return interpolatedDWISubvolume, directionToNextStreamlinePoint, allRotations, streamlineIndices
+    return interpolatedDWISubvolume, directionToNextStreamlinePoint, allRotations, streamlineIndices, directionsToAdjacentStreamlines
 
 def R_2vect(R, vector_orig, vector_fin):
     """Calculate the rotation matrix required to rotate from one vector to another.

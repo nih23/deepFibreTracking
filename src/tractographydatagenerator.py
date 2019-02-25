@@ -117,25 +117,21 @@ class TractographyDataGenerator(keras.utils.Sequence):
     
 class TwoDimensionalTractographyDataGenerator(keras.utils.Sequence):
 
-    def __init__(self, dwi, streamlines, affine, list_IDs, batch_size=32, dim=(3,3,3), n_channels=1,rotateTrainingData=1,
-                 n_target_coordinates=3, shuffle=False, storeTemporaryData = False, keepZeroVectors = False):
-        'Initialization'
+    def __init__(self, dwi, streamlines, affine, list_IDs, n_channels=1,
+                 n_target_coordinates=3, shuffle=False, storeTemporaryData = False, myState = None, myTrainingState = None):
+        #'Initialization'
+        print('Number streamlines: ' + str(len(list_IDs)))
         self.pTempData = '/data/nico/tmp/' + str(time.time()) + '/'
         self.dwi = dwi
         self.streamlines = streamlines
         self.affine = affine
-        self.dim = dim
-        self.batch_size = batch_size
         self.list_IDs = list_IDs
         self.n_channels = n_channels
         self.n_target_coordinates = n_target_coordinates
         self.shuffle = shuffle
-        self.unitTangent = 0 # dont normalize tangent
-        self.step = 1 # mm
-        self.coordinateScaling = 1 # scaling factor
-        self.rotateTrainingData = rotateTrainingData
         self.storeTemporaryData = storeTemporaryData
-        self.keepZeroVectors = keepZeroVectors
+        self.myState = myState
+        self.myTrainingState = myTrainingState
         
         os.makedirs(self.pTempData)
         
@@ -151,22 +147,25 @@ class TwoDimensionalTractographyDataGenerator(keras.utils.Sequence):
             
     def __data_generation(self, list_IDs_temp):
         'Generates data containing batch_size samples' # X : (n_samples, *dim, n_channels)
+        # interpolate, project in 2D space, reshape
+
         streamlines_batch = [self.streamlines[i] for i in list_IDs_temp]
-        interpolatedDWISubvolume, directionToPreviousStreamlinePoint, directionToNextStreamlinePoint = dwi_tools.generateTrainingData(streamlines_batch, self.dwi, unitTension = self.unitTangent, affine=self.affine, noX=self.dim[0],noY=self.dim[1],noZ=self.dim[2],coordinateScaling=self.coordinateScaling,distToNeighbours=1, noCrossings = 1, step = self.step, rotateTrainingData = self.rotateTrainingData)
-        
+        interpolatedDWISubvolume, directionToNextStreamlinePoint, allRotations, streamlineIndices = dwi_tools.generateTrainingData(
+            streamlines_batch, self.dwi, affine=self.affine, state=self.myState)
+        interpolatedDWISubvolume = np.reshape(np.squeeze(np.swapaxes(interpolatedDWISubvolume,4,1)),(-1,16,16,self.myState.dim[2]))
+        directionToNextStreamlinePoint = np.squeeze(directionToNextStreamlinePoint)
         return interpolatedDWISubvolume, directionToNextStreamlinePoint
 
     
     def __len__(self):
         'Denotes the number of batches per epoch'
-        return int(np.floor(len(self.list_IDs) / self.batch_size))
+        return int(np.floor(len(self.list_IDs) / self.myTrainingState.batch_size))
 
     
     def __getitem__(self, index):
         'Generate one batch of data'
         # Generate indexes of the batch
-        indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
-
+        indexes = self.indexes[index*self.myTrainingState.batch_size:(index+1)*self.myTrainingState.batch_size]
         # Find list of IDs
         list_IDs_temp = [self.list_IDs[k] for k in indexes]
         pTmpX = '%sx_%d_%d.npy' % (self.pTempData,list_IDs_temp[0],list_IDs_temp[-1])
@@ -182,7 +181,7 @@ class TwoDimensionalTractographyDataGenerator(keras.utils.Sequence):
                 np.save(pTmpX,X)
                 np.save(pTmpY,y)
 
-        X = np.reshape(X,[-1,8,8,1]) # we might have problems in case of nx,ny,nz > 1
+        #X = np.reshape(X,[-1,16,16,1]) # we might have problems in case of nx,ny,nz > 1
         return X, y
     
 class ThreeDimensionalTractographyDataGenerator(keras.utils.Sequence):
