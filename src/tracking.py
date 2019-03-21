@@ -72,7 +72,6 @@ def makeStep(myState, predictedDirection,lastDirections,curStreamlinePos_ijk,cur
     ####
     # check predicted direction and flip it if necessary
     noSeeds = len(predictedDirection)
-
     if(printfProfiling):
         print(" -> 3 " + str(time.time() - start_time) + "s]")
 
@@ -218,7 +217,7 @@ def getNextDirection(myState, dwi, curPosition_ijk, model, lastDirections_ras = 
 
     mupred = np.mean(predictedDirectionAtIdx, axis=0)
     stdpred = np.std(predictedDirectionAtIdx, axis=0)
-    print(" prediction stats %.3f+-%.3f %.3f+-%.3f %.3f+-%.3f" % (mupred[0], stdpred[0], mupred[1], stdpred[1], mupred[2], stdpred[2]))
+#    print(" prediction stats %.3f+-%.3f %.3f+-%.3f %.3f+-%.3f" % (mupred[0], stdpred[0], mupred[1], stdpred[1], mupred[2], stdpred[2]))
     ###################
     ### postprocess prediction
     ###################
@@ -228,7 +227,7 @@ def getNextDirection(myState, dwi, curPosition_ijk, model, lastDirections_ras = 
 
     mupred = np.mean(predictedDirectionAtIdx, axis=0)
     stdpred = np.std(predictedDirectionAtIdx, axis=0)
-    print(" prediction stats 0 %.3f+-%.3f %.3f+-%.3f %.3f+-%.3f" % (mupred[0], stdpred[0], mupred[1], stdpred[1], mupred[2], stdpred[2]))
+#    print(" prediction stats 0 %.3f+-%.3f %.3f+-%.3f %.3f+-%.3f" % (mupred[0], stdpred[0], mupred[1], stdpred[1], mupred[2], stdpred[2]))
 
     if(not rnnModel is None):
         predictedDirectionAtIdx = predictedDirectionAtIdx[None, ...]
@@ -625,19 +624,25 @@ def recurrentStart(myState, seeds, data, rnn_model, affine, mask, fa, printProgr
     abc = aff_ras_ijk[:3, 3]
     abc = abc[:,None]
 
+    aff_ijk_ras = affine # aff: IJK -> RAS
+    M2 = aff_ijk_ras[:3, :3]
+    abc2 = aff_ijk_ras[:3, 3]
+    abc2 = abc2[:,None]
+
     ### START ITERATION UNTIL NOITERATIONS REACHED ###
     # tracking steps are done in RAS
     validSls = None
     start_time = time.time()
 
     for seedIdx in range(noSeeds):
-        print('\nStreamline %d / %d ' % (seedIdx, 2*noSeeds))
+        print('\nStreamline %d / %d ' % (seedIdx, noSeeds))
         rnn_model.reset_states()
+
+        candidatePosition_ras = seeds[seedIdx]
+        candidatePosition_ras = candidatePosition_ras[np.newaxis, ...]
+        candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
         
-		candidatePosition_ras = seeds[seedIdx]
-		candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
-		
-		# forward pass
+        # forward pass
         for iter in range(noIterations):
             ####
             ####
@@ -659,18 +664,16 @@ def recurrentStart(myState, seeds, data, rnn_model, affine, mask, fa, printProgr
             ####
             # compute direction
             ld_input = (lastDirections, lastDirections_ijk)
-             predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirection(myState, data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections_ras= ld_input, x_ = x_, y_ = y_, z_ = z_, validIdx = validSls, rnnModel = rnn_model)
-
+            predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirection(myState, data, curPosition_ijk = curStreamlinePos_ijk, model = rnn_model, lastDirections_ras= ld_input, x_ = x_, y_ = y_, z_ = z_, validIdx = validSls, batch_size = 1)
             if(iter == 0):
                 myState.rotateData = oldRotationState
 
             ####
             ####
             # compute next streamline position and check if this position is valid wrt. our stopping criteria1
-            candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection, lastDirections = lastDirections, curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling)
-
+            candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection, lastDirections = ld_input, curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling, M2 = M2, abc2 = abc2, curStreamlinePos_ijk = curStreamlinePos_ijk)
             if(myState.magicModel):
-                validPoints = np.greater(stopTrackingProbability > myState.pStopTracking)
+                validPoints = int(stopTrackingProbability > myState.pStopTracking)
             else:
                 validPoints = areVoxelsValidStreamlinePoints(candidatePosition_ijk, mask, fa, myState.faThreshold)
 
@@ -682,14 +685,15 @@ def recurrentStart(myState, seeds, data, rnn_model, affine, mask, fa, printProgr
             streamlinePositions_ijk[seedIdx, iter + 1,] = candidatePosition_ijk
 
 
-		## backward pass
-		streamlinePositions[seedIdx+noSeeds, 0,] = streamlinePositions[seedIdx, 1,]
-		streamlinePositions[seedIdx+noSeeds, 1,] = streamlinePositions[seedIdx, 0,]
+        ## backward pass
+        streamlinePositions[seedIdx+noSeeds, 0,] = streamlinePositions[seedIdx, 1,]
+        streamlinePositions[seedIdx+noSeeds, 1,] = streamlinePositions[seedIdx, 0,]
 		
-		candidatePosition_ras = streamlinePositions[seedIdx+noSeeds, 1,]
-		candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
+        candidatePosition_ras = streamlinePositions[seedIdx+noSeeds, 1,]
+        candidatePosition_ras = candidatePosition_ras[np.newaxis, ...]
+        candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
 		
-		seedIdx = seedIdx + noSeeds
+        seedIdx = seedIdx + noSeeds
 		
         for iter in range(1, noIterations):
             ####
@@ -709,7 +713,7 @@ def recurrentStart(myState, seeds, data, rnn_model, affine, mask, fa, printProgr
             ####
             # compute direction
             ld_input = (lastDirections, lastDirections_ijk)
-            predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirection(myState, data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections_ras= ld_input, x_ = x_, y_ = y_, z_ = z_, validIdx = validSls, rnnModel = rnn_model)
+            predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirection(myState, data, curPosition_ijk = curStreamlinePos_ijk, model = rnn_model, lastDirections_ras= ld_input, x_ = x_, y_ = y_, z_ = z_, validIdx = validSls, batch_size = 1)
 
             if(iter == 0):
                 myState.rotateData = oldRotationState
@@ -717,10 +721,10 @@ def recurrentStart(myState, seeds, data, rnn_model, affine, mask, fa, printProgr
             ####
             ####
             # compute next streamline position and check if this position is valid wrt. our stopping criteria1
-            candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection, lastDirections = lastDirections, curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling)
+            candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection, lastDirections = ld_input, curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling, M2 = M2, abc2 = abc2, curStreamlinePos_ijk = curStreamlinePos_ijk)
 
             if(myState.magicModel):
-                validPoints = np.greater(stopTrackingProbability > myState.pStopTracking)
+                validPoints = int(stopTrackingProbability > myState.pStopTracking)
             else:
                 validPoints = areVoxelsValidStreamlinePoints(candidatePosition_ijk, mask, fa, myState.faThreshold)
 
@@ -732,9 +736,9 @@ def recurrentStart(myState, seeds, data, rnn_model, affine, mask, fa, printProgr
             streamlinePositions_ijk[seedIdx, iter + 1,] = candidatePosition_ijk
             
         ###
-		seedIdx = seedIdx - noSeeds
-		###
-		# continue with next streamline
+        seedIdx = seedIdx - noSeeds
+        ###
+        # continue with next streamline
 
     streamlinePositions = streamlinePositions.tolist()
 

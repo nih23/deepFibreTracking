@@ -104,7 +104,8 @@ def main():
     print("Tractography")
     # whole brain seeds
     seedsToUse = seeds_from_mask(binarymask, affine=aff)
-
+    seedsToUse = random_seeds_from_mask(binarymask, affine=aff, seeds_count = 1000, seed_count_per_voxel = False)
+    print(len(seedsToUse))
     if(args.faMask):
         print('Seeding tracking method by fa mask')
         famask = np.zeros(binarymask.shape)
@@ -116,24 +117,26 @@ def main():
     print("rot: " + str(myState.rotateData))
 
     if(args.pathRecurrentNetwork != ''):
-        rnn = load_model(args.pathRecurrentNetwork, custom_objects={'tf':tf, 'swish':Activation(swish), 'SelectiveDropout': SelectiveDropout, 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'mse_directionInvariant': mse_directionInvariant})
+        rnn = load_model(args.pathRecurrentNetwork, custom_objects={'tf':tf, 'swish':Activation(swish), 'SelectiveDropout': SelectiveDropout, 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'squared_cosine_proximity_WEP': squared_cosine_proximity_WEP})
         rnn.summary()
+        myState = myState.parseModel(rnn)
+        myState.magicModel = True
         start_time = time.time()
-        streamlines_joined_sc, vNorms = tracking.startWithRNN(myState, printfProfiling=False, printProgress=True,
+        streamlines_joined_sc, vNorms = tracking.recurrentStart(myState, printfProfiling=False, printProgress=True,
                                                        mask=binarymask, fa=fa, seeds=seedsToUse,
-                                                       data=dwi_subset, affine=aff, model=tracker,
+                                                       data=dwi_subset, affine=aff,
                                                        noIterations=noTrackingSteps, rnn_model = rnn)
         runtime = time.time() - start_time
     else:
         # classical model           
    		# load neural network
-		tracker = load_model(myState.model , custom_objects={'tf':tf, 'squared_cosine_proximity_WEP':squared_cosine_proximity_WEP, 'swish':Activation(swish), 'SelectiveDropout': SelectiveDropout, 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'mse_directionInvariant': mse_directionInvariant})
-		myState = myState.parseModel(tracker)
-		print('Loaded model %s' % (myState.model))
-		tracker.summary()
-        start_time = time.time()
-        streamlines_joined_sc,vNorms, probs = tracking.start(myState, printfProfiling = False, printProgress = True, mask=binarymask,fa=fa, seeds=seedsToUse, data=dwi_subset, affine=aff, model=tracker, noIterations = noTrackingSteps)
-        runtime = time.time() - start_time
+                tracker = load_model(myState.model , custom_objects={'tf':tf, 'squared_cosine_proximity_WEP':squared_cosine_proximity_WEP, 'swish':Activation(swish), 'SelectiveDropout': SelectiveDropout, 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'mse_directionInvariant': mse_directionInvariant})
+                myState = myState.parseModel(tracker)
+                print('Loaded model %s' % (myState.model))
+                tracker.summary()
+                start_time = time.time()
+                streamlines_joined_sc,vNorms, probs = tracking.start(myState, printfProfiling = False, printProgress = True, mask=binarymask,fa=fa, seeds=seedsToUse, data=dwi_subset, affine=aff, model=tracker, noIterations = noTrackingSteps)
+                runtime = time.time() - start_time
 
 
    
