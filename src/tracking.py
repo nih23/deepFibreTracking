@@ -458,7 +458,7 @@ def startWithRNN(myState, seeds, data, model, rnn_model, affine, mask, fa, print
 
     indexLastStreamlinePosition = noIterations * np.ones([2*noSeeds], dtype=np.intp)
 
-    del seeds # its not supposed to use the seeds anymore
+    #del seeds # its not supposed to use the seeds anymore
 
     # interpolate data given these coordinates for each channel
     x_,y_,z_ = dwi_tools._getCoordinateGrid(myState)
@@ -563,6 +563,178 @@ def startWithRNN(myState, seeds, data, model, rnn_model, affine, mask, fa, print
             streamlinePositions[seedIdx, iter + 1,] = candidatePosition_ras
             streamlinePositions_ijk[seedIdx, iter + 1,] = candidatePosition_ijk
 
+
+    streamlinePositions = streamlinePositions.tolist()
+
+    ####
+    ####
+    #
+    # crop streamlines to length specified by stopping criteria
+    vNorms = vNorms.tolist()
+
+    for seedIdx in range(0,2*noSeeds):
+        currentStreamline = np.array(streamlinePositions[seedIdx])
+        currentStreamline = currentStreamline[0:indexLastStreamlinePosition[seedIdx],]
+
+        currentNorm = np.array(vNorms[seedIdx])
+        currentNorm = currentNorm[0:indexLastStreamlinePosition[seedIdx],]
+
+        streamlinePositions[seedIdx] = currentStreamline
+        vNorms[seedIdx] = currentNorm
+
+    # extract both directions
+    sl_forward = streamlinePositions[0:noSeeds]
+    sl_backward = streamlinePositions[noSeeds:]
+
+    prob_forward = streamlinePositions[0:noSeeds]
+    prob_backward = streamlinePositions[noSeeds:]
+
+    # join directions
+    streamlines = Streamlines(joinTwoAlignedStreamlineLists(sl_backward, sl_forward))
+
+    return streamlines, vNorms
+
+
+def recurrentStart(myState, seeds, data, rnn_model, affine, mask, fa, printProgress = False, nverseDirection = False, printfProfiling = False, noIterations = 115):
+    '''
+    fibre tracking using neural networks
+    '''
+
+    mask = mask.astype(np.float)
+
+    noSeeds = len(seeds)
+
+    # initialize streamline positions data
+    vNorms = np.zeros([2*noSeeds,noIterations+1])
+    streamlinePositions = np.zeros([2*noSeeds,noIterations+1,3])
+    streamlinePositions_ijk = np.zeros([2*noSeeds,noIterations+1,3])
+
+    streamlinePositions[0:noSeeds,0,] = seeds[0:noSeeds] ## FORWARD
+    streamlinePositions[noSeeds:,1,] = seeds[0:noSeeds] ## BACKWARD
+
+    indexLastStreamlinePosition = noIterations * np.ones([2*noSeeds], dtype=np.intp)
+
+    #del seeds # its not supposed to use the seeds anymore
+
+    # interpolate data given these coordinates for each channel
+    x_,y_,z_ = dwi_tools._getCoordinateGrid(myState)
+
+    # prepare transformations to project a streamline point from IJK into RAS coordinate system to interpolate DWI data
+    aff_ras_ijk = np.linalg.inv(affine) # aff: IJK -> RAS
+    M = aff_ras_ijk[:3, :3]
+    abc = aff_ras_ijk[:3, 3]
+    abc = abc[:,None]
+
+    ### START ITERATION UNTIL NOITERATIONS REACHED ###
+    # tracking steps are done in RAS
+    validSls = None
+    start_time = time.time()
+
+    for seedIdx in range(noSeeds):
+        print('\nStreamline %d / %d ' % (seedIdx, 2*noSeeds))
+        rnn_model.reset_states()
+        
+		candidatePosition_ras = seeds[seedIdx]
+		candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
+		
+		# forward pass
+        for iter in range(noIterations):
+            ####
+            ####
+            # estimate tangent at current position
+            curStreamlinePos_ras = candidatePosition_ras
+            curStreamlinePos_ijk = candidatePosition_ijk
+            lastDirections = np.zeros([1,3])
+            lastDirections_ijk = np.zeros([1,3])
+            if(iter > 0):
+                lastDirections =  (streamlinePositions[seedIdx,iter-1,] - streamlinePositions[seedIdx,iter,]) # previousPosition - currentPosition in RAS
+                lastDirections = lastDirections[None, ...]
+                lastDirections_ijk = (streamlinePositions_ijk[seedIdx,iter-1,] - streamlinePositions_ijk[seedIdx,iter,])
+                lastDirections_ijk = lastDirections_ijk[None, ...]
+            else:
+                oldRotationState = myState.rotateData
+                myState.rotateData = False
+            
+            ####
+            ####
+            # compute direction
+            ld_input = (lastDirections, lastDirections_ijk)
+             predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirection(myState, data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections_ras= ld_input, x_ = x_, y_ = y_, z_ = z_, validIdx = validSls, rnnModel = rnn_model)
+
+            if(iter == 0):
+                myState.rotateData = oldRotationState
+
+            ####
+            ####
+            # compute next streamline position and check if this position is valid wrt. our stopping criteria1
+            candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection, lastDirections = lastDirections, curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling)
+
+            if(myState.magicModel):
+                validPoints = np.greater(stopTrackingProbability > myState.pStopTracking)
+            else:
+                validPoints = areVoxelsValidStreamlinePoints(candidatePosition_ijk, mask, fa, myState.faThreshold)
+
+            if(validPoints == 0):
+                indexLastStreamlinePosition[seedIdx] = np.min((indexLastStreamlinePosition[seedIdx], iter))
+                break
+
+            streamlinePositions[seedIdx, iter + 1,] = candidatePosition_ras
+            streamlinePositions_ijk[seedIdx, iter + 1,] = candidatePosition_ijk
+
+
+		## backward pass
+		streamlinePositions[seedIdx+noSeeds, 0,] = streamlinePositions[seedIdx, 1,]
+		streamlinePositions[seedIdx+noSeeds, 1,] = streamlinePositions[seedIdx, 0,]
+		
+		candidatePosition_ras = streamlinePositions[seedIdx+noSeeds, 1,]
+		candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
+		
+		seedIdx = seedIdx + noSeeds
+		
+        for iter in range(1, noIterations):
+            ####
+            ####
+            # estimate tangent at current position
+            curStreamlinePos_ras = candidatePosition_ras
+            curStreamlinePos_ijk = candidatePosition_ijk
+            if(iter > 0):
+                lastDirections =  (streamlinePositions[seedIdx,iter-1,] - streamlinePositions[seedIdx,iter,]) # previousPosition - currentPosition in RAS
+                lastDirections = lastDirections[None, ...]
+                lastDirections_ijk = (streamlinePositions_ijk[seedIdx,iter-1,] - streamlinePositions_ijk[seedIdx,iter,])
+                lastDirections_ijk = lastDirections_ijk[None, ...]
+            else:
+                oldRotationState = myState.rotateData
+                myState.rotateData = False
+            ####
+            ####
+            # compute direction
+            ld_input = (lastDirections, lastDirections_ijk)
+            predictedDirection, vecNorms, dwi_at_curPosition, stopTrackingProbability = getNextDirection(myState, data, curPosition_ijk = curStreamlinePos_ijk, model = model, lastDirections_ras= ld_input, x_ = x_, y_ = y_, z_ = z_, validIdx = validSls, rnnModel = rnn_model)
+
+            if(iter == 0):
+                myState.rotateData = oldRotationState
+
+            ####
+            ####
+            # compute next streamline position and check if this position is valid wrt. our stopping criteria1
+            candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection, lastDirections = lastDirections, curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling)
+
+            if(myState.magicModel):
+                validPoints = np.greater(stopTrackingProbability > myState.pStopTracking)
+            else:
+                validPoints = areVoxelsValidStreamlinePoints(candidatePosition_ijk, mask, fa, myState.faThreshold)
+
+            if(validPoints == 0):
+                indexLastStreamlinePosition[seedIdx] = np.min((indexLastStreamlinePosition[seedIdx], iter))
+                break
+
+            streamlinePositions[seedIdx, iter + 1,] = candidatePosition_ras
+            streamlinePositions_ijk[seedIdx, iter + 1,] = candidatePosition_ijk
+            
+        ###
+		seedIdx = seedIdx - noSeeds
+		###
+		# continue with next streamline
 
     streamlinePositions = streamlinePositions.tolist()
 

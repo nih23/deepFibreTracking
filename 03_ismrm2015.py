@@ -62,12 +62,8 @@ def main():
     resliceDataToHCPDimension = args.reslice
     useDenoising = args.denoise
 
-    # load neural network
+    
     pResult = "results_tracking/" + myState.hcpID + os.path.sep + myState.model.replace('.h5','').replace('/models/','/').replace('results','') + 'reslice-' + str(resliceDataToHCPDimension) + '-denoising-' + str(useDenoising) + '-' + str(noTrackingSteps) + 'st-20mm-fa-' + str(myState.faThreshold)
-    tracker = load_model(myState.model , custom_objects={'tf':tf, 'squared_cosine_proximity_WEP':squared_cosine_proximity_WEP, 'swish':Activation(swish), 'SelectiveDropout': SelectiveDropout, 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'mse_directionInvariant': mse_directionInvariant})
-    myState = myState.parseModel(tracker)
-    print('Loaded model %s' % (myState.model))
-    tracker.summary()
     os.makedirs(pResult, exist_ok=True)
 
     # load DWI data
@@ -79,10 +75,8 @@ def main():
     dwi_subset, gtab_subset, bvals_subset, bvecs_subset = dwi_tools.cropDatsetToBValue(myState.b_value, bvals, bvecs, dwi)
     b0_idx = bvals < 10
     b0 = dwi[..., b0_idx].mean(axis=3)
-
     fa = None
 
-#    if(not myState.magicModel):
     print('FA estimation')
     dwi_singleShell = np.concatenate((dwi_subset, dwi[..., b0_idx]), axis=3)
     bvals_singleShell = np.concatenate((bvals_subset, bvals[..., b0_idx]), axis=0)
@@ -131,7 +125,12 @@ def main():
                                                        noIterations=noTrackingSteps, rnn_model = rnn)
         runtime = time.time() - start_time
     else:
-        # standard models
+        # classical model           
+   		# load neural network
+		tracker = load_model(myState.model , custom_objects={'tf':tf, 'squared_cosine_proximity_WEP':squared_cosine_proximity_WEP, 'swish':Activation(swish), 'SelectiveDropout': SelectiveDropout, 'squared_cosine_proximity_2': squared_cosine_proximity_2, 'Convolution2D_tied': Convolution2D_tied, 'weighted_binary_crossentropy': weighted_binary_crossentropy, 'mse_directionInvariant': mse_directionInvariant})
+		myState = myState.parseModel(tracker)
+		print('Loaded model %s' % (myState.model))
+		tracker.summary()
         start_time = time.time()
         streamlines_joined_sc,vNorms, probs = tracking.start(myState, printfProfiling = False, printProgress = True, mask=binarymask,fa=fa, seeds=seedsToUse, data=dwi_subset, affine=aff, model=tracker, noIterations = noTrackingSteps)
         runtime = time.time() - start_time
