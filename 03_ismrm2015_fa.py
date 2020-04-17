@@ -19,6 +19,19 @@ from dipy.tracking.utils import random_seeds_from_mask, seeds_from_mask
 from src.model import ModelLSTM, ModelMLP
 import torch
 import torch.nn as nn
+#REQUIREMENTS FOR DTI-BASED TRACKING
+from dipy.data import default_sphere
+from dipy.direction import peaks_from_model, DeterministicMaximumDirectionGetter
+from dipy.tracking.local import LocalTracking, ThresholdTissueClassifier
+from dipy.tracking.streamline import Streamlines
+#CSD
+from dipy.reconst.csdeconv import (ConstrainedSphericalDeconvModel,
+                                           auto_response)
+from dipy.reconst.shm import CsaOdfModel
+from dipy.data import get_sphere
+
+DTI_BASED_TRACKING = False 
+CSD_BASED_TRACKING = False
 
 def main():
     parser = argparse.ArgumentParser(description='Deep Learning Tractography -- Tracking')
@@ -69,7 +82,7 @@ def main():
     network_string = "lstm"
     if args.mlp:
         network_string = "mlp"
-    pResult = "results_tracking/" + myState.hcpID + os.path.sep + myState.model.replace('.h5','').replace('/models/','/').replace('results','') + 'reslice-' + str(resliceDataToHCPDimension) + '-denoising-' + str(useDenoising) + '-' + str(noTrackingSteps) + 'st-20mm-fa-' + str(myState.faThreshold) + "-threshold-" + str(myState.pStopTracking)+"-" + network_string
+    pResult = "results_tracking/" + myState.hcpID + os.path.sep + myState.model.replace('.h5','').replace('/models/','/').replace('results','') + 'reslice-' + str(resliceDataToHCPDimension) + '-denoising-' + str(useDenoising) + '-' + str(noTrackingSteps) + 'st-20mm-faThreshold-' + str(myState.faThreshold) + "-sw-" + str(myState.stepWidth) + "-TerminationThreshold-" + str(myState.pStopTracking)+"-" + network_string
     print("Saving final data in {}".format(pResult))
     os.makedirs(pResult, exist_ok=True)
 
@@ -83,6 +96,7 @@ def main():
     b0_idx = bvals < 10
     b0 = dwi[..., b0_idx].mean(axis=3)
     fa = None
+    print("b0 idx: %s" % (str(b0_idx)))
 
     print('FA estimation')
     dwi_singleShell = np.concatenate((dwi_subset, dwi[..., b0_idx]), axis=3)
@@ -95,6 +109,64 @@ def main():
     dti_fit = dti_model.fit(dwi_singleShell)
     runtime = time.time() - start_time
     print('Runtime ' + str(runtime) + 's')
+
+    if(DTI_BASED_TRACKING):
+        ### DTI-based TRACKING
+        dti_fit_odf = dti_fit.odf(sphere = default_sphere)
+        dg = DeterministicMaximumDirectionGetter
+        directionGetter = dg.from_pmf(dti_fit_odf, max_angle=30., sphere=default_sphere)
+        runtime = time.time() - start_time
+        print('Runtime ' + str(runtime) + 's')
+        print('Seeding tracking method by fa mask')
+        famask = np.zeros(binarymask.shape)
+        famask[dti_fit.fa > 0.2] = 1
+        famask[binarymask == 0] = 0
+        dtiSeeds = seeds_from_mask(famask, affine=aff)
+        classifier = ThresholdTissueClassifier(dti_fit.fa, myState.faThreshold)
+        streamlines_generator = LocalTracking(directionGetter, classifier, dtiSeeds, aff, step_size=myState.stepWidth)
+        runtime = time.time() - start_time
+        print('LocalTracking Runtime ' + str(runtime) + 's')
+        streamlines = Streamlines(streamlines_generator)
+        runtime = time.time() - start_time
+        print('Streamline generation Runtime ' + str(runtime) + 's')
+        streamlines_filtered = dwi_tools.filterStreamlinesByLength(streamlines, minimumStreamlineLength)
+        streamlines_filtered = dwi_tools.filterStreamlinesByMaxLength(streamlines_filtered, maximumStreamlineLength)
+        dwi_tools.saveVTKstreamlines(streamlines_filtered, 'dti_ismrm_fa_%.2f.vtk' % (myState.faThreshold))
+        ### done 
+
+    if(CSD_BASED_TRACKING):
+        response, ratio = auto_response(gtab, dwi, roi_radius=10, fa_thr=0.7)
+        csd_model = ConstrainedSphericalDeconvModel(gtab, response)
+        sphere = get_sphere('symmetric724')
+        start_time = time.time()
+        print('Getting peaks')
+        csd_peaks = peaks_from_model(model=csd_model,
+                                     data=dwi,
+                                     sphere=sphere,
+                                     mask=binarymask,
+                                     relative_peak_threshold=.5,
+                                     #relative_peak_threshold=.6,
+                                     min_separation_angle=25,
+                                     parallel=False)
+        runtime = time.time() - start_time
+        print('CSD Runtime ' + str(runtime) + ' s')
+        directionGetter = csd_peaks
+
+        print('Seeding tracking method by fa mask')
+        famask = np.zeros(binarymask.shape)
+        famask[dti_fit.fa > 0.2] = 1
+        famask[binarymask == 0] = 0
+        dtiSeeds = seeds_from_mask(famask, affine=aff)
+        classifier = ThresholdTissueClassifier(dti_fit.fa, myState.faThreshold)
+        streamlines_generator = LocalTracking(directionGetter, classifier, dtiSeeds, aff, step_size=myState.stepWidth)
+        runtime = time.time() - start_time
+        print('LocalTracking Runtime ' + str(runtime) + 's')
+        streamlines = Streamlines(streamlines_generator)
+        runtime = time.time() - start_time
+        print('Streamline generation Runtime ' + str(runtime) + 's')
+        streamlines_filtered = dwi_tools.filterStreamlinesByLength(streamlines, minimumStreamlineLength)
+        streamlines_filtered = dwi_tools.filterStreamlinesByMaxLength(streamlines_filtered, maximumStreamlineLength)
+        dwi_tools.saveVTKstreamlines(streamlines_filtered,'csd_ismrm_fa_%.2f.vtk' % (myState.faThreshold))
 
     fa = dti_fit.fa
 
@@ -111,7 +183,7 @@ def main():
     print("Tractography")
     # whole brain seeds
     #seedsToUse = seeds_from_mask(binarymask, affine=aff)
-    seedsToUse = random_seeds_from_mask(binarymask, affine=aff, seeds_count = 1000, seed_count_per_voxel = False)
+    seedsToUse = random_seeds_from_mask(binarymask, affine=aff, seeds_count = 30000, seed_count_per_voxel = False)
     print(len(seedsToUse))
     if(args.faMask):
         print('Seeding tracking method by fa mask')
@@ -122,19 +194,20 @@ def main():
         pResult += '-famask'
 
     print("rot: " + str(myState.rotateData))
+    ##LOADING MODELS
     if args.mlp:
         print("Using MLP")
         model = ModelMLP(hidden_sizes=[192,192,192,192], dropout=0.07, input_size=2700, activation_function=nn.Tanh()) #.cuda()
         model.load_state_dict(torch.load('models/model.pt', map_location='cpu'))
     else:
         print("Using LSTM")
-        model = ModelLSTM(dropout=0.06, hidden_sizes=[191,191], input_size=2700, activation_function=nn.Tanh()) #.cuda()
-        model.load_state_dict(torch.load('models/model.pt.lstm', map_location='cpu'))
+        model = ModelLSTM(dropout=0, hidden_sizes=[256,256], input_size=2700, activation_function=nn.Tanh()) #.cuda()
+        model.load_state_dict(torch.load('models/model.lstmfaonly.pt', map_location='cpu'))
     model.eval()
     for param in model.parameters():
         param.requires_grad = False
     start_time = time.time()
-    streamlines_joined_sc, vNorms = tracking.startWithRNNBatches(myState = myState, printProgress = True, mask=binarymask, inverseDirection=False, seeds=seedsToUse, data=dwi_subset, affine=aff, model=model, noIterations = noTrackingSteps)
+    streamlines_joined_sc, vNorms = tracking.startWithRNNBatches(myState = myState, printProgress = True, mask=binarymask, inverseDirection=False, seeds=seedsToUse, data=dwi_subset, affine=aff, model=model, noIterations = noTrackingSteps, fa = fa, useFaAsStoppingCriteria = myState.faThreshold > 0)
     runtime = time.time() - start_time
     print('Runtime ' + str(runtime) + ' s ')
    

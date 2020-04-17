@@ -25,6 +25,7 @@ from dipy.io import read_bvals_bvecs
 from dipy.core.gradients import gradient_table, gradient_table_from_bvals_bvecs
 from dipy.reconst.dti import fractional_anisotropy
 
+from src.util import progress
 from dipy.tracking import utils
 
 import src.dwi_tools as dwi_tools
@@ -41,7 +42,7 @@ from dipy.tracking.streamline import Streamlines
 
 from dipy.tracking import metrics
 
-from models import ModelLSTM, ModelMLP
+from src.model import ModelLSTM, ModelMLP
 
 import numpy as np
 import warnings
@@ -55,15 +56,17 @@ def getNextDirection(myState, dwi, curPosition_ijk, model, rot_ijk_val, x_ = [0]
     ## 
     dwi_at_curPosition = dwi_tools.interpolateDWIVolume(myState, dwi, curPosition_ijk, x_,y_,z_, rotations_ijk = rot_ijk_val)
     
-     
+    
     dwi_at_curPosition = dwi_tools.projectIntoAppropriateSpace(myState, dwi_at_curPosition)
-    dwi_at_curPosition = torch.from_numpy(dwi_at_curPosition).float().cuda()
+    dwi_at_curPosition = torch.from_numpy(dwi_at_curPosition).float() #.cuda()
+    
     batchSize = dwi_at_curPosition.shape[0]
-    featureSize = dwi_at_curPosition.shape[-1]
+    featureSize = dwi_at_curPosition.shape[-1] * dwi_at_curPosition.shape[-2] * dwi_at_curPosition.shape[-3] * dwi_at_curPosition.shape[-4]
     dwi_at_curPosition = dwi_at_curPosition.view(1, batchSize, featureSize)
     predictedDirection, pContinueTracking = model(dwi_at_curPosition)
 
-    return predictedDirection[0].cpu().numpy(), dwi_at_curPosition, pContinueTracking[0].cpu().numpy()
+    return predictedDirection[0].numpy(), dwi_at_curPosition, pContinueTracking[0].numpy()
+    #return predictedDirection[0].cpu().numpy(), dwi_at_curPosition, pContinueTracking[0].cpu().numpy()
     
 def joinTwoAlignedStreamlineLists(streamlines_left,streamlines_right):
     assert(len(streamlines_left) == len(streamlines_right), "The two lists of streamlines need to have the same number of elements.")
@@ -90,6 +93,9 @@ def makeStep(myState, predictedDirection,lastDirections,curStreamlinePos_ijk,cur
     for j in range(0,noSeeds):
         lv1 = predictedDirection[j,]
         pv1 = lastDirections[j,]
+        if(printfProfiling):
+            print(str(pv1) + ":" + str(lv1))
+
         theta = np.dot(pv1,lv1)
         # flip predictedDirection if the vectors point in opposite directions
         if(theta < 0):
@@ -173,7 +179,7 @@ def startWithRNNAndMLPCombination(myState, seeds, data, model,mlp_model, affine,
     predictedDirection, dwi_at_curPosition, pContinueTracking = getNextDirection(myState, data, curPosition_ijk = curStreamlinePos_ijk, model = model, x_ = x_, y_ = y_, z_ = z_, rot_ijk_val = rot_ijk_val)
     myState.rotateData = oldRotationState
     # compute next streamline position
-    candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection,  curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling, M2 = M2, abc2 = abc2, curStreamlinePos_ijk = curStreamlinePos_ijk, lastDirections = lastDirections)
+    candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection,  curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling, M2 = M2, abc2 = abc2, curStreamlinePos_ijk = curStreamlinePos_ijk, lastDirections = lastDirections_ijk)
 
     # update positions
     streamlinePositions[0:noSeeds,1,] = candidatePosition_ras
@@ -189,7 +195,7 @@ def startWithRNNAndMLPCombination(myState, seeds, data, model,mlp_model, affine,
    
 
     for seedIdx in range(0,2*noSeeds,batchSize):
-        print('\nStreamline %d / %d ' % (seedIdx, 2*noSeeds))
+        print('Streamline %d / %d ' % (seedIdx, 2*noSeeds))
         if isinstance(model, ModelLSTM):
             model.reset()
         seedIdxRange = range(seedIdx, min(seedIdx+batchSize, 2*noSeeds))
@@ -197,6 +203,7 @@ def startWithRNNAndMLPCombination(myState, seeds, data, model,mlp_model, affine,
         #candidatePosition_ras = candidatePosition_ras[None, ...]
         candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
         for iter in range(1,noIterations):
+            progress(iter * 100 / noIterations, text="{}/{} steps calculated... ".format(iter, noIterations))
             ####
             ####
             # estimate tangent at current position
@@ -220,7 +227,7 @@ def startWithRNNAndMLPCombination(myState, seeds, data, model,mlp_model, affine,
             ####
             ####
             # compute next streamline position and check if this position is valid wrt. our stopping criteria1
-            candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection,  curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling, M2 = M2, abc2 = abc2, curStreamlinePos_ijk = curStreamlinePos_ijk, lastDirections = lastDirections)
+            candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection,  curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling, M2 = M2, abc2 = abc2, curStreamlinePos_ijk = curStreamlinePos_ijk, lastDirections = lastDirections_ijk)
             
             for i in range(len(validPoints)):
                 if(validPoints[i] == 0.):
@@ -231,7 +238,7 @@ def startWithRNNAndMLPCombination(myState, seeds, data, model,mlp_model, affine,
             streamlinePositions[seedIdxRange, iter + 1,] = candidatePosition_ras
             streamlinePositions_ijk[seedIdxRange, iter + 1,] = candidatePosition_ijk
 
-
+    #CHANGED
     streamlinePositions = streamlinePositions.tolist()
 
     ####
@@ -263,7 +270,7 @@ def startWithRNNAndMLPCombination(myState, seeds, data, model,mlp_model, affine,
     return streamlines, vNorms
 # WORKING CODE
 # DO NOT CHANGE, JUST COPY AND CHANGE THEN
-def startWithRNNBatches(myState, seeds, data, model, affine, mask, printProgress = False, inverseDirection = False, noIterations = 200, rot_ijk_val = None, batchSize=1024):
+def startWithRNNBatches(seeds, myState, data, model, affine, mask, printProgress = False, inverseDirection = False, noIterations = 200, rot_ijk_val = None, batchSize=2**16):
     ''' #
     fibre tracking using neural networks
     '''
@@ -297,32 +304,39 @@ def startWithRNNBatches(myState, seeds, data, model, affine, mask, printProgress
     M2 = aff_ijk_ras[:3, :3]
     abc2 = aff_ijk_ras[:3, 3]
     abc2 = abc2[:,None]
-    print("First step prediction")
-    ### FIRST STEP PREDICTION ###
-    # just predict the forward direction (the first half of streamlinePositions)
-    curStreamlinePos_ras = streamlinePositions[0:noSeeds,0,]
-    curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras.T) + abc).T
     lastDirections = np.zeros([noSeeds,3])
+    print("First step prediction")
+    for seedIdx in range(0,noSeeds,batchSize):
+        print('first step Streamline %d / %d ' % (seedIdx, noSeeds))
+        if isinstance(model, ModelLSTM):
+            model.reset()
+        seedIdxRange = range(seedIdx, min(seedIdx+batchSize, noSeeds))    
+        seedIdxRange2 = range(seedIdx + noSeeds, min(seedIdx+batchSize, noSeeds) + noSeeds)    
+        ### FIRST STEP PREDICTION ###
+        # just predict the forward direction (the first half of streamlinePositions)
+        curStreamlinePos_ras = streamlinePositions[seedIdxRange,0,]
+        curStreamlinePos_ijk = (M.dot(curStreamlinePos_ras.T) + abc).T
+        
 
-    streamlinePositions_ijk[0:noSeeds,0,] = curStreamlinePos_ijk ## FORWARD
-    streamlinePositions_ijk[noSeeds:,1,] = curStreamlinePos_ijk ## BACKWARD
+        streamlinePositions_ijk[seedIdxRange,0,] = curStreamlinePos_ijk ## FORWARD
+        streamlinePositions_ijk[(seedIdxRange2),1,] = curStreamlinePos_ijk ## BACKWARD
 
-    ld_input = lastDirections
-    start_time = time.time()
-    # never rotate the data of the first step
-    oldRotationState = myState.rotateData
-    myState.rotateData = False
-    # predict direction but in never rotate data
-    predictedDirection, dwi_at_curPosition, pContinueTracking = getNextDirection(myState, data, curPosition_ijk = curStreamlinePos_ijk, model = model, x_ = x_, y_ = y_, z_ = z_, rot_ijk_val = rot_ijk_val)
-    myState.rotateData = oldRotationState
-    # compute next streamline position
-    candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection,  curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling, M2 = M2, abc2 = abc2, curStreamlinePos_ijk = curStreamlinePos_ijk, lastDirections = lastDirections)
+        ld_input = lastDirections
+        start_time = time.time()
+        # never rotate the data of the first step
+        oldRotationState = myState.rotateData
+        myState.rotateData = False
+        # predict direction but in never rotate data
+        predictedDirection, dwi_at_curPosition, pContinueTracking = getNextDirection(myState, data, curPosition_ijk = curStreamlinePos_ijk, model = model, x_ = x_, y_ = y_, z_ = z_, rot_ijk_val = rot_ijk_val)
+        myState.rotateData = oldRotationState
+        # compute next streamline position
+        candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection,  curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling, M2 = M2, abc2 = abc2, curStreamlinePos_ijk = curStreamlinePos_ijk, lastDirections = lastDirections)
 
-    # update positions
-    streamlinePositions[0:noSeeds,1,] = candidatePosition_ras
-    streamlinePositions[noSeeds:,0,] = candidatePosition_ras
-    streamlinePositions_ijk[0:noSeeds,1,] = candidatePosition_ijk
-    streamlinePositions_ijk[noSeeds:,0,] = candidatePosition_ijk
+        # update positions
+        streamlinePositions[seedIdxRange,1,] = candidatePosition_ras
+        streamlinePositions[(seedIdxRange2),0,] = candidatePosition_ras
+        streamlinePositions_ijk[seedIdxRange,1,] = candidatePosition_ijk
+        streamlinePositions_ijk[seedIdxRange2,0,] = candidatePosition_ijk
     candidatePosition_ras = streamlinePositions[:,1,]
     candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
 
@@ -332,7 +346,7 @@ def startWithRNNBatches(myState, seeds, data, model, affine, mask, printProgress
    
 
     for seedIdx in range(0,2*noSeeds,batchSize):
-        print('\nStreamline %d / %d ' % (seedIdx, 2*noSeeds))
+        print('Streamline %d / %d ' % (seedIdx, 2*noSeeds))
         if isinstance(model, ModelLSTM):
             model.reset()
         seedIdxRange = range(seedIdx, min(seedIdx+batchSize, 2*noSeeds))
@@ -340,6 +354,7 @@ def startWithRNNBatches(myState, seeds, data, model, affine, mask, printProgress
         #candidatePosition_ras = candidatePosition_ras[None, ...]
         candidatePosition_ijk = (M.dot(candidatePosition_ras.T) + abc).T
         for iter in range(1,noIterations):
+            progress(iter * 100 / noIterations, text="{}/{} steps calculated... ".format(iter, noIterations))
             ####
             ####
             # estimate tangent at current position
@@ -362,7 +377,7 @@ def startWithRNNBatches(myState, seeds, data, model, affine, mask, printProgress
             ####
             ####
             # compute next streamline position and check if this position is valid wrt. our stopping criteria1
-            candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection,  curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling, M2 = M2, abc2 = abc2, curStreamlinePos_ijk = curStreamlinePos_ijk, lastDirections = lastDirections)
+            candidatePosition_ras, candidatePosition_ijk = makeStep(myState, predictedDirection = predictedDirection,  curStreamlinePos_ras = curStreamlinePos_ras, M = M, abc = abc, start_time = start_time, printfProfiling=printfProfiling, M2 = M2, abc2 = abc2, curStreamlinePos_ijk = curStreamlinePos_ijk, lastDirections = lastDirections_ijk)
             
             for i in range(len(validPoints)):
                 if(validPoints[i] == 0.):
@@ -372,7 +387,7 @@ def startWithRNNBatches(myState, seeds, data, model, affine, mask, printProgress
 
             streamlinePositions[seedIdxRange, iter + 1,] = candidatePosition_ras
             streamlinePositions_ijk[seedIdxRange, iter + 1,] = candidatePosition_ijk
-
+    
 
     streamlinePositions = streamlinePositions.tolist()
 

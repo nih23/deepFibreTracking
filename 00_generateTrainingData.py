@@ -1,7 +1,5 @@
 from numpy.random import seed
 seed(2342)
-from tensorflow import set_random_seed
-set_random_seed(4223)
 
 import time
 import nrrd
@@ -11,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import h5py
 
+import dipy.reconst.dti as dti
 from dipy.tracking import eudx
 from dipy.tracking.local import LocalTracking, ThresholdTissueClassifier
 from dipy.tracking.utils import random_seeds_from_mask
@@ -35,7 +34,7 @@ from dipy.tracking import utils
 from dipy.segment.mask import median_otsu
 
 import src.dwi_tools as dwi_tools
-import src.nn_helper as nn_helper
+#import src.nn_helper as nn_helper
 from src.state import TractographyInformation
 from dipy.segment.mask import median_otsu
 
@@ -60,7 +59,7 @@ def main():
     parser.add_argument('-mil', dest='minLength', type=int, default=40, help='minimal length of a streamline [mm]')
     parser.add_argument('-mal', dest='maxLength', type=int, default=200, help='maximum length of a streamline [mm]')
     parser.add_argument('-repr', dest='repr',default='res100', help='data representation: [raw,sh,res100,2D]: raw, spherical harmonics, resampled to 100 directions, 16x16 2D resampling (256 directions) ')
-    parser.add_argument('-sh', dest='sh', type=int, default=4, help='order of spherical harmonics (if used)')
+    parser.add_argument('-sh', dest='sh', type=int, default=8, help='order of spherical harmonics (if used)')
     parser.add_argument('--noStreamlines', dest='noStreamlines', default=0, type=int, help='specify if a random subset of the streamlines should be used to generate the training data')
     parser.add_argument('--rotateData', help='rotate data wrt. tangent [default]', dest='rotateData' , action='store_true')
     parser.add_argument('--unitTangent', help='unit tangent', dest='unittangent' , action='store_true')
@@ -71,7 +70,7 @@ def main():
     parser.add_argument('--addRandomDataForEndpointPrediction', default='', help='should we generate additional random data for endpoint prediction?', action='store_true')
     parser.add_argument('-nt', '--noThreads', type=int, default=4, help='number of parallel threads of the data generator. Note: this also increases the memory demand.')
     parser.add_argument('--dontRotateGradients', help='rotate gradients', dest='rotateGradients', action='store_false')
-    parser.set_defaults(rotateGradients=True)
+    parser.set_defaults(rotateGradients=False)
     parser.set_defaults(rotateData=False)
     parser.set_defaults(unittangent=False)   
     parser.set_defaults(visStreamlines=False)   
@@ -114,6 +113,7 @@ def main():
     else:
         myState.nameDWIdataset = 'HCP%s' % (myState.hcpID)
         bvals,bvecs,gtab,dwi,aff,t1,binarymask = dwi_tools.loadHCPData('data/HCP/%s' % (myState.hcpID))
+#        b0_mask, binarymask = median_otsu(dwi[:,:,:,0], 2, 1)
     
     wholebrainseeds = seeds_from_mask(binarymask, affine=aff)
     
@@ -123,8 +123,8 @@ def main():
         myState.tensorModel = 'precomp'
         tInfo = myState.pPrecomputedStreamlines
         pFilename = os.path.split(myState.pPrecomputedStreamlines)[-1].replace('.vtk','')
-        pTrainDataDir = '/data/nico/train/ijk/%s/' % (pFilename)
-        pTrainData = '/data/nico/train/ijk/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedN5%d_epN%d_spc%.2f_rotDir%d_m%d%d%d.h5' % \
+        pTrainDataDir = 'train/ijk/%s/' % (pFilename)
+        pTrainData = 'train/ijk/%s/b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedN5%d_epN%d_spc%.2f_rotDir%d_m%d%d%d.h5' % \
                      (pFilename, myState.b_value, myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
                       myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction, myState.gridSpacing, myState.resampleDWIAfterRotation, myState.referenceOrientation[0], myState.referenceOrientation[1], myState.referenceOrientation[2])
         print(pTrainDataDir)
@@ -132,7 +132,7 @@ def main():
     
     if(myState.tensorModel == 'dti'):
         start_time = time.time()
-        dti_model = dti.TensorModel(gtab)
+        dti_model = TensorModel(gtab)
         dti_fit = dti_model.fit(dwi, mask=binarymask)
         dti_fit_odf = dti_fit.odf(sphere = default_sphere)
         dg = DeterministicMaximumDirectionGetter
@@ -145,6 +145,7 @@ def main():
         csd_model = ConstrainedSphericalDeconvModel(gtab, response)
         sphere = get_sphere('symmetric724')
         start_time = time.time()
+        print('Getting peaks')
         csd_peaks = peaks_from_model(model=csd_model,
                                      data=dwi,
                                      sphere=sphere,
@@ -173,10 +174,10 @@ def main():
         runtime = time.time() - start_time
         print('LocalTracking Runtime ' + str(runtime) + 's')
         tInfo = '%s_sw%.1f_minL%d_maxL%d_fa%.2f' % (myState.tensorModel,myState.stepWidth,minimumStreamlineLength,maximumStreamlineLength,myState.faThreshold)
-        pTrainData = '/data/nico/train/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedN5%d_epN%d_spc%.2f.h5' % (myState.nameDWIdataset, myState.b_value,
+        pTrainData = 'train/%s_b%d_%s_sw%.1f_%dx%dx%d_ut%d_rotatedN5%d_epN%d_spc%.2f.h5' % (myState.nameDWIdataset, myState.b_value,
                                                                                                    myState.repr, myState.stepWidth, myState.dim[0],myState.dim[1],myState.dim[2],
                                                                                                    myState.unitTangent,myState.rotateData,myState.addRandomDataForEndpointPrediction, myState.gridSpacing)
-        pTrainDataDir = '/data/nico/trainingdata/'
+        pTrainDataDir = 'trainingdata/'
         
         dwi_tools.saveVTKstreamlines(streamlines_filtered, 'data/%s_%s.vtk' % (myState.nameDWIdataset,tInfo))
 
