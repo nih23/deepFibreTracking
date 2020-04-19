@@ -9,6 +9,7 @@ import torch
 from torch.utils import data as dataL
 import torch.optim as optim
 import torch.nn as nn
+import argparse
 #import horovod.torch as hvd
 
 from src.dataset import Dataset
@@ -17,7 +18,7 @@ from src.util import radians_loss, strfdelta
 from src.logger import Logger
 
 
-def getdatasets(path):
+def getdatasets(path, training_part=0.9):
     """Retrieves a dataset from given path and splits them randomly in train and test data.
 
     Arguments:
@@ -25,7 +26,7 @@ def getdatasets(path):
     training_part: float indicating the percentage of training data. default: 0.9 (90%)
     """
     sets = Dataset(path)
-    train_len = int(0.9*len(sets))
+    train_len = int(training_part*len(sets))
     test_len = len(sets) - train_len
     (train_split, test_split) = torch.utils.data.random_split(sets, (train_len, test_len))
     return sets, train_split, test_split
@@ -101,8 +102,8 @@ def feed_model(model, data, state, optimizer=None):
         pred_continue_tracking = pred_continue_tracking*mask
         # calculate loss
         rad_loss = radians_loss(batch_next_direction, pred_next_direction, mask)
-        p_stop_loss = torch.zeros(1).cuda()  # mse_loss(batch_continue_tracking, pred_continue_tracking)
-        loss = rad_loss # + p_stop_loss #TEMPORARILY CHANGED
+        p_stop_loss = mse_loss(batch_continue_tracking, pred_continue_tracking)
+        loss = rad_loss + p_stop_loss
         factor = (batch_len/len(current_set))
         complete_rad_loss = complete_rad_loss + factor * rad_loss.item()
         complete_p_stop_loss = complete_p_stop_loss + factor * p_stop_loss.item()
@@ -113,8 +114,25 @@ def feed_model(model, data, state, optimizer=None):
     return (complete_p_stop_loss + complete_rad_loss, complete_rad_loss, complete_p_stop_loss)
 
 def wrapper():
-    """The basic training wrapper. Trains specific, hardcoded model in current implementation.
+    """The basic training wrapper. Trains specific model in current implementation.
     """
+    parser = argparse.ArgumentParser(description='Deep Learning Tractography -- Specific Model Training')
+    parser.add_argument('-networktype', dest='layer_size', default=None, help='network type: LSTM/MLP [default: random]')
+    parser.add_argument('-datatype', dest='dataset_type', default=None, help='dataset type: 3x/1x [default: random]')
+    parser.add_argument('-bs', dest='batch_size', default=None, type=int, help='batch size used for training [default: random]')
+    parser.add_argument('-lr', dest='learning_rate', default=None, type=float, help='learning rate used for training [default:random]')
+    parser.add_argument('-layersize', dest='layer_size', default=None, type=int, help='layer size of the model [default: random]')
+    parser.add_argument('-depth', dest='depth', default=None, type=int, help='depth of the model [default: random]')
+    parser.add_argument('-dropout', dest='dropout', default=None, type=float, help='Dropout used for training. Between 0 and 1 [default: random]')
+    parser.add_argument('-activationfunction', dest='activation_function_string', default='', help="Activation function to use. Options: Tanh/ReLU/lReLU [default: random]")
+    args = parser.parse_args()
+    args.activation_function = None
+    if args.activation_function_string.lower() == "tanh":
+        args.activation_function = nn.Tanh()
+    if args.activation_function_string.lower() == "relu":
+        args.activation_function = nn.ReLU()
+    if args.activation_function_string.lower() == "lrelu":
+        args.activation_function = nn.LeakyReLU()
     logging.basicConfig(filename='logs/node-{}-{}.log'.format(socket.gethostname(), 4 #hvd.rank()
     ),\
         level=logging.DEBUG, format='[%(levelname)s] %(message)s')
@@ -129,9 +147,8 @@ def wrapper():
             logger.remove()
         sys.exit()
     signal.signal(signal.SIGTERM, signal_handler)
-    #while True:
     try:
-        (model, state) = get_random_model(depth = 2, layer_size = 256, network_type="LSTM", dataset_type="3x", dropout=0, batch_size=32, learning_rate=5e-5, activation_function=nn.Tanh())
+        (model, state) = get_random_model(depth = args.depth, layer_size = args.layer_size, network_type=args.network_type, dataset_type=args.dataset_type, dropout=args.dropout, batch_size=args.batch_size, learning_rate=args.learning_rate, activation_function=args.activation_function)
         logging.info("Retrieved model")
         torch.manual_seed(2343)
         torch.cuda.manual_seed(2343)
@@ -140,7 +157,7 @@ def wrapper():
         logging.info("Trained model")
     except RuntimeError as err:
         if 'out of memory' in str(err) or 'Allocator' in str(err):
-            logging.warning('ran out of memory, generating new model parameters')
+            logging.warning('ran out of memory, generate new model')
             if logger is not None:
                 logger.remove()
         else:
