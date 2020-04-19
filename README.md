@@ -44,7 +44,7 @@ All usable options are listed here:
 | **-sh** <value>                              | order of spherical harmonics is use is specified in `-repr`                                                                   | integer               | 8             | :heavy_check_mark:  |
 | **--noStreamlines** <value>                  | choose a subset of n streamlines taken randomly from the generated streamlines                                                | integer               | everything    | :heavy_check_mark:  |
 | **--rotateData**                             | rotate the DWI-data with respect to unit tangent, makes prediction easier                                                     | boolean               | false         | :heavy_check_mark:  |
-| **--unitTanget**                             | *TODO (unknown)*                                                                                                              | boolean               | false         | :heavy_check_mark:  |
+| **--unitTangent**                             | *TODO (unknown)*                                                                                                              | boolean               | false         | :heavy_check_mark:  |
 | **--visStreamlines**                         | Visualize the streamlines ahead of data generation in VTK Renderer                                                            | boolean               | false         | :heavy_check_mark:  |
 | **--ISMRM2015data**                          | Use the training data of the ISMRM 2015 Dataset instead                                                                       | boolean               | false         | :heavy_check_mark:  |
 | **--HCPid** <value>                          | Generate data based on HPC Dataset with given ID                                                                              | integer               | 100307        | :heavy_check_mark:  |
@@ -87,7 +87,36 @@ It consists of a `tuple` *(dwi, nextDirection, lengths)* containing the detailed
 
 ### 3. 01_trainModel.py
 
+This script can be used to train a model. It combines random search with specific parameters - any unspecified property of the model is randomly selected from the specified search space. 
+The option ```--repeat``` should also be emphasized, which iteratively trains further models from the specified search space up to the KILL signal. This function is trivially useless if an exact model is specified, otherwise it allows simple random search.
 
+Syntax: ```python 01_trainModel.py [options]```.
+
+The options are straightforward, however a list of all possible options can be found here. Every non specified value - aside from ```--repeat````- is selected randomly.
+
+| option                          | description                                                                                   | value                | optional           |
+| ------------------------------- | --------------------------------------------------------------------------------------------- | -------------------- | ------------------ |
+| **-networktype** <value>        | Specifies the network type. Choice between MLP and LSTM                                       | [mlp, lstm]          | :heavy_check_mark: |
+| **-datatype** <value>           | Specifies the dataset used for training and tracking. 1x1x1 and 3x3x3 are possible choices    | [1x, 3x]             | :heavy_check_mark: |
+| **-bs** <value>                 | Sets the batchsize used for training                                                          | integer              | :heavy_check_mark: |
+| **-lr** <value>                 | Specifies the learning rate used                                                              | float                | :heavy_check_mark: |
+| **-layersize** <value>          | Configures the layersize used by every single hidden layer in the model                       | integer              | :heavy_check_mark: |
+| **-depth** <value>              | Declares the number of hidden layers                                                          | integer              | :heavy_check_mark: |
+| **-dropout** <value>            | Adds the specified amount of dropout between each hidden layer                                | float                | :heavy_check_mark: |
+| **-activationfunction** <value> | Specifies the activation function used. Currently choice between Tanh, ReLU and leakyReLU     | [Tanh, ReLU, lReLU]  | :heavy_check_mark: |
+| **\-\-repeat**                  | Toggles the endless training repeat. Usable for random search                                 |                      | :heavy_check_mark: |
+
+The data used for training is retrieved from ```cache/data_ijk.pt```.
+The model itself is saved into the ```models/``` folder.
+A saved model consists of multiple files with varying content:
+
+| file               | description                                                                                        | optional for further use |
+| ------------------ | -------------------------------------------------------------------------------------------------- | ------------------------ |
+| **model&#46;pt**       | the weights of the model with **lowest test loss**                                                 | :x:                      |
+| **params.csv**     | the configuration used for the model. Useful for analyzing good architectures                      | :x:                      |
+| **train_loss.csv** | the loss with training data. Format: [epoch, loss sum, directionDiff loss , continueTracking loss] | :heavy_check_mark:       |
+| **test_loss.csv**  | the loss with test data. Format: [epoch, loss sum, directionDiff loss , continueTracking loss]     | :heavy_check_mark:       |
+ 
 ### 5. 02_unitTest_tracking.py
 
 ### 6. 03_ismrm2015.py
