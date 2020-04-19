@@ -27,4 +27,4 @@ cd /scratch/p_jufo/
 
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5
 
-srun --output="logs/train-$SLURM_JOB_ID.log" python3.6 -u 04_randomModel_training.py
+srun --output="logs/train-$SLURM_JOB_ID.log" python3.6 -u 01_trainModel.py --repeat

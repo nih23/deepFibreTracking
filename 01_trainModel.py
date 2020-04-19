@@ -125,6 +125,8 @@ def wrapper():
     parser.add_argument('-depth', dest='depth', default=None, type=int, help='depth of the model [default: random]')
     parser.add_argument('-dropout', dest='dropout', default=None, type=float, help='Dropout used for training. Between 0 and 1 [default: random]')
     parser.add_argument('-activationfunction', dest='activation_function_string', default='', help="Activation function to use. Options: Tanh/ReLU/lReLU [default: random]")
+    parser.add_argument('--repeat', action="store_true", help="Repeat training with new models until killed. Usable for random search.")
+    parser.set_defaults(repeat=False)
     args = parser.parse_args()
     args.activation_function = None
     if args.activation_function_string.lower() == "tanh":
@@ -147,20 +149,23 @@ def wrapper():
             logger.remove()
         sys.exit()
     signal.signal(signal.SIGTERM, signal_handler)
-    try:
-        (model, state) = get_random_model(depth = args.depth, layer_size = args.layer_size, network_type=args.network_type, dataset_type=args.dataset_type, dropout=args.dropout, batch_size=args.batch_size, learning_rate=args.learning_rate, activation_function=args.activation_function)
-        logging.info("Retrieved model")
-        torch.manual_seed(2343)
-        torch.cuda.manual_seed(2343)
-        logger = Logger(state, model)
-        train_model(model, state, sets, logger)
-        logging.info("Trained model")
-    except RuntimeError as err:
-        if 'out of memory' in str(err) or 'Allocator' in str(err):
-            logging.warning('ran out of memory, generate new model')
-            if logger is not None:
-                logger.remove()
-        else:
-            raise err    
+    while True:
+        try:
+            (model, state) = get_random_model(depth = args.depth, layer_size = args.layer_size, network_type=args.network_type, dataset_type=args.dataset_type, dropout=args.dropout, batch_size=args.batch_size, learning_rate=args.learning_rate, activation_function=args.activation_function)
+            logging.info("Retrieved model")
+            torch.manual_seed(2343)
+            torch.cuda.manual_seed(2343)
+            logger = Logger(state, model)
+            train_model(model, state, sets, logger)
+            logging.info("Trained model")
+        except RuntimeError as err:
+            if 'out of memory' in str(err) or 'Allocator' in str(err):
+                logging.warning('ran out of memory, generate new model')
+                if logger is not None:
+                    logger.remove()
+            else:
+                raise err  
+        if not args.repeat:
+            break
 if __name__ == "__main__":
     wrapper()
