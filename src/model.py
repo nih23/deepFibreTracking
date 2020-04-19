@@ -55,7 +55,7 @@ def get_random_model(network_type=None, dataset_type=None, batch_size=None, laye
         input_size = 100
     layers = [layer_size] * depth
 
-    if network_type == "mlp":
+    if network_type.lower() == "mlp":
         model = ModelMLP(dropout=dropout, hidden_sizes=layers, input_size=input_size,\
              activation_function=activation_function)
     else:
