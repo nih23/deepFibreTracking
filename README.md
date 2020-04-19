@@ -17,7 +17,7 @@ The code is able to first generate suitable training data, prepare it and put it
 
 1. **Generate** Training Data with  ```python 00_generateTrainingData.py -nx 3 -ny 3 -nz 3 --noStreamlines 10000 csd ```
 2. **Generate** Padded Training Data with ```python 00_generate_paddedData.py -input [DATA_FILE]```
-3. **Train** a random model with ```python 01_randomModel_training.py```, which is getting saved to local folder `models/`
+3. **Train** a model with ```python 01_trainModel.py```, which is getting saved to local folder `models/`
 4. Manually **paste** it into the `03_ismmr2015_fa.py` routine and **start tracking** with  `python 03_ismrm2015_fa.py --faMask -threshold 0.15`
 ### 1. 00_generateTrainingData.py (Nico's Code)
 Generates nerve tracts based on given tractogram data. It was executed in the pipeline with the following parameters:
@@ -87,7 +87,6 @@ It consists of a `tuple` *(dwi, nextDirection, lengths)* containing the detailed
 
 ### 3. 01_trainModel.py
 
-### 4. 01_randomModel_training.py
 
 ### 5. 02_unitTest_tracking.py
 
