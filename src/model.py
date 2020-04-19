@@ -106,7 +106,7 @@ class ModelMLP(nn.Module):
 class ModelLSTM(nn.Module):
     'LSTM Model'
     def __init__(self, hidden_sizes=None, activation_function=None, dropout=0, input_size=2700):
-         """Initializes the LSTM model with given parameters:
+        """Initializes the LSTM model with given parameters:
         
         Arguments:
         hidden_sizes: a list containing the hidden sizes
