@@ -92,7 +92,7 @@ The option ```--repeat``` should also be emphasized, which iteratively trains fu
 
 Syntax: ```python 01_trainModel.py [options]```.
 
-The options are straightforward, however a list of all possible options can be found here. Every non specified value - aside from ```--repeat````- is selected randomly.
+The options are straightforward, however a list of all possible options can be found here. Every non specified value - aside from ```--repeat``` is selected randomly.
 
 | option                          | description                                                                                   | value                | optional           |
 | ------------------------------- | --------------------------------------------------------------------------------------------- | -------------------- | ------------------ |
