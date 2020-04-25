@@ -3,10 +3,8 @@
 ## TODO
 This documentation is far from complete. It is missing 
 
-1. the details of what each script does
-2. the removal of redundancies in the code, caused by the low modularity
-3. further details on the use of the code
-4. the results so far 
+1. further details on the use of the code
+2. the results so far 
 
 
 ## General Information
