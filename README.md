@@ -119,6 +119,14 @@ A saved model consists of multiple files with varying content:
  
 ### 5. 02_unitTest_tracking.py
 
+This script provides the capability to generate a hard-coded model from a hard-coded HCP data set a tractogram. There are no parameters:
+
+> ```python 02_unitTest_tracking.py```
+
+Tne required precalculations are cached in ```cache/tracking_data3x.pt```. The result is written to ```result/unit_test.vtk```
+
+At the beginning of the python file, there are constants defining the paths (```MODEL```, ```MODEL_PATH```, ```HCP_ID```, ```RESULT_FILE```).
+
 ### 6. 03_ismrm2015.py
 
 ### 7. 03_ismrm2015_fa.py
