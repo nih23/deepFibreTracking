@@ -112,7 +112,7 @@ A saved model consists of multiple files with varying content:
 
 | file               | description                                                                                        | optional for further use |
 | ------------------ | -------------------------------------------------------------------------------------------------- | ------------------------ |
-| **model&#46;pt**       | the weights of the model with **lowest test loss**                                                 | :x:                      |
+| **model&#46;pt**   | the weights of the model with **lowest test loss**                                                 | :x:                      |
 | **params.csv**     | the configuration used for the model. Useful for analyzing good architectures                      | :x:                      |
 | **train_loss.csv** | the loss with training data. Format: [epoch, loss sum, directionDiff loss , continueTracking loss] | :heavy_check_mark:       |
 | **test_loss.csv**  | the loss with test data. Format: [epoch, loss sum, directionDiff loss , continueTracking loss]     | :heavy_check_mark:       |
@@ -128,5 +128,7 @@ Tne required precalculations are cached in ```cache/tracking_data3x.pt```. The r
 At the beginning of the python file, there are constants defining the paths (```MODEL```, ```MODEL_PATH```, ```HCP_ID```, ```RESULT_FILE```).
 
 ### 6. 03_ismrm2015.py
+
+
 
 ### 7. 03_ismrm2015_fa.py
