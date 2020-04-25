@@ -35,7 +35,6 @@ import dipy.align.vector_fields as vfu
 from dipy.core.sphere import Sphere
 from dipy.core import subdivide_octahedron 
 from scipy.spatial import KDTree
-from dipy.core import subdivide_octahedron 
 
 from dipy.tracking.local import LocalTracking
 from dipy.tracking.streamline import Streamlines, transform_streamlines
@@ -55,6 +54,12 @@ import src.tracking as tracking
 
 import os
 
+MODEL = ModelLSTM(dropout=0.06, hidden_sizes=[191,191], input_size=2700, activation_function=nn.Tanh())
+#MODEL = ModelMLP(hidden_sizes=[192,192,192,192], dropout=0.07, input_size=2700, activation_function=nn.Tanh())
+MODEL_PATH = 'models/model.pt.lstm'
+HCP_ID = "HCP/100307"
+RESULT_FILE = "result/unit_test.vtk"
+
 def main():
     myState = TractographyInformation()
     myState.b_value = 1000 
@@ -62,7 +67,7 @@ def main():
     myState.shOrder = 8
     myState.faThreshold = 0
     myState.rotateData = False
-    myState.hcpID = "HCP/100307" 
+    myState.hcpID = HCP_ID
     myState.gridSpacing = 1.0
     myState.resampleDWIAfterRotation = False
     myState.pStopTracking = 0.5
@@ -77,14 +82,12 @@ def main():
     
     pModel = 'result/unit_test'
 
-    pResult = pModel + '.vtk'
+    pResult = RESULT_FILE #pModel + '.vtk'
 
     os.makedirs(pModel.replace('.h5','').replace('/models/','/tracking/'), exist_ok=True)
-
     ## LOAD PYT MODEL
-    model = ModelLSTM(dropout=0.06, hidden_sizes=[191,191], input_size=2700, activation_function=nn.Tanh()).cuda()
-    #model = ModelMLP(hidden_sizes=[192,192,192,192], dropout=0.07, input_size=2700, activation_function=nn.Tanh()).cuda()
-    model.load_state_dict(torch.load('models/model.pt.lstm', map_location='cpu'))
+    model = MODEL.cuda()
+    model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu'))
     model.eval()
     for param in model.parameters():
         param.requires_grad = False
