@@ -4,11 +4,12 @@
 This documentation is far from complete. It is missing 
 
 1. further details on the use of the code
-2. the results so far 
 
 
 ## General Information
 This project is the codebase of the BeLL, which - according to the current status - is executable. The horovod required for Taurus is currently commented out to keep the code executable on the workstation. The changes are minimal, however, as the code only requires the number of the current node, which is now replaced by 0.
+
+The previously calculated results can be found in ```results.csv```.
 
 ## Utilization
 The code is able to first generate suitable training data, prepare it and put it into a suitable format and finally train a number of networks on it and review the results. At the moment, however, the modularization of the code is low. Compared to the first executable version, the whole thing is now programmed object-oriented, but it is not a finished pipeline for tractography, because some settings in the code are hardcoded. The function of the individual components of the pipeline is explained in the following, however, a general approch for training and evaluating a model could be
