@@ -12,7 +12,6 @@ import nrrd
 import nibabel as nb
 import numpy as np
 import dipy
-import tensorflow as tf
 
 from dipy.denoise.localpca import localpca
 from dipy.denoise.pca_noise_estimate import pca_noise_estimate
@@ -136,7 +135,7 @@ def saveVTKstreamlines(streamlines, pStreamlines):
             
         lines.InsertNextCell(line)
                    
-    print(str(i) + "/" + str(len(streamlines)))
+    #print(str(i) + "/" + str(len(streamlines)))
             
     polydata.SetLines(lines)
     polydata.SetPoints(points)
@@ -504,7 +503,7 @@ def loadISMRMDataArtifactFree(path, resliceToHCPDimensions=True, denoiseData=Fal
     
     img = nb.load(path + '/NoArtifacts_Relaxation.nii.gz')
     dwi = img.get_data()
-    print(dwi.shape)
+    #print(dwi.shape)
     
     #dwi,I = transformISMRMDatsetToHCPCoordinates(dwi)
     aff = img.affine
@@ -540,15 +539,18 @@ def loadISMRMData(path, resliceToHCPDimensions=True, denoiseData=False):
     bvals, bvecs = read_bvals_bvecs(path + '/Diffusion.bvals', path + '/Diffusion.bvecs')
     gtab = gradient_table(bvals=bvals, bvecs=bvecs)
     
-    #img = nb.load(path + '/Diffusion.nii.gz') # raw data
-    img = nb.load(path + '/ismrm_denoised_preproc_mrtrix.nii.gz') # denoised and motion corrected data
-    print('Loading ismrm_denoised_preproc_mrtrix.nii.gz')
+    img = nb.load(path + '/Diffusion.nii.gz') # raw data
+    print("Loading: %s" % (path))
+    #img = nb.load(path + '/ismrm_denoised_preproc_mrtrix.nii.gz') # denoised and motion corrected data
+    #print('Loading ismrm_denoised_preproc_mrtrix.nii.gz')
     dwi = img.get_data()
-
-    #dwi,I = transformISMRMDatsetToHCPCoordinates(dwi)
+    #print(dwi.shape)
+    ##dwi,I = transformISMRMDatsetToHCPCoordinates(dwi)
     aff = img.affine
-    #aff = I @ aff
-    
+#    print(aff) 
+#    aff[0,:] *= -1
+#    aff[1,:] *= -1
+#    print(aff) 
     if(denoiseData):
         print("Denoising")
         t = time.time()
@@ -581,11 +583,13 @@ def loadHCPData(path):
     img = nb.load(path + '/data.nii.gz')
     dwi = img.get_data()
     aff = img.affine
-    img = nb.load(path + '/T1w_acpc_dc_restore_1.25.nii.gz')
-    t1 = img.get_data()
-    binarymask, options = nrrd.read(path + '/nodif_brain_mask.nrrd')
 
+    t1 = nb.load(path + '/T1w_acpc_dc_restore_1.25.nii.gz').get_data()
+#    t1 = img.get_data()
+    binarymask = nb.load(path + '/nodif_brain_mask.nii.gz').get_data()
+#    binarymask, options = nrrd.read(path + '/nodif_brain_mask.nrrd')
     return bvals,bvecs,gtab,dwi,aff,t1,binarymask
+    #return bvals,bvecs,gtab,dwi,aff,t1
 
 
 def cropDatsetToBValue(bthresh, bvals, bvecs, dwi):

@@ -1,0 +1,8 @@
+logs/
+!data
+!models/
+!train/
+results/
+.ipynb_checkpoints
+__pycache__/
+*.py[cod]

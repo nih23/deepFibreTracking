@@ -1,0 +1,30 @@
+#!/bin/bash -l
+
+#SBATCH -p ml 
+#SBATCH -t 1:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=6
+#SBATCH --cpus-per-task=7
+#SBATCH -o hostname_%j.out
+#SBATCH --gres=gpu:6
+#SBATCH --mem=0
+#SBATCH --job-name=DLTRACT
+
+module load modenv/ml
+module load OpenMPI/3.1.4-gcccuda-2018b 
+module load PythonAnaconda/3.6
+module load cuDNN/7.1.4.18-fosscuda-2018b 
+module load CMake/3.11.4-GCCcore-7.3.0
+
+echo "JOBID: $SLURM_JOB_ID"
+echo "NNODES: $SLURM_NNODES"
+echo "NTASKS: $SLURM_NTASKS"
+echo "MPIRANK: $SLURM_PROVID"
+
+source activate horovod
+
+cd /scratch/p_jufo/
+
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5
+
+srun --output="logs/train-$SLURM_JOB_ID.log" python3.6 -u 01_trainModel.py --repeat
