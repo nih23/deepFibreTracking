@@ -39,7 +39,7 @@ def main():
     parser.add_argument('-n', '--noSteps', default=200, type=int, help='no. tracking steps')
     parser.add_argument('-b', dest='b', default=1000, type=int, help='b-value')
     parser.add_argument('-sw',dest='sw',default=1.0, type=float, help='no. tracking steps')
-    parser.add_argument('-threshold',dest='threshold',default=0.5, type=float, help='pContinueTracking Threshold (between 0 and 1)')
+    parser.add_argument('-tr',dest='threshold',default=0.5, type=float, help='pContinueTracking Threshold (between 0 and 1)')
     parser.add_argument('-mil','--minLength', type=int, default=20, help='minimal length of a streamline [mm]')
     parser.add_argument('-mal','--maxLength', type=int, default=200, help='maximum length of a streamline [mm]')
     parser.add_argument('-fa','--faThreshold', dest='fa', type=float, default=0, help='fa threshold in case of non-magical models')
@@ -51,7 +51,6 @@ def main():
     parser.add_argument('--useMLP', help='use best MLP instead of LSTM', dest='mlp' , action='store_true')
     parser.add_argument('--rotateData', help='rotate data', dest='rotateData' , action='store_true')
     parser.add_argument('--dontRotateGradients', help='rotate gradients', dest='rotateGradients', action='store_false')
-    parser.add_argument('-r','--pathRecurrentNetwork', help='path to the trained recurrent network', dest='pathRecurrentNetwork', default='')
     parser.add_argument('--faMask', help='use fa mask to seed tracking',
                         dest='faMask', action='store_true')
     parser.set_defaults(denoise=False)   
@@ -195,14 +194,24 @@ def main():
 
     print("rot: " + str(myState.rotateData))
     ##LOADING MODELS
-    if args.mlp:
-        print("Using MLP")
-        model = ModelMLP(hidden_sizes=[192,192,192,192], dropout=0.07, input_size=2700, activation_function=nn.Tanh()) #.cuda()
-        model.load_state_dict(torch.load('models/model.pt', map_location='cpu'))
+    if myState.faThreshold > 0:
+        if args.mlp:
+            print("Using MLP")
+            model = ModelMLP(hidden_sizes=[192,192,192,192], dropout=0.07, input_size=2700, activation_function=nn.Tanh()) #.cuda()
+            model.load_state_dict(torch.load('models/model.pt', map_location='cpu'))
+        else:
+            print("Using LSTM")
+            model = ModelLSTM(dropout=0, hidden_sizes=[256,256], input_size=2700, activation_function=nn.Tanh()) #.cuda()
+            model.load_state_dict(torch.load('models/model.lstmfaonly.pt', map_location='cpu'))
     else:
-        print("Using LSTM")
-        model = ModelLSTM(dropout=0, hidden_sizes=[256,256], input_size=2700, activation_function=nn.Tanh()) #.cuda()
-        model.load_state_dict(torch.load('models/model.lstmfaonly.pt', map_location='cpu'))
+        if args.mlp:
+            print("Using MLP")
+            model = ModelMLP(hidden_sizes=[192,192,192,192], dropout=0.07, input_size=2700, activation_function=nn.Tanh()) #.cuda()
+            model.load_state_dict(torch.load('models/model.pt', map_location='cpu'))
+        else:
+            print("Using LSTM")
+            model = ModelLSTM(dropout=0.06, hidden_sizes=[191,191], input_size=2700, activation_function=nn.Tanh()) #.cuda()
+            model.load_state_dict(torch.load('models/model.pt.lstm', map_location='cpu'))
     model.eval()
     for param in model.parameters():
         param.requires_grad = False
