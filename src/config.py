@@ -50,7 +50,7 @@ import atexit
 class Config():
     """The configuration class."""
     config = False
-    _UNSET = configparser._UNSET
+    _UNSET = object()
     @classmethod
     def get_config(cls):
         """Returns the currently active Config instance.
@@ -73,7 +73,7 @@ class Config():
     def _handle_add_default(self, section, option, fallback):
         """Adds fallback values to config, if option is not defined, if specified in it."""
         if (fallback is not self._UNSET and (not self.config.has_section(section)
-                or not self.config.has_option(section, option))
+                                             or not self.config.has_option(section, option))
                 and self.config.getboolean("configuration", "addDefaults", fallback=True)):
             self.set(section, option, fallback)
 
