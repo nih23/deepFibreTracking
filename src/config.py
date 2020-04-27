@@ -26,7 +26,7 @@ Configuration Handler
             Note that some options are perhaps only applied on restart, therefore if the option
             immutableConfiguarion is set, you can't change some programmatically.
             Editing in the config file itself is always possible.
-            
+
         get(section, option, fallback=_UNSET)
             Returns value in config, if not possible returns fallback.
             If no fallback is defined, an error will be thrown.
