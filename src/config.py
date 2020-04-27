@@ -22,8 +22,11 @@ Configuration Handler
             If file does not exists, it will be created on exit with the default values.
 
         set(section, option, value=None)
-            Sets a value in config, adds the section if not yet defined
-
+            Sets a value in config, adds the section/option if not yet defined.
+            Note that some options are perhaps only applied on restart, therefore if the option
+            immutableConfiguarion is set, you can't change some programmatically.
+            Editing in the config file itself is always possible.
+            
         get(section, option, fallback=_UNSET)
             Returns value in config, if not possible returns fallback.
             If no fallback is defined, an error will be thrown.
