@@ -17,6 +17,10 @@ Configuration Handler
         Config.get_config()
             returns the currently used instance of Config.
 
+        Config.set_path(path)
+            Sets the current active path used for configuration.
+            If file does not exists, it will be created on exit with the default values.
+
         set(section, option, value=None)
             Sets a value in config, adds the section if not yet defined
 
@@ -46,27 +50,60 @@ Configuration Handler
 import configparser
 import atexit
 
+# exception classes
+class Error(Exception):
+    """Base class for ConfigParser exceptions."""
+
+    def __init__(self, msg=''):
+        self.message = msg
+        Exception.__init__(self, msg)
+
+    def __repr__(self):
+        return self.message
+
+    __str__ = __repr__
+
+class PathAlreadySetError(Error):
+    """Error thrown if Config is already initialized and path is set again."""
+
+    def __init__(self, path):
+        self.path = path
+        self.current_path = Config.get_config().get_path()
+        Error.__init__(self, """Path of config file already set to \"{}\".
+                                Setting it to \"{}\" failed.""".format(self.current_path, path))
 
 class Config():
     """The configuration class."""
-    config = False
-    _UNSET = object()
+    config = None
+    _UNSET = configparser._UNSET
+    _CONFIGURATION_FILE = "config.ini"
     @classmethod
     def get_config(cls):
         """Returns the currently active Config instance.
         Use this instead of creating a new instance to prevent corrupted config files."""
         if not cls.config:
-            cls.config = Config()
+            cls.config = Config(path=cls._CONFIGURATION_FILE)
         return cls.config
+    @classmethod
+    def set_path(cls, path):
+        """Set the path of config file to use. Only callable ahead of get_config"""
+        if cls.config:
+            raise PathAlreadySetError(path) from None
+        cls._CONFIGURATION_FILE = path
 
-
-    def __init__(self, path="config.ini"):
+    def __init__(self, path=None):
         """Initalizes the Config file."""
         self.config = configparser.ConfigParser()
         self.config.optionxform = str
         self.config.read(path)
-        self.is_immutable = self.config.getboolean("configuration", "immutableConfiguration",
-                                                   fallback=False)
+
+        if (not self.config.has_section("configuration") or
+                not self.config.has_option("configuration", "immutableConfiguration")):
+            self.set("configuration", "immutableConfiguration", "no")
+        if not self.config.has_option("configuration", "addDefaults"):
+            self.set("configuration", "addDefaults", "yes")
+
+        self.is_immutable = self.config.getboolean("configuration", "immutableConfiguration")
         self.path = path
         atexit.register(self.save_configuration)
 
@@ -74,7 +111,7 @@ class Config():
         """Adds fallback values to config, if option is not defined, if specified in it."""
         if (fallback is not self._UNSET and (not self.config.has_section(section)
                                              or not self.config.has_option(section, option))
-                and self.config.getboolean("configuration", "addDefaults", fallback=True)):
+                and self.config.getboolean("configuration", "addDefaults")):
             self.set(section, option, fallback)
 
     def set(self, section, option, value=None):
