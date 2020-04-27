@@ -13,7 +13,6 @@ Cache
 """
 
 import os
-
 from config import Config
 
 class Cache():
@@ -23,9 +22,11 @@ class Cache():
         """Returns the currently active Cache instance.
         Use this instead of creating a new instance."""
         if not cls.cache:
-            cls.cache = Cache(Config.get_config().get("cache", "path", fallback="cache/"))
+            cls.cache = Cache(Config.get_config().get("cache", "cacheFolder", fallback="cache"))
         return cls.cache
-
+        
     def __init__(self, path):
         self.path = path
         os.makedirs(path, exist_ok=True)
+        if os.path.exists(path + os.path.sep + "config.json"):
+            pass
