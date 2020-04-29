@@ -25,8 +25,14 @@ MovableData
         device
             A torch.device, representing the current device.
 """
+import os
 
 import torch
+from dipy.core.gradients import gradient_table
+from dipy.io import read_bvals_bvecs
+from dipy.denoise.localpca import localpca
+from dipy.denoise.pca_noise_estimate import pca_noise_estimate
+import nibabel as nb
 
 
 class Error(Exception):
@@ -96,3 +102,33 @@ class MovableData():
         if self.device.type == "cpu":
             raise DeviceNotRetrievableError(self.device)
         return self.device.index
+
+class DataContainer(MovableData):
+
+    #__file_names = {'bvals':'Diffusion.bvals', 'bvecs':'Diffusion.bvecs', 'img':'ismrm_denoised_preproc_mrtrix.nii.gz', 't1':'T1.nii.gz'}
+    __file_names = {'bvals':'bvals', 'bvecs':'bvecs', 'img':'data.nii.gz', 't1':'T1w_acpc_dc_restore_1.25.nii.gz'}
+
+    def __init__(self, path, denoise=False, device=torch.device("cpu")):
+        MovableData.__init__(self, device=device)
+        self.path = path.rstrip(os.path.sep) + os.path.sep
+        self._retrieveData(denoise=denoise)
+    
+    def _retrieveData(self, denoise=False):
+        bvals, bvecs = read_bvals_bvecs(self.path + self.__file_names['bvals'], self.path + self.__file_names['bvecs'])
+        gtab = gradient_table(bvals=bvals, bvecs=bvecs)
+        img = nb.load(self.path + self.__file_names['img'])
+        dwi = img.get_data()
+        aff = img.affine
+        t1 = nb.load(self.path + self.__file_names['t1']).get_data()
+
+        if denoise:
+            sigma = pca_noise_estimate(dwi, gtab, correct_bias=True, smooth=3)
+            dwi = localpca(dwi, sigma=sigma, patch_radius=2)
+
+        self.bvals = bvals
+        self.bvecs = bvecs
+        self.gtab = gtab
+        self.dwi = dwi
+        self.aff = aff
+        self.t1 = t1
+        self.img = img
