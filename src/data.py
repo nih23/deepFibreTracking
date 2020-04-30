@@ -20,10 +20,92 @@ MovableData
         get_device()
             If CUDA device, returns the current device number, for example 0 in case of cuda:0
             Throws a DeviceNotRetrievableError if device is CPU
-    Attributes:
+
+    attributes:
 
         device
             A torch.device, representing the current device.
+
+DataContainer
+    An instance is representing a DWI-Dataset
+
+    methods:
+
+        DataContainer(path, filenames, denoise=None)
+            Creates a DataContainer while retrieving files with filenames from path
+            If denoise is specified, the data will either be denoised or not.
+            Else, the value saved in the configuration will be chosen.
+
+    attributes:
+
+        id
+            A unique identifier of the loaded dataset
+
+        path
+            The path from which the dataset was retrieved.
+
+        data
+            The loaded data as a tuple (bvals, bvecs, gtab, dwi, aff, t1, img).
+
+        is_denoised
+            A boolean indicating wether denoising happened or not.
+
+HCPDataContainer
+    Represents any HCP Dataset
+
+    methods:
+
+        HCPDataContainer(id, denoise=None)
+            Loads HCP-Data with specified ID. Path is retrieved from config.
+            If denoise is specified, the data will either be denoised or not.
+            Else, the value saved in the configuration will be chosen.
+
+    attributes:
+
+        id
+            A unique identifier of the loaded dataset
+
+        path
+            The path from which the dataset was retrieved.
+
+        data
+            The loaded data as a tuple (bvals, bvecs, gtab, dwi, aff, t1, img).
+
+        is_denoised
+            A boolean indicating wether denoising happened or not.
+
+        hcp_id
+            The HCP-ID of the loaded dataset
+
+ISMRMDataContainer
+    Represents the ISMRM 2015 Dataset
+
+    methods:
+
+        ISMRMDataContainer(denoise=None, rescale_to_hcp=None)
+            Loads ISMRMData, path is specified in config.
+            If denoise is specified, the data will either be denoised or not.
+            Else, the value saved in the configuration will be chosen.
+            The same applies to the rescale_to_hcp option,
+            which will rescale the dwi data to 1.25 mm³ measures.
+
+    attributes:
+
+        id
+            A unique identifier of the loaded dataset
+
+        path
+            The path from which the dataset was retrieved.
+
+        data
+            The loaded data as a tuple (bvals, bvecs, gtab, dwi, aff, t1, img).
+
+        is_denoised
+            A boolean indicating wether denoising happened or not.
+
+        is_rescaled
+            A boolean indicating wether the data is rescaled or not.
+
 """
 import os
 
@@ -32,8 +114,11 @@ from dipy.core.gradients import gradient_table
 from dipy.io import read_bvals_bvecs
 from dipy.denoise.localpca import localpca
 from dipy.denoise.pca_noise_estimate import pca_noise_estimate
+from dipy.align.reslice import reslice
+
 import nibabel as nb
 
+from src.config import Config
 
 class Error(Exception):
     """Base class for Data exceptions."""
@@ -55,6 +140,16 @@ class DeviceNotRetrievableError(Error):
         Error.__init__(self, msg=("get_device() can't be called on non-CUDA Tensors."
                                   "Current device: {}".format(device)))
 
+class DataContainerNotLoadableError(Error):
+    """Error thrown if DataContainer is unable to load specified files"""
+
+    def __init__(self, path, file):
+        self.path = path
+        self.file = file
+        Error.__init__(self, msg=("The File '{file}' " 
+                                  "can't be retrieved from folder '{path}' for the dataset.")
+                       .format(file=file, path=path))
+
 class MovableData():
     """The movable data class - make tensor based classes easy movable.
        Tensors musst be attributes of the class and not nested."""
@@ -72,12 +167,16 @@ class MovableData():
                 tensors[key] = value
         return tensors
 
+    def _set_tensor(self, attribute, tensor):
+        """Sets tensor with key from _get_tensors()"""
+        setattr(self, attribute, tensor)
+
     def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
         """Moves all Tensors to specified CUDA device"""
         for attribute, tensor in self._get_tensors().items():
             cuda_tensor = tensor.cuda(device=device, non_blocking=non_blocking,
                                       memory_format=memory_format)
-            setattr(self, attribute, cuda_tensor)
+            self._set_tensor(attribute, cuda_tensor)
             self.device = cuda_tensor.device
         return self
 
@@ -85,7 +184,7 @@ class MovableData():
         """Moves all Tensors to CPU"""
         for attribute, tensor in self._get_tensors().items():
             cpu_tensor = tensor.cpu(memory_format=memory_format)
-            setattr(self, attribute, cpu_tensor)
+            self._set_tensor(attribute, cpu_tensor)
         self.device = torch.device('cpu')
         return self
 
@@ -93,7 +192,7 @@ class MovableData():
         """Moves all tensors to specified device"""
         for attribute, tensor in self._get_tensors().items():
             tensor = tensor.to(*args, **kwargs)
-            setattr(self, attribute, tensor)
+            self._set_tensor(attribute, tensor)
             self.device = tensor.device
         return self
 
@@ -103,32 +202,79 @@ class MovableData():
             raise DeviceNotRetrievableError(self.device)
         return self.device.index
 
-class DataContainer(MovableData):
+class DataContainer():
+    """The DataContainer class representing a single dataset"""
 
-    #__file_names = {'bvals':'Diffusion.bvals', 'bvecs':'Diffusion.bvecs', 'img':'ismrm_denoised_preproc_mrtrix.nii.gz', 't1':'T1.nii.gz'}
-    __file_names = {'bvals':'bvals', 'bvecs':'bvecs', 'img':'data.nii.gz', 't1':'T1w_acpc_dc_restore_1.25.nii.gz'}
-
-    def __init__(self, path, denoise=False, device=torch.device("cpu")):
-        MovableData.__init__(self, device=device)
+    def __init__(self, path, file_names, denoise=None):
+        if denoise is None:
+            denoise = Config.get_config().getboolean("data", "denoise", fallback="no")
+        self.is_denoised = denoise
         self.path = path.rstrip(os.path.sep) + os.path.sep
-        self._retrieveData(denoise=denoise)
-    
-    def _retrieveData(self, denoise=False):
-        bvals, bvecs = read_bvals_bvecs(self.path + self.__file_names['bvals'], self.path + self.__file_names['bvecs'])
+        self.data = self._retrieve_data(file_names, denoise=denoise)
+        self.id = "DataContainer"+ self.path.replace(os.path.sep, "-").rstrip("-")
+        if self.is_denoised:
+            self.id = self.id + "-denoised"
+
+    def _retrieve_data(self, file_names, denoise=False):
+        """Reads data from files and saves them into self.data"""
+        try:
+            bvals, bvecs = read_bvals_bvecs(self.path + file_names['bvals'],
+                                            self.path + file_names['bvecs'])
+            img = nb.load(self.path + file_names['img'])
+            t1 = nb.load(self.path + file_names['t1']).get_data()
+        except FileNotFoundError as error:
+            raise DataContainerNotLoadableError(self.path, error.filename) from None
+
         gtab = gradient_table(bvals=bvals, bvecs=bvecs)
-        img = nb.load(self.path + self.__file_names['img'])
         dwi = img.get_data()
         aff = img.affine
-        t1 = nb.load(self.path + self.__file_names['t1']).get_data()
 
         if denoise:
-            sigma = pca_noise_estimate(dwi, gtab, correct_bias=True, smooth=3)
-            dwi = localpca(dwi, sigma=sigma, patch_radius=2)
+            sigma = pca_noise_estimate(dwi, gtab, correct_bias=True,
+                                       smooth=Config.get_config().getint("denoise", "smooth",
+                                                                         fallback="3"))
+            dwi = localpca(dwi, sigma=sigma,
+                           patch_radius=Config.get_config().getint("denoise", "pathRadius",
+                                                                   fallback="2"))
+        return (bvals, bvecs, gtab, dwi, aff, t1, img)
 
-        self.bvals = bvals
-        self.bvecs = bvecs
-        self.gtab = gtab
-        self.dwi = dwi
-        self.aff = aff
-        self.t1 = t1
-        self.img = img
+class HCPDataContainer(DataContainer):
+    """The container for HCPData"""
+
+    def __init__(self, hcpid, denoise=None):
+        path = Config.get_config().get("data", "pathHCP", fallback='data/HCP/{id}').format(id=hcpid)
+        self.hcp_id = hcpid
+        paths = {'bvals':'bvals', 'bvecs':'bvecs', 'img':'data.nii.gz',
+                 't1':'T1w_acpc_dc_restore_1.25.nii.gz'}
+        DataContainer.__init__(self, path, paths, denoise=denoise)
+        self.id = "HCPDataContainer-HCP{id}".format(id=self.hcp_id)
+        if self.is_denoised:
+            self.id = self.id + "-denoised"
+
+class ISMRMDataContainer(DataContainer):
+    """The container for ISMRM2015 Data"""
+    def __init__(self, denoise=None, rescale_to_hcp=None):
+        path = Config.get_config().get("data", "pathISMRM", fallback='data/ISMRM2015')
+        paths = {'bvals':'Diffusion.bvals', 'bvecs':'Diffusion.bvecs',
+                 'img':'ismrm_denoised_preproc_mrtrix.nii.gz', 't1':'T1.nii.gz'}
+        DataContainer.__init__(self, path, paths, denoise=denoise)
+        if rescale_to_hcp is None:
+            rescale_to_hcp = Config.get_config().getboolean("data", "rescaleHCPData", fallback="no")
+        self.is_rescaled = rescale_to_hcp
+
+        self.id = "ISMRMDataContainer"
+        if self.is_denoised:
+            self.id = self.id + "-denoised"
+        if rescale_to_hcp:
+            self._rescale_to_hcp()
+            self.id = self.id + "-rescaled"
+
+    def _rescale_to_hcp(self):
+        """Rescales the ISMRM Dataset to HCP Coordinates"""
+        (bvals, bvecs, gtab, dwi, aff, t1, img) = self.data
+
+        zooms = img.header.get_zooms()[:3]
+        new_zooms = (1.25, 1.25, 1.25) # similar to HCP
+        dwi, aff = reslice(dwi, aff, zooms, new_zooms)
+
+        self.data = (bvals, bvecs, gtab, dwi, aff, t1, img)
