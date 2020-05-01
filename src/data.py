@@ -236,7 +236,11 @@ class DataContainer():
             dwi = localpca(dwi, sigma=sigma,
                            patch_radius=Config.get_config().getint("denoise", "pathRadius",
                                                                    fallback="2"))
-        return (bvals, bvecs, gtab, dwi, aff, t1, img)
+        if 'mask' in file_names:
+             binarymask = nb.load(self.path + file_names['mask']).get_data()
+        else:
+            _, binarymask = median_otsu(dwi[:,:,:,0], 2, 1)
+        return (bvals, bvecs, gtab, dwi, aff, t1, img, binarymask)
 
 class HCPDataContainer(DataContainer):
     """The container for HCPData"""
@@ -245,7 +249,7 @@ class HCPDataContainer(DataContainer):
         path = Config.get_config().get("data", "pathHCP", fallback='data/HCP/{id}').format(id=hcpid)
         self.hcp_id = hcpid
         paths = {'bvals':'bvals', 'bvecs':'bvecs', 'img':'data.nii.gz',
-                 't1':'T1w_acpc_dc_restore_1.25.nii.gz'}
+                 't1':'T1w_acpc_dc_restore_1.25.nii.gz', 'mask':'nodif_brain_mask.nii.gz'}
         DataContainer.__init__(self, path, paths, denoise=denoise)
         self.id = "HCPDataContainer-HCP{id}".format(id=self.hcp_id)
         if self.is_denoised:
