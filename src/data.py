@@ -115,6 +115,7 @@ from dipy.io import read_bvals_bvecs
 from dipy.denoise.localpca import localpca
 from dipy.denoise.pca_noise_estimate import pca_noise_estimate
 from dipy.align.reslice import reslice
+from nibabel.affines import apply_affine
 
 import nibabel as nb
 
@@ -280,5 +281,8 @@ class ISMRMDataContainer(DataContainer):
         zooms = img.header.get_zooms()[:3]
         new_zooms = (1.25, 1.25, 1.25) # similar to HCP
         dwi, aff = reslice(dwi, aff, zooms, new_zooms)
-
         self.data = (bvals, bvecs, gtab, dwi, aff, t1, img)
+
+    def toIJK(self, points):
+        _, _, _, _, aff, _, _ = self.data
+            
