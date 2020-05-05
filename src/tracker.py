@@ -1,5 +1,6 @@
 from dipy.tracking.utils import random_seeds_from_mask, seeds_from_mask
-from dipy.tracking.local import LocalTracking, ThresholdTissueClassifier
+from dipy.tracking.local_tracking import LocalTracking
+from dipy.tracking.stopping_criterion import ThresholdStoppingCriterion
 from dipy.tracking.streamline import Streamlines
 from dipy.tracking import metrics
 from dipy.io.streamline import save_vtk_streamlines
@@ -105,4 +106,4 @@ class CSDTracker(SeedBasedTracker):
                                      min_separation_angle=25,
                                      parallel=False)
         dti_fit = dti.TensorModel(gtab, fit_method='LS').fit(dwi, mask=binarymask)
-        SeedBasedTracker.track(self, ThresholdTissueClassifier(dti_fit.fa, self.fa_threshold), directionGetter)
+        SeedBasedTracker.track(self, ThresholdStoppingCriterion(dti_fit.fa, self.fa_threshold), directionGetter)
