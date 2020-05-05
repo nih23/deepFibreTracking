@@ -33,10 +33,10 @@ class SeedBasedTracker(Tracker):
             seeds_per_voxel = Config.get_config().getboolean("tracking", "seedsPerVoxel", fallback="no")
         if step_size is None:
             step_size = Config.get_config().getfloat("tracking", "stepSize", fallback="1.0")
-        if minimum_sl_length is None:
-            minimum_sl_length = Config.get_config().getfloat("tracking", "minimumStreamlineLength", fallback="20")
-        if maximum_sl_length is None:
-            maximum_sl_length = Config.get_config().getfloat("tracking", "maximumStreamlineLength", fallback="200")
+        if min_length is None:
+            min_length = Config.get_config().getfloat("tracking", "minimumStreamlineLength", fallback="20")
+        if max_length is None:
+            max_length = Config.get_config().getfloat("tracking", "maximumStreamlineLength", fallback="200")
         self.streamlines = None
         (_, _, gtab, _, aff, _, _, binarymask) = data_container.data
         if not random_seeds:
