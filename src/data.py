@@ -116,7 +116,7 @@ from dipy.denoise.localpca import localpca
 from dipy.denoise.pca_noise_estimate import pca_noise_estimate
 from dipy.align.reslice import reslice
 from nibabel.affines import apply_affine
-
+import numpy as np
 import nibabel as nb
 
 from src.config import Config
@@ -242,6 +242,15 @@ class DataContainer():
         else:
             _, binarymask = median_otsu(dwi[:,:,:,0], 2, 1)
         return (bvals, bvecs, gtab, dwi, aff, t1, img, binarymask)
+    
+    def toIJK(self, points):
+        _, _, _, _, aff, _, _ = self.data
+        return apply_affine(aff, points)
+
+    def toRAS(self, points):
+        _, _, _, _, aff, _, _ = self.data
+        aff = np.linalg.inv(aff)
+        return apply_affine(aff, points)
 
 class HCPDataContainer(DataContainer):
     """The container for HCPData"""
@@ -283,6 +292,8 @@ class ISMRMDataContainer(DataContainer):
         dwi, aff = reslice(dwi, aff, zooms, new_zooms)
         self.data = (bvals, bvecs, gtab, dwi, aff, t1, img)
 
-    def toIJK(self, points):
-        _, _, _, _, aff, _, _ = self.data
-            
+
+class TypeClass:
+    """A class representing a type"""
+    def __init__(self):
+        self.type = None
