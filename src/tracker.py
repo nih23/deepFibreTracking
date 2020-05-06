@@ -4,10 +4,11 @@ from dipy.tracking.local_tracking import LocalTracking
 from dipy.tracking.stopping_criterion import ThresholdStoppingCriterion
 from dipy.tracking.streamline import Streamlines
 from dipy.tracking import metrics
+from dipy.reconst.dti import TensorModel
 from dipy.io.streamline import save_vtk_streamlines
 from dipy.reconst.csdeconv import ConstrainedSphericalDeconvModel, auto_response
-from dipy.data import get_sphere
-from dipy.direction import peaks_from_model
+from dipy.data import get_sphere, default_sphere
+from dipy.direction import peaks_from_model, DeterministicMaximumDirectionGetter
 import dipy.reconst.dti as dti
 
 from src.data import Object
@@ -143,16 +144,47 @@ class CSDTracker(SeedBasedTracker):
         self.options.fa_threshold = fa_threshold
 
     def track(self):
-        response, _ = auto_response(self.data.gtab, self.data.dwi, roi_radius=10, fa_thr=0.7)
+        roi_radius = Config.get_config().getint("CSDTracking", "autoResponseRoiRadius", fallback="10")
+        fa_thr = Config.get_config().getfloat("CSDTracking", "autoResponseFaThreshold", fallback="0.7")
+        response, _ = auto_response(self.data.gtab, self.data.dwi, roi_radius=roi_radius, fa_thr=fa_thr)
         csd_model = ConstrainedSphericalDeconvModel(self.data.gtab, response)
+        relative_peak_threshold = Config.get_config().getfloat("CSDTracking", "relativePeakTreshold", fallback="0.5")
+        min_separation_angle = Config.get_config().getfloat("CSDTracking", "minimumSeparationAngle", fallback="25")
         direction_getter = peaks_from_model(model=csd_model,
                                             data=self.data.dwi,
                                             sphere=get_sphere('symmetric724'),
                                             mask=self.data.binarymask,
-                                            relative_peak_threshold=.5,
-                                            min_separation_angle=25,
+                                            relative_peak_threshold=relative_peak_threshold,
+                                            min_separation_angle=min_separation_angle,
                                             parallel=False)
         dti_fit = dti.TensorModel(self.data.gtab, fit_method='LS')
         dti_fit = dti_fit.fit(self.data.dwi, mask=self.data.binarymask)
+        self._track(ThresholdStoppingCriterion(dti_fit.fa, self.options.fa_threshold),
+                    direction_getter)
+
+class DTITracker(SeedBasedTracker):
+    """A DTI based Tracker"""
+    def __init__(self, data_container,
+                 random_seeds=None,
+                 seeds_count=None,
+                 seeds_per_voxel=None,
+                 step_size=None,
+                 min_length=None,
+                 max_length=None,
+                 fa_threshold=None):
+        SeedBasedTracker.__init__(self, data_container, random_seeds, seeds_count, seeds_per_voxel,
+                                  step_size, min_length, max_length)
+        if fa_threshold is None:
+            fa_threshold = Config.get_config().getfloat("tracking", "faTreshhold", fallback="0.15")
+        self.options.fa_threshold = fa_threshold
+
+    def track(self):
+        dti_model = TensorModel(self.data.gtab)
+        dti_fit = dti_model.fit(self.data.dwi, mask=self.data.binarymask)
+        dti_fit_odf = dti_fit.odf(sphere=default_sphere)
+        max_angle = Config.get_config().getfloat("DTITracking", "maxAngle", fallback="30.0")
+        direction_getter = DeterministicMaximumDirectionGetter.from_pmf(dti_fit_odf,
+                                                                        max_angle=max_angle,
+                                                                        sphere=default_sphere)
         self._track(ThresholdStoppingCriterion(dti_fit.fa, self.options.fa_threshold),
                     direction_getter)
