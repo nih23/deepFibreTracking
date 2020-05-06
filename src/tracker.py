@@ -34,8 +34,8 @@ class StreamlinesAlreadyTrackedError(Error):
         self.tracker = tracker
         self.data_container = tracker.data_container
         Error.__init__(self, msg=("There are already {sl} streamlines tracked out of dataset {id}. "
-                                  .format(sl=len(tracker.streamlines), id=self.data_container.id),
-                                  "Create a new Tracker object to change parameters."))
+                                  "Create a new Tracker object to change parameters.")
+                       .format(sl=len(tracker.streamlines), id=self.data_container.id))
 class StreamlinesNotTrackedError(Error):
     """Error thrown if streamlines weren't tracked yet."""
 
@@ -43,14 +43,17 @@ class StreamlinesNotTrackedError(Error):
         self.tracker = tracker
         self.data_container = tracker.data_container
         Error.__init__(self, msg=("The streamlines weren't tracked yet from Dataset {id}. "
-                                  .format(id=self.data_container.id),
-                                  "Call Tracker.track() to track the streamlines."))
+                                  "Call Tracker.track() to track the streamlines.")
+                       .format(id=self.data_container.id))
 class Tracker():
     """Universal Tracker class"""
     def __init__(self, data_container):
         self.data_container = data_container
+        self.streamlines = None
     def track(self):
         """Track given data"""
+        if self.streamlines is not None:
+            raise StreamlinesAlreadyTrackedError(self) from None
 
 
 class SeedBasedTracker(Tracker):
@@ -79,7 +82,6 @@ class SeedBasedTracker(Tracker):
         if max_length is None:
             max_length = Config.get_config().getfloat("tracking", "maximumStreamlineLength",
                                                       fallback="200")
-        self.streamlines = None
         self.data = data_container.data
         if not random_seeds:
             seeds = seeds_from_mask(self.data.binarymask, affine=self.data.aff)
@@ -144,6 +146,7 @@ class CSDTracker(SeedBasedTracker):
         self.options.fa_threshold = fa_threshold
 
     def track(self):
+        Tracker.track(self)
         roi_r = Config.get_config().getint("CSDTracking", "autoResponseRoiRadius",
                                            fallback="10")
         fa_thr = Config.get_config().getfloat("CSDTracking", "autoResponseFaThreshold",
@@ -183,6 +186,7 @@ class DTITracker(SeedBasedTracker):
         self.options.fa_threshold = fa_threshold
 
     def track(self):
+        Tracker.track(self)
         dti_model = TensorModel(self.data.gtab)
         dti_fit = dti_model.fit(self.data.dwi, mask=self.data.binarymask)
         dti_fit_odf = dti_fit.odf(sphere=default_sphere)
