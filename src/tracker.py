@@ -144,17 +144,21 @@ class CSDTracker(SeedBasedTracker):
         self.options.fa_threshold = fa_threshold
 
     def track(self):
-        roi_radius = Config.get_config().getint("CSDTracking", "autoResponseRoiRadius", fallback="10")
-        fa_thr = Config.get_config().getfloat("CSDTracking", "autoResponseFaThreshold", fallback="0.7")
-        response, _ = auto_response(self.data.gtab, self.data.dwi, roi_radius=roi_radius, fa_thr=fa_thr)
+        roi_r = Config.get_config().getint("CSDTracking", "autoResponseRoiRadius",
+                                           fallback="10")
+        fa_thr = Config.get_config().getfloat("CSDTracking", "autoResponseFaThreshold",
+                                              fallback="0.7")
+        response, _ = auto_response(self.data.gtab, self.data.dwi, roi_radius=roi_r, fa_thr=fa_thr)
         csd_model = ConstrainedSphericalDeconvModel(self.data.gtab, response)
-        relative_peak_threshold = Config.get_config().getfloat("CSDTracking", "relativePeakTreshold", fallback="0.5")
-        min_separation_angle = Config.get_config().getfloat("CSDTracking", "minimumSeparationAngle", fallback="25")
+        relative_peak_thr = Config.get_config().getfloat("CSDTracking", "relativePeakTreshold",
+                                                         fallback="0.5")
+        min_separation_angle = Config.get_config().getfloat("CSDTracking", "minimumSeparationAngle",
+                                                            fallback="25")
         direction_getter = peaks_from_model(model=csd_model,
                                             data=self.data.dwi,
                                             sphere=get_sphere('symmetric724'),
                                             mask=self.data.binarymask,
-                                            relative_peak_threshold=relative_peak_threshold,
+                                            relative_peak_threshold=relative_peak_thr,
                                             min_separation_angle=min_separation_angle,
                                             parallel=False)
         dti_fit = dti.TensorModel(self.data.gtab, fit_method='LS')
