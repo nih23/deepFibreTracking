@@ -69,7 +69,7 @@ HCPDataContainer
             The path from which the dataset was retrieved.
 
         data
-            The loaded data as a tuple (bvals, bvecs, gtab, dwi, aff, t1, img).
+            The loaded data as an object.
 
         is_denoised
             A boolean indicating wether denoising happened or not.
@@ -98,7 +98,7 @@ ISMRMDataContainer
             The path from which the dataset was retrieved.
 
         data
-            The loaded data as a tuple (bvals, bvecs, gtab, dwi, aff, t1, img).
+            The loaded data as an object.
 
         is_denoised
             A boolean indicating wether denoising happened or not.
@@ -120,6 +120,10 @@ import numpy as np
 import nibabel as nb
 
 from src.config import Config
+
+class Object():
+    """Just a plain object usable to store information"""
+    pass
 
 class Error(Exception):
     """Base class for Data exceptions."""
@@ -218,38 +222,40 @@ class DataContainer():
 
     def _retrieve_data(self, file_names, denoise=False):
         """Reads data from files and saves them into self.data"""
+        data = Object()
         try:
-            bvals, bvecs = read_bvals_bvecs(self.path + file_names['bvals'],
+            data.bvals, data.bvecs = read_bvals_bvecs(self.path + file_names['bvals'],
                                             self.path + file_names['bvecs'])
-            img = nb.load(self.path + file_names['img'])
-            t1 = nb.load(self.path + file_names['t1']).get_data()
+            data.img = nb.load(self.path + file_names['img'])
+            data.t1 = nb.load(self.path + file_names['t1']).get_data()
         except FileNotFoundError as error:
             raise DataContainerNotLoadableError(self.path, error.filename) from None
 
-        gtab = gradient_table(bvals=bvals, bvecs=bvecs)
-        dwi = img.get_data()
-        aff = img.affine
+        data.gtab = gradient_table(bvals=data.bvals, bvecs=data.bvecs)
+        data.dwi = data.img.get_data()
+        data.aff = data.img.affine
 
         if denoise:
-            sigma = pca_noise_estimate(dwi, gtab, correct_bias=True,
+            sigma = pca_noise_estimate(data.dwi, data.gtab, correct_bias=True,
                                        smooth=Config.get_config().getint("denoise", "smooth",
                                                                          fallback="3"))
-            dwi = localpca(dwi, sigma=sigma,
+            data.dwi = localpca(data.dwi, sigma=sigma,
                            patch_radius=Config.get_config().getint("denoise", "pathRadius",
                                                                    fallback="2"))
         if 'mask' in file_names:
-             binarymask = nb.load(self.path + file_names['mask']).get_data()
+             data.binarymask = nb.load(self.path + file_names['mask']).get_data()
         else:
-            _, binarymask = median_otsu(dwi[:,:,:,0], 2, 1)
-        return (bvals, bvecs, gtab, dwi, aff, t1, img, binarymask)
+            _, data.binarymask = median_otsu(data.dwi[:,:,:,0], 2, 1)
+        
+
+        return data
     
     def toIJK(self, points):
-        _, _, _, _, aff, _, _ = self.data
+        aff = self.data.aff
         return apply_affine(aff, points)
 
     def toRAS(self, points):
-        _, _, _, _, aff, _, _ = self.data
-        aff = np.linalg.inv(aff)
+        aff = np.linalg.inv(self.data.aff)
         return apply_affine(aff, points)
 
 class HCPDataContainer(DataContainer):
@@ -285,12 +291,11 @@ class ISMRMDataContainer(DataContainer):
 
     def _rescale_to_hcp(self):
         """Rescales the ISMRM Dataset to HCP Coordinates"""
-        (bvals, bvecs, gtab, dwi, aff, t1, img) = self.data
-
-        zooms = img.header.get_zooms()[:3]
+        data = self.data
+        zooms = data.img.header.get_zooms()[:3]
         new_zooms = (1.25, 1.25, 1.25) # similar to HCP
-        dwi, aff = reslice(dwi, aff, zooms, new_zooms)
-        self.data = (bvals, bvecs, gtab, dwi, aff, t1, img)
+        data.dwi, data.aff = reslice(data.dwi, data.aff, zooms, new_zooms)
+        self.data = data
 
 
 class TypeClass:
