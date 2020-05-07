@@ -107,7 +107,7 @@ class Cache():
         elif is_streamlines:
             save_vtk_streamlines(tensor, filepath)
         self.objects[key] = {"filename":filename, "size": os.path.getsize(filepath),
-                             "last_accessed": int(time.time()*1000.0), "filetype":filename[1:]}
+                             "last_accessed": int(time.time()*1000.0), "filetype":suffix[1:]}
         self.current_size += self.objects[key]["size"]
         self._clean_cache()
     def get(self, key):
