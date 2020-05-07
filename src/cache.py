@@ -35,6 +35,7 @@ import time
 import atexit
 
 import torch
+import numpy as np
 from dipy.tracking.streamline import Streamlines
 from dipy.io.streamline import save_vtk_streamlines, load_vtk_streamlines
 from src.config import Config
@@ -94,7 +95,7 @@ class Cache():
             self.current_size -= self.objects[key]["size"]
         suffix = ".dat"
         is_tensor = isinstance(tensor, torch.Tensor)
-        is_streamlines = isinstance(tensor, Streamlines)
+        is_streamlines = isinstance(tensor, list) and isinstance(tensor[0], np.ndarray)
         if is_tensor:
             suffix = ".pt"
         elif is_streamlines:
