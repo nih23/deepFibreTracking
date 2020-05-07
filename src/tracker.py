@@ -71,6 +71,8 @@ class SeedBasedTracker(Tracker):
                  max_length=None):
         Tracker.__init__(self, data_container)
         self.options = Object()
+        if seeds_count is not None and random_seeds is None:
+            random_seeds = True
         if random_seeds is None:
             random_seeds = Config.get_config().getboolean("tracking", "randomSeeds", fallback="no")
         if seeds_count is None:
