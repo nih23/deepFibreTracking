@@ -35,7 +35,8 @@ import time
 import atexit
 
 import torch
-
+from dipy.tracking.streamline import Streamlines
+from dipy.io.streamline import save_vtk_streamlines, load_vtk_streamlines
 from src.config import Config
 
 class Error(Exception):
@@ -91,11 +92,21 @@ class Cache():
         """Saves the given tensor into the cache folder"""
         if self.in_cache(key):
             self.current_size -= self.objects[key]["size"]
-        filename = base64.urlsafe_b64encode(key.encode("UTF-8")).decode("UTF-8")
-        filepath = os.path.join(self.path, filename + ".pt")
-        torch.save(tensor, filepath)
+        suffix = ".dat"
+        is_tensor = isinstance(tensor, torch.Tensor)
+        is_streamlines = isinstance(tensor, Streamlines)
+        if is_tensor:
+            suffix = ".pt"
+        elif is_streamlines:
+            suffix = ".vtk"
+        filename = base64.urlsafe_b64encode(key.encode("UTF-8")).decode("UTF-8") + suffix
+        filepath = os.path.join(self.path, filename)
+        if is_tensor:
+            torch.save(tensor, filepath)
+        elif is_streamlines:
+            save_vtk_streamlines(tensor, filepath)
         self.objects[key] = {"filename":filename, "size": os.path.getsize(filepath),
-                             "last_accessed": int(time.time()*1000.0)}
+                             "last_accessed": int(time.time()*1000.0), "filetype":filename[1:]}
         self.current_size += self.objects[key]["size"]
         self._clean_cache()
     def get(self, key):
@@ -105,8 +116,11 @@ class Cache():
         self.objects[key]["last_accessed"] = int(time.time()*1000.0)
 
         filename = self.objects[key]["filename"]
-        filepath = os.path.join(self.path, filename + ".pt")
-        tensor = torch.load(filepath)
+        filepath = os.path.join(self.path, filename)
+        if self.objects[key]["filetype"] is "pt":
+            tensor = torch.load(filepath)
+        elif self.objects[key]["filetype"] is "vtk":
+            tensor = load_vtk_streamlines(filepath)
         return tensor
     def in_cache(self, key):
         """Returns wether key is currently cached"""
@@ -114,7 +128,7 @@ class Cache():
     def remove(self, key):
         """Remove key from cache."""
         self.current_size -= self.objects[key]["size"]
-        os.remove(os.path.join(self.path, self.objects[key]["filename"]+  ".pt"))
+        os.remove(os.path.join(self.path, self.objects[key]["filename"]))
         del self.objects[key]
 
     def _clean_cache(self):

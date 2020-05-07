@@ -13,7 +13,7 @@ import dipy.reconst.dti as dti
 
 from src.data import Object
 from src.config import Config
-
+from src.cache import Cache
 
 class Error(Exception):
     """Base class for Tracker exceptions."""
@@ -49,11 +49,15 @@ class Tracker():
     """Universal Tracker class"""
     def __init__(self, data_container):
         self.data_container = data_container
+        self.id = "{}-".format(self.__class__.__name__) + str(data_container.id)
         self.streamlines = None
     def track(self):
         """Track given data"""
+        if Cache.get_cache().in_cache(self.id):
+            return Cache.get_cache().get(self.id)
         if self.streamlines is not None:
             raise StreamlinesAlreadyTrackedError(self) from None
+        
 
 
 class SeedBasedTracker(Tracker):
@@ -82,6 +86,13 @@ class SeedBasedTracker(Tracker):
         if max_length is None:
             max_length = Config.get_config().getfloat("tracking", "maximumStreamlineLength",
                                                       fallback="200")
+        if random_seeds:
+            self.id = self.id + \
+                      "-randomStreamlines-no{n}-perVoxel{perVoxel}".format(n=seeds_count,
+                                                                           perVoxel=seeds_per_voxel)
+        self.id = self.id + "-stepSize{ss}-mil{mil}-max{mal}".format(ss=step_size,
+                                                                     mil=min_length,
+                                                                     mal=max_length)
         self.data = data_container.data
         if not random_seeds:
             seeds = seeds_from_mask(self.data.binarymask, affine=self.data.aff)
@@ -143,6 +154,7 @@ class CSDTracker(SeedBasedTracker):
                                   step_size, min_length, max_length)
         if fa_threshold is None:
             fa_threshold = Config.get_config().getfloat("tracking", "faTreshhold", fallback="0.15")
+        self.id = self.id + "-fa{fa}".format(fa=fa_threshold)
         self.options.fa_threshold = fa_threshold
 
     def track(self):
@@ -168,6 +180,7 @@ class CSDTracker(SeedBasedTracker):
         dti_fit = dti_fit.fit(self.data.dwi, mask=self.data.binarymask)
         self._track(ThresholdStoppingCriterion(dti_fit.fa, self.options.fa_threshold),
                     direction_getter)
+        Cache.get_cache().set(self.id, self.streamlines)
 
 class DTITracker(SeedBasedTracker):
     """A DTI based Tracker"""
@@ -183,6 +196,7 @@ class DTITracker(SeedBasedTracker):
                                   step_size, min_length, max_length)
         if fa_threshold is None:
             fa_threshold = Config.get_config().getfloat("tracking", "faTreshhold", fallback="0.15")
+        self.id = self.id + "-fa{fa}".format(fa=fa_threshold)
         self.options.fa_threshold = fa_threshold
 
     def track(self):
@@ -196,3 +210,4 @@ class DTITracker(SeedBasedTracker):
                                                                         sphere=default_sphere)
         self._track(ThresholdStoppingCriterion(dti_fit.fa, self.options.fa_threshold),
                     direction_getter)
+        Cache.get_cache().set(self.id, self.streamlines)
