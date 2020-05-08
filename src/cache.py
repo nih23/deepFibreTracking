@@ -118,9 +118,9 @@ class Cache():
 
         filename = self.objects[key]["filename"]
         filepath = os.path.join(self.path, filename)
-        if self.objects[key]["filetype"] is "pt":
+        if self.objects[key]["filetype"] == "pt":
             tensor = torch.load(filepath)
-        elif self.objects[key]["filetype"] is "vtk":
+        elif self.objects[key]["filetype"] == "vtk":
             tensor = load_vtk_streamlines(filepath)
         return tensor
     def in_cache(self, key):
