@@ -53,12 +53,10 @@ class Tracker():
         self.streamlines = None
     def track(self):
         """Track given data"""
-        if Cache.get_cache().in_cache(self.id):
-            return Cache.get_cache().get(self.id)
         if self.streamlines is not None:
             raise StreamlinesAlreadyTrackedError(self) from None
-        
-
+        if Cache.get_cache().in_cache(self.id):
+            self.streamlines = Cache.get_cache().get(self.id)
 
 class SeedBasedTracker(Tracker):
     """Seed based tracker"""
@@ -161,6 +159,8 @@ class CSDTracker(SeedBasedTracker):
 
     def track(self):
         Tracker.track(self)
+        if self.streamlines is not None:
+            return
         roi_r = Config.get_config().getint("CSDTracking", "autoResponseRoiRadius",
                                            fallback="10")
         fa_thr = Config.get_config().getfloat("CSDTracking", "autoResponseFaThreshold",
@@ -203,6 +203,8 @@ class DTITracker(SeedBasedTracker):
 
     def track(self):
         Tracker.track(self)
+        if self.streamlines is not None:
+            return
         dti_model = TensorModel(self.data.gtab)
         dti_fit = dti_model.fit(self.data.dwi, mask=self.data.binarymask)
         dti_fit_odf = dti_fit.odf(sphere=default_sphere)
