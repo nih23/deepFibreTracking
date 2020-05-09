@@ -36,7 +36,6 @@ import atexit
 
 import torch
 import numpy as np
-from dipy.tracking.streamline import Streamlines
 from dipy.io.streamline import save_vtk_streamlines, load_vtk_streamlines
 from src.config import Config
 
@@ -139,7 +138,8 @@ class Cache():
         max_size = Config.get_config().getint("cache", "maxCacheSize", fallback="10737418240")
         if cache_size <= max_size:
             return
-        for key in sorted(self.objects, key=lambda k: self.objects[k]["last_accessed"]): #"Remove files" until neccessary size limit is small enough.
+        for key in sorted(self.objects, key=lambda k: self.objects[k]["last_accessed"]):
+            #"Remove files" until neccessary size limit is small enough.
             cache_size -= self.objects[key]["size"]
             if cache_size < max_size:
                 self.remove(key) # Then, remove this one last file
