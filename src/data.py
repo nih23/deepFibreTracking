@@ -1,3 +1,4 @@
+# pylint: disable=attribute-defined-outside-init
 """class:
 
 MovableData
@@ -115,15 +116,18 @@ from dipy.io import read_bvals_bvecs
 from dipy.denoise.localpca import localpca
 from dipy.denoise.pca_noise_estimate import pca_noise_estimate
 from dipy.align.reslice import reslice
-from nibabel.affines import apply_affine
+from dipy.segment.mask import median_otsu
+from dipy.align.imaffine import interpolate_scalar_3d
+
+
 import numpy as np
 import nibabel as nb
+from nibabel.affines import apply_affine
 
 from src.config import Config
 
 class Object():
     """Just a plain object usable to store information"""
-    pass
 
 class Error(Exception):
     """Base class for Data exceptions."""
@@ -151,9 +155,20 @@ class DataContainerNotLoadableError(Error):
     def __init__(self, path, file):
         self.path = path
         self.file = file
-        Error.__init__(self, msg=("The File '{file}' " 
+        Error.__init__(self, msg=("The File '{file}' "
                                   "can't be retrieved from folder '{path}' for the dataset.")
                        .format(file=file, path=path))
+
+class PointOutsideOfDWIError(Error):
+    """Error thrown if given are outside of the DWI-Image"""
+
+    def __init__(self, data_container, points):
+        self.data_container = data_container
+        self.points = points
+        Error.__init__(self, msg=("While parsing {no_points} for further processing, "
+                                  "it became apparent that at least one of the points "
+                                  "doesn't lay inside of DataContainer '{id}'.")
+                       .format(no_points=points.size, id=data_container.id))
 
 class MovableData():
     """The movable data class - make tensor based classes easy movable.
@@ -225,7 +240,7 @@ class DataContainer():
         data = Object()
         try:
             data.bvals, data.bvecs = read_bvals_bvecs(self.path + file_names['bvals'],
-                                            self.path + file_names['bvecs'])
+                                                      self.path + file_names['bvecs'])
             data.img = nb.load(self.path + file_names['img'])
             data.t1 = nb.load(self.path + file_names['t1']).get_data()
         except FileNotFoundError as error:
@@ -240,23 +255,39 @@ class DataContainer():
                                        smooth=Config.get_config().getint("denoise", "smooth",
                                                                          fallback="3"))
             data.dwi = localpca(data.dwi, sigma=sigma,
-                           patch_radius=Config.get_config().getint("denoise", "pathRadius",
-                                                                   fallback="2"))
+                                patch_radius=Config.get_config().getint("denoise", "pathRadius",
+                                                                        fallback="2"))
         if 'mask' in file_names:
-             data.binarymask = nb.load(self.path + file_names['mask']).get_data()
+            data.binarymask = nb.load(self.path + file_names['mask']).get_data()
         else:
-            _, data.binarymask = median_otsu(data.dwi[:,:,:,0], 2, 1)
-        
+            _, data.binarymask = median_otsu(data.dwi[:, :, :, 0], 2, 1)
 
         return data
-    
-    def toIJK(self, points):
+
+    def to_ijk(self, points):
+        """Converts given RAS+ points to IJK in DataContainers Image Coordinates"""
         aff = self.data.aff
         return apply_affine(aff, points)
 
-    def toRAS(self, points):
+    def to_ras(self, points):
+        """Converts given IJK points in DataContainers Coordinate System to RAS+"""
         aff = np.linalg.inv(self.data.aff)
         return apply_affine(aff, points)
+
+    def get_interpolated_dwi(self, points, ignore_outside_points=False):
+        """Returns interpolated dwi for given RAS+ Points.
+        If ignore_outside_points is set to true,
+        no error will be thrown for points outside of the image"""
+        points = self.to_ijk(points)
+        shape = points.shape
+        new_shape = (*shape[:-1], self.data.dwi.shape[-1])
+        result = np.zeros(new_shape)
+        for i in range(self.data.dwi.shape[-1]):
+            (out, inside) = interpolate_scalar_3d(self.data.dwi[..., i], points.ravel())
+            if np.any(inside == 0) and not ignore_outside_points:
+                raise PointOutsideOfDWIError(self, points)
+            result[..., i] = out.reshape((*new_shape, 1))
+        return result
 
 class HCPDataContainer(DataContainer):
     """The container for HCPData"""
