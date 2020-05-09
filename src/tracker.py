@@ -221,7 +221,7 @@ class DTITracker(SeedBasedTracker):
                     direction_getter)
         Cache.get_cache().set(self.id, self.streamlines)
 
-class StreamlinesFromFile(Tracker):
+class StreamlinesFromFileTracker(Tracker):
     """A Tracker class representing preloaded Streamlines from file."""
     def __init__(self, path):
         Tracker.__init__(self, None)
