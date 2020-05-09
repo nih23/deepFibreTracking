@@ -1,11 +1,14 @@
 """Implementing different tracker classes"""
+
+import os
+
 from dipy.tracking.utils import random_seeds_from_mask, seeds_from_mask
 from dipy.tracking.local_tracking import LocalTracking
 from dipy.tracking.stopping_criterion import ThresholdStoppingCriterion
 from dipy.tracking.streamline import Streamlines
 from dipy.tracking import metrics
 from dipy.reconst.dti import TensorModel
-from dipy.io.streamline import save_vtk_streamlines
+from dipy.io.streamline import save_vtk_streamlines, load_vtk_streamlines
 from dipy.reconst.csdeconv import ConstrainedSphericalDeconvModel, auto_response
 from dipy.data import get_sphere, default_sphere
 from dipy.direction import peaks_from_model, DeterministicMaximumDirectionGetter
@@ -48,8 +51,10 @@ class StreamlinesNotTrackedError(Error):
 class Tracker():
     """Universal Tracker class"""
     def __init__(self, data_container):
-        self.data_container = data_container
-        self.id = "{}-".format(self.__class__.__name__) + str(data_container.id)
+        self.id = str(self.__class__.__name__)
+        if data_container is not None:
+            self.data_container = data_container
+            self.id = self.id + "-" + str(data_container.id)
         self.streamlines = None
     def track(self):
         """Track given data"""
@@ -215,3 +220,14 @@ class DTITracker(SeedBasedTracker):
         self._track(ThresholdStoppingCriterion(dti_fit.fa, self.options.fa_threshold),
                     direction_getter)
         Cache.get_cache().set(self.id, self.streamlines)
+
+class StreamlinesFromFile(Tracker):
+    """A Tracker class representing preloaded Streamlines from file."""
+    def __init__(self, path):
+        Tracker.__init__(self, None)
+        self.path = path
+        self.id = self.id + "-" + path.replace(os.path.sep, "+")
+
+    def track(self):
+        Tracker.track(self)
+        self.streamlines = load_vtk_streamlines(self.path)
