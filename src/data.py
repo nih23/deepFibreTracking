@@ -37,6 +37,17 @@ DataContainer
             If denoise is specified, the data will either be denoised or not.
             Else, the value saved in the configuration will be chosen.
 
+        to_ijk(self, points)
+            Converts given RAS+ points to IJK in DataContainers Image Coordinates
+
+        to_ras(self, points)
+            Converts given IJK points in DataContainers Coordinate System to RAS+
+
+        get_interpolated_dwi(self, points, ignore_outside_points=False)
+            Returns interpolated dwi for given RAS+ points in the same data shape.
+            If ignore_outside_points is set to true,
+            no error will be thrown for points outside of the image
+
     attributes:
 
         id
@@ -275,7 +286,7 @@ class DataContainer():
         return apply_affine(aff, points)
 
     def get_interpolated_dwi(self, points, ignore_outside_points=False):
-        """Returns interpolated dwi for given RAS+ Points.
+        """Returns interpolated dwi for given RAS+ points.
         If ignore_outside_points is set to true,
         no error will be thrown for points outside of the image"""
         points = self.to_ijk(points)
