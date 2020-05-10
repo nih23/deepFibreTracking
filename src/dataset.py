@@ -1,16 +1,41 @@
-from src.data import MovableData
+"""Class responsible for handling datasets"""
 import torch
 
+from src.data import MovableData
+
+
+class Error(Exception):
+    """Base class for Dataset exceptions."""
+
+    def __init__(self, msg=''):
+        self.message = msg
+        Exception.__init__(self, msg)
+
+    def __repr__(self):
+        return self.message
+
+    __str__ = __repr__
+
+class WrongDatasetTypePassedError(Error):
+    """Error thrown if get_device is called on CUDA tensor."""
+
+    def __init__(self, concat, dataset, message):
+        self.caller = concat
+        self.dataset = dataset
+        Error.__init__(self, msg=message)
+
 class BaseDataset(MovableData):
+    """The base class for Datasets in this library"""
     def __init__(self, data_container, device=None):
         MovableData.__init__(self, device=device)
         self.data_container = data_container
         self.id = str(self.__class__.__name__)
         if data_container is not None:
             self.id = self.id + "[" + str(data_container.id) + "]"
-    
+
 
 class IterableDataset(BaseDataset, torch.utils.data.Dataset):
+    """Any map type dataset, implementing __len__ and __getitem__"""
     def __init__(self, data_container, device=None):
         BaseDataset.__init__(self, data_container, device=device)
         torch.utils.data.Dataset.__init__(self)
@@ -28,16 +53,24 @@ class ConcatenatedDataset(IterableDataset):
     """A class usable to concatenate multiple datasets.
     Same type is not necessary, but recommended for practical use.
     """
-    def __init__(self, datasets, device=None):
+    def __init__(self, datasets, device=None, ignore_data_specification=False):
         IterableDataset.__init__(self, None, device=device)
         self.id = self.id + "["
         self.__lens = [0]
-        for dataset in datasets:
-            if not isinstance(dataset, MovableData) or not isinstance(dataset, IterableDataset):
-                raise WrongDatasetTypePassedError(self) from None # TODO
-            dataset.to(self.device)
-            self.id = self.id + dataset.id + ", "
-            self.__lens.append(len(dataset) + self.__lens[-1])
+        self.data_specification = datasets[0].data_specification
+        for index, ds in enumerate(datasets):
+            if not isinstance(ds, IterableDataset):
+                raise WrongDatasetTypePassedError(self, ds,
+                                                  ("Dataset {} doesn't inherit IterableDataset. "
+                                                   "It is {} ").format(index, type(ds))
+                                                 ) from None
+            if ds.data_specification != self.data_specification and not ignore_data_specification:
+                raise WrongDatasetTypePassedError(self, ds,
+                                                  "Dataset {} doesn't match in DataSpecification."
+                                                  .format(index)) from None
+            ds.to(self.device)
+            self.id = self.id + ds.id + ", "
+            self.__lens.append(len(ds) + self.__lens[-1])
         self.id = self.id[:-2] + "]"
         self.datasets = datasets
 
