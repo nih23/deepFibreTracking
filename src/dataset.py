@@ -44,7 +44,7 @@ class ConcatenatedDataset(IterableDataset):
     def __len__(self):
         return self.__lens[-1]
     def __getitem__(self, index):
-        if index > len(self):
+        if index >= len(self):
             raise IndexError('index {i} out of bounds for ConcatenatedDataset with length {l}.'
                              .format(i=index, l=len(self))) from None
         i = 0
