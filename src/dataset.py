@@ -1,5 +1,6 @@
 """Class responsible for handling datasets"""
 import torch
+import numpy as np
 
 from src.data import MovableData, Object
 from src.config import Config
@@ -111,15 +112,34 @@ class ConcatenatedDataset(IterableDataset):
 class StreamlineDataset(IterableDataset):
     """Represents a single dataset made of streamlines.
     In current implementation without caching"""
-    def __init__(self, streamlines, data_container, grid_dimension=(3,3,3)):
+    def __init__(self, streamlines, data_container, grid_dimension=None, grid_spacing=None,
+                 device=None, append_reverse=None):
+        IterableDataset.__init__(self, data_container, device=device)
         self.streamlines = streamlines
-        self.data_container = data_container
+        config = Config.get_config()
         if grid_dimension is None:
-            grid_dimension = (Config.get_config().getint("GridOptions", "sizeX", fallback="3"),
-                              Config.get_config().getint("GridOptions", "sizeY", fallback="3"),
-                              Config.get_config().getint("GridOptions", "sizeZ", fallback="3"))
-        self.options = Object()
-        self.options.grid_dimension = grid_dimension
+            grid_dimension = np.array((config.getint("GridOptions", "sizeX", fallback="3"),
+                                       config.getint("GridOptions", "sizeY", fallback="3"),
+                                       config.getint("GridOptions", "sizeZ", fallback="3")))
+        if isinstance(grid_dimension, tuple):
+            grid_dimension = np.array(grid_dimension)
+        if grid_spacing is None:
+            grid_spacing = config.getfloat("GridOptions", "spacing", fallback="1.0")
+        if append_reverse is None:
+            append_reverse = config.getboolean("DatasetOptions", "appendReverseStreamlines",
+                                               fallback="yes")
 
-    def __get_grid(self, grid_dimension):
-        pass
+        self.options = Object()
+        self.options.append_reverse = append_reverse
+        self.options.grid_dimension = grid_dimension
+        self.options.grid_spacing = grid_spacing
+        self.grid = self._get_grid(grid_dimension) * grid_spacing
+
+    def _get_grid(self, grid_dimension):
+        (dx, dy, dz) = (grid_dimension - 1)/2
+        return np.moveaxis(np.array(np.mgrid[-dx:dx+1, -dy:dy+1, -dz:dz+1]), 0, 3)
+
+    def __len__(self):
+        if self.options.append_reverse:
+            return 2*len(self.streamlines)
+        return len(self.streamlines)
