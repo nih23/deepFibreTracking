@@ -122,4 +122,4 @@ class StreamlineDataset(IterableDataset):
         self.options.grid_dimension = grid_dimension
 
     def __get_grid(self, grid_dimension):
-        
+        pass
