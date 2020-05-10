@@ -1,8 +1,8 @@
 """Class responsible for handling datasets"""
 import torch
 
-from src.data import MovableData
-
+from src.data import MovableData, Object
+from src.config import Config
 
 class Error(Exception):
     """Base class for Dataset exceptions."""
@@ -107,3 +107,19 @@ class ConcatenatedDataset(IterableDataset):
             dataset.to(*args, **kwargs)
             self.device = dataset.device
         return self
+
+class StreamlineDataset(IterableDataset):
+    """Represents a single dataset made of streamlines.
+    In current implementation without caching"""
+    def __init__(self, streamlines, data_container, grid_dimension=(3,3,3)):
+        self.streamlines = streamlines
+        self.data_container = data_container
+        if grid_dimension is None:
+            grid_dimension = (Config.get_config().getint("GridOptions", "sizeX", fallback="3"),
+                              Config.get_config().getint("GridOptions", "sizeY", fallback="3"),
+                              Config.get_config().getint("GridOptions", "sizeZ", fallback="3"))
+        self.options = Object()
+        self.options.grid_dimension = grid_dimension
+
+    def __get_grid(self, grid_dimension):
+        
