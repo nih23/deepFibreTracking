@@ -143,3 +143,14 @@ class StreamlineDataset(IterableDataset):
         if self.options.append_reverse:
             return 2*len(self.streamlines)
         return len(self.streamlines)
+
+    def __getitem__(self, index):
+        reverse = False
+        if self.options.append_reverse and index >= len(self.streamlines):
+            reverse = True
+            index = index - len(self.streamlines)
+        if reverse:
+            streamline = self.streamlines[index][::-1]
+        else:
+            streamline = self.streamlines[index]
+        return streamline
