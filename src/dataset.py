@@ -4,6 +4,7 @@ import numpy as np
 
 from src.data import MovableData, Object
 from src.config import Config
+from src.util import get_reference_orientation, rotation_from_vectors
 
 class Error(Exception):
     """Base class for Dataset exceptions."""
@@ -156,6 +157,13 @@ class StreamlineDataset(IterableDataset):
             streamline = self.streamlines[index]
         return self._get_direction_array(streamline)
 
-    def _get_direction_array(self, streamline):
-        direction_array = np.concatenate((streamline[1:] - streamline[:-1], np.array([[0, 0, 0]])))
+    def _get_direction_array(self, streamline, rotate=False):
+        direction_array = streamline[1:] - streamline[:-1]
+        if rotate:
+            reference = get_reference_orientation()
+            rotation_arr = np.ones([len(direction_array), 3, 3])
+            for i in range(len(direction_array)):
+                rotation_from_vectors(rotation_arr[i, :, :], reference, direction_array[i, :])
+                direction_array[i, :] = direction_array[i, :].dot(rotation_arr[i, :, :].T) #just for testing, should return reference vectors 
+        direction_array = np.concatenate((direction_array, np.array([[0, 0, 0]])))
         return direction_array
