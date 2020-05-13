@@ -112,10 +112,11 @@ class ConcatenatedDataset(IterableDataset):
 class StreamlineDataset(IterableDataset):
     """Represents a single dataset made of streamlines.
     In current implementation without caching"""
-    def __init__(self, streamlines, data_container, grid_dimension=None, grid_spacing=None,
+    def __init__(self, tracker, data_container, grid_dimension=None, grid_spacing=None,
                  device=None, append_reverse=None):
         IterableDataset.__init__(self, data_container, device=device)
-        self.streamlines = streamlines
+        self.streamlines = tracker.get_streamlines()
+        self.id = self.id + "-(" + tracker.id + ")"
         config = Config.get_config()
         if grid_dimension is None:
             grid_dimension = np.array((config.getint("GridOptions", "sizeX", fallback="3"),
