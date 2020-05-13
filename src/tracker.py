@@ -99,13 +99,15 @@ class SeedBasedTracker(Tracker):
                                                                      mil=min_length,
                                                                      mal=max_length)
         self.data = data_container.data
-        if not random_seeds:
-            seeds = seeds_from_mask(self.data.binarymask, affine=self.data.aff)
-        else:
-            seeds = random_seeds_from_mask(self.data.binarymask, seeds_count=seeds_count,
-                                           seed_count_per_voxel=seeds_per_voxel,
-                                           affine=self.data.aff)
-        self.seeds = seeds
+        self.seeds = None
+        if not Cache.get_cache().in_cache(self.id):
+            if not random_seeds:
+                seeds = seeds_from_mask(self.data.binarymask, affine=self.data.aff)
+            else:
+                seeds = random_seeds_from_mask(self.data.binarymask, seeds_count=seeds_count,
+                                               seed_count_per_voxel=seeds_per_voxel,
+                                               affine=self.data.aff)
+            self.seeds = seeds
         self.options.max_length = max_length
         self.options.min_length = min_length
         self.options.step_size = step_size
