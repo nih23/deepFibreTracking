@@ -153,4 +153,7 @@ class StreamlineDataset(IterableDataset):
             streamline = self.streamlines[index][::-1]
         else:
             streamline = self.streamlines[index]
-        return streamline
+        return self._get_direction_array(streamline)
+
+    def _get_direction_array(self, streamline):
+        direction_array = np.concat(streamline[1:] - streamline[:-1], np.array([0,0,0]))
