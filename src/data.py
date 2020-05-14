@@ -173,13 +173,14 @@ class DataContainerNotLoadableError(Error):
 class PointOutsideOfDWIError(Error):
     """Error thrown if given are outside of the DWI-Image"""
 
-    def __init__(self, data_container, points):
+    def __init__(self, data_container, points, affected_points):
         self.data_container = data_container
         self.points = points
-        Error.__init__(self, msg=("While parsing {no_points} for further processing, "
-                                  "it became apparent that at least one of the points "
+        self.affected_points = affected_points
+        Error.__init__(self, msg=("While parsing {no_points} points for further processing, "
+                                  "it became apparent that {aff} of the points "
                                   "doesn't lay inside of DataContainer '{id}'.")
-                       .format(no_points=points.size, id=data_container.id))
+                       .format(no_points=points.size, id=data_container.id, aff=affected_points))
 
 class MovableData():
     """The movable data class - make tensor based classes easy movable.
@@ -277,12 +278,12 @@ class DataContainer():
 
     def to_ijk(self, points):
         """Converts given RAS+ points to IJK in DataContainers Image Coordinates"""
-        aff = self.data.aff
+        aff = np.linalg.inv(self.data.aff)
         return apply_affine(aff, points)
 
     def to_ras(self, points):
         """Converts given IJK points in DataContainers Coordinate System to RAS+"""
-        aff = np.linalg.inv(self.data.aff)
+        aff = self.data.aff
         return apply_affine(aff, points)
 
     def get_interpolated_dwi(self, points, ignore_outside_points=False):
@@ -296,7 +297,7 @@ class DataContainer():
         for i in range(self.data.dwi.shape[-1]):
             (out, inside) = interpolate_scalar_3d(self.data.dwi[..., i], points.ravel())
             if np.any(inside == 0) and not ignore_outside_points:
-                raise PointOutsideOfDWIError(self, points)
+                raise PointOutsideOfDWIError(self, points, np.sum(inside == 0))
             result[..., i] = out.reshape((*new_shape, 1))
         return result
 
