@@ -113,7 +113,7 @@ class ConcatenatedDataset(IterableDataset):
 class StreamlineDataset(IterableDataset):
     """Represents a single dataset made of streamlines.
     In current implementation without caching"""
-    def __init__(self, tracker, rotate=None, data_container, grid_dimension=None, grid_spacing=None,
+    def __init__(self, tracker, data_container, rotate=None, grid_dimension=None, grid_spacing=None,
                  device=None, append_reverse=None):
         IterableDataset.__init__(self, data_container, device=device)
         self.streamlines = tracker.get_streamlines()
