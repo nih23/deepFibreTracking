@@ -298,7 +298,7 @@ class DataContainer():
             (out, inside) = interpolate_scalar_3d(self.data.dwi[..., i], points.reshape(-1, 3))
             if np.any(inside == 0) and not ignore_outside_points:
                 raise PointOutsideOfDWIError(self, points, np.sum(inside == 0))
-            result[..., i] = out.reshape((*new_shape, 1))
+            result[..., i] = out.reshape((*new_shape))
         return result
 
 class HCPDataContainer(DataContainer):
