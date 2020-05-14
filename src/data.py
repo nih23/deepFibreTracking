@@ -295,7 +295,7 @@ class DataContainer():
         new_shape = (*shape[:-1], self.data.dwi.shape[-1])
         result = np.zeros(new_shape)
         for i in range(self.data.dwi.shape[-1]):
-            (out, inside) = interpolate_scalar_3d(self.data.dwi[..., i], points.ravel())
+            (out, inside) = interpolate_scalar_3d(self.data.dwi[..., i], points.reshape(-1, 3))
             if np.any(inside == 0) and not ignore_outside_points:
                 raise PointOutsideOfDWIError(self, points, np.sum(inside == 0))
             result[..., i] = out.reshape((*new_shape, 1))
