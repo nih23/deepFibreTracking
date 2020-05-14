@@ -159,13 +159,14 @@ class StreamlineDataset(IterableDataset):
         else:
             streamline = self.streamlines[index]
         next_dir, rot_matrix = self._get_next_direction(streamline, rotate=self.options.rotate)
-        self._get_dwi(streamline, rot_matrix=rot_matrix)
-        return next_dir
+        dwi, _ = self._get_dwi(streamline, rot_matrix=rot_matrix)
+        return dwi, next_dir
 
     def _get_next_direction(self, streamline, rotate=False):
         next_dir = streamline[1:] - streamline[:-1]
         next_dir = np.concatenate((next_dir, np.array([[0, 0, 0]])))
         rot_matrix = None
+
         if rotate:
             reference = get_reference_orientation()
             rot_matrix = np.empty([len(next_dir), 3, 3])
@@ -173,7 +174,24 @@ class StreamlineDataset(IterableDataset):
             for i in range(len(next_dir) - 1):
                 rotation_from_vectors(rot_matrix[i + 1], reference, next_dir[i])
                 next_dir[i] = rot_matrix[i].T @ next_dir[i]
+
         return next_dir, rot_matrix
 
     def _get_dwi(self, streamline, rot_matrix=None):
-        pass # TODO
+        points = self._get_grid_points(streamline, rot_matrix=rot_matrix)
+        return self.data_container.get_interpolated_dwi(points), points
+
+    def _get_grid_points(self, streamline, rot_matrix=None):
+        grid = self.grid
+        if rot_matrix is None:
+            applied_grid = grid # grid is static
+            # shape [R x A x S x 3]
+        else:
+            # grid is rotated for each streamline_point
+            applied_grid = ((rot_matrix.repeat(grid.size/3, axis=0) @
+                             grid[None,].repeat(len(streamline), axis=0).reshape(-1, 3, 1))
+                            .reshape((-1, *grid.shape)))
+            # shape [N x R x A x S x 3]
+
+        points = streamline[:, None, None, None, :] + applied_grid
+        return points
