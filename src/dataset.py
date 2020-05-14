@@ -132,7 +132,7 @@ class StreamlineDataset(IterableDataset):
                                                fallback="yes")
         if rotate is None:
             rotate = config.getboolean("DatasetOptions", "rotateDataset",
-                                               fallback="yes")
+                                       fallback="yes")
         self.options = Object()
         self.options.rotate = rotate
         self.options.append_reverse = append_reverse
@@ -158,16 +158,22 @@ class StreamlineDataset(IterableDataset):
             streamline = self.streamlines[index][::-1]
         else:
             streamline = self.streamlines[index]
-        return self._get_direction_array(streamline, rotate=self.options.rotate)
+        next_dir, rot_matrix = self._get_next_direction(streamline, rotate=self.options.rotate)
+        self._get_dwi(streamline, rot_matrix=rot_matrix)
+        return next_dir
 
-    def _get_direction_array(self, streamline, rotate=False):
-        direction_array = streamline[1:] - streamline[:-1]
-        direction_array = np.concatenate((direction_array, np.array([[0, 0, 0]])))
+    def _get_next_direction(self, streamline, rotate=False):
+        next_dir = streamline[1:] - streamline[:-1]
+        next_dir = np.concatenate((next_dir, np.array([[0, 0, 0]])))
+        rot_matrix = None
         if rotate:
             reference = get_reference_orientation()
-            rotation_arr = np.empty([len(direction_array), 3, 3])
-            rotation_arr[0] = np.eye(3)
-            for i in range(len(direction_array) - 1):
-                rotation_from_vectors(rotation_arr[i + 1], reference, direction_array[i])
-                direction_array[i] = rotation_arr[i].T @ direction_array[i]
-        return direction_array
+            rot_matrix = np.empty([len(next_dir), 3, 3])
+            rot_matrix[0] = np.eye(3)
+            for i in range(len(next_dir) - 1):
+                rotation_from_vectors(rot_matrix[i + 1], reference, next_dir[i])
+                next_dir[i] = rot_matrix[i].T @ next_dir[i]
+        return next_dir, rot_matrix
+
+    def _get_dwi(self, streamline, rot_matrix=None):
+        pass # TODO
