@@ -113,7 +113,7 @@ class ConcatenatedDataset(IterableDataset):
 class StreamlineDataset(IterableDataset):
     """Represents a single dataset made of streamlines.
     In current implementation without caching"""
-    def __init__(self, tracker, data_container, grid_dimension=None, grid_spacing=None,
+    def __init__(self, tracker, rotate=None, data_container, grid_dimension=None, grid_spacing=None,
                  device=None, append_reverse=None):
         IterableDataset.__init__(self, data_container, device=device)
         self.streamlines = tracker.get_streamlines()
@@ -130,8 +130,11 @@ class StreamlineDataset(IterableDataset):
         if append_reverse is None:
             append_reverse = config.getboolean("DatasetOptions", "appendReverseStreamlines",
                                                fallback="yes")
-
+        if rotate is None:
+            rotate = config.getboolean("DatasetOptions", "rotateDataset",
+                                               fallback="yes")
         self.options = Object()
+        self.options.rotate = rotate
         self.options.append_reverse = append_reverse
         self.options.grid_dimension = grid_dimension
         self.options.grid_spacing = grid_spacing
@@ -155,7 +158,7 @@ class StreamlineDataset(IterableDataset):
             streamline = self.streamlines[index][::-1]
         else:
             streamline = self.streamlines[index]
-        return self._get_direction_array(streamline)
+        return self._get_direction_array(streamline , rotate=self.options.rotate)
 
     def _get_direction_array(self, streamline, rotate=False):
         direction_array = streamline[1:] - streamline[:-1]
