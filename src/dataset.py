@@ -162,8 +162,15 @@ class StreamlineDataset(IterableDataset):
         if rotate:
             reference = get_reference_orientation()
             rotation_arr = np.ones([len(direction_array), 3, 3])
+            print(direction_array[0])
+            print(reference)
+            rot = rotation_arr[0]
+            print(rot)
+            rotation_from_vectors(rot, reference, direction_array)
+            print(rot @ reference)
+            print(rot.T @ direction_array)
             for i in range(len(direction_array)):
                 rotation_from_vectors(rotation_arr[i, :, :], reference, direction_array[i, :])
-                direction_array[i] = rotation_arr[i].T @ direction_array[i] #just for testing, should return reference vectors 
+                direction_array[i,:] = rotation_arr[i].T @ direction_array[i] #just for testing, should return reference vectors 
         direction_array = np.concatenate((direction_array, np.array([[0, 0, 0]])))
         return direction_array

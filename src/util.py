@@ -1,6 +1,7 @@
 """Helpful functions required multiple times"""
 import numpy as np
 from src.config import Config
+
 def rotation_from_vectors(rot, vector_orig, vector_fin):
     """Calculate the rotation matrix required to rotate from one vector to another.
     For the rotation of one vector to another, there are an infinit series of rotation matrices
@@ -55,6 +56,7 @@ def rotation_from_vectors(rot, vector_orig, vector_fin):
     rot[2, 2] = 1.0 + (1.0 - ca)*(z**2 - 1.0)
 
 def get_reference_orientation():
+    """Get current reference rotation"""
     config = Config.get_config()
     orientation = config.get("DatasetOptions", "referenceOrientation", fallback="R+").upper()
     ref = None
