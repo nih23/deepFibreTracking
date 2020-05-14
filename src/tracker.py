@@ -100,14 +100,9 @@ class SeedBasedTracker(Tracker):
                                                                      mal=max_length)
         self.data = data_container.data
         self.seeds = None
-        if not Cache.get_cache().in_cache(self.id):
-            if not random_seeds:
-                seeds = seeds_from_mask(self.data.binarymask, affine=self.data.aff)
-            else:
-                seeds = random_seeds_from_mask(self.data.binarymask, seeds_count=seeds_count,
-                                               seed_count_per_voxel=seeds_per_voxel,
-                                               affine=self.data.aff)
-            self.seeds = seeds
+        self.options.seeds_count = seeds_count
+        self.options.seeds_per_voxel = seeds_per_voxel
+        self.options.random_seeds = random_seeds
         self.options.max_length = max_length
         self.options.min_length = min_length
         self.options.step_size = step_size
@@ -121,7 +116,16 @@ class SeedBasedTracker(Tracker):
                                                         minimum=self.options.min_length,
                                                         maximum=self.options.max_length)
         self.streamlines = streamlines
-
+    def track(self):
+        Tracker.track(self)
+        if not self.options.random_seeds:
+                seeds = seeds_from_mask(self.data.binarymask, affine=self.data.aff)
+            else:
+                seeds = random_seeds_from_mask(self.data.binarymask, seeds_count=self.options.seeds_count,
+                                               seed_count_per_voxel=self.options.seeds_per_voxel,
+                                               affine=self.data.aff)
+            self.seeds = seeds
+        
     def get_streamlines(self):
         """Retrieve the calculated streamlines"""
         if self.streamlines is None:
@@ -165,7 +169,7 @@ class CSDTracker(SeedBasedTracker):
         self.options.fa_threshold = fa_threshold
 
     def track(self):
-        Tracker.track(self)
+        SeedBasedTracker.track(self)
         if self.streamlines is not None:
             return
         roi_r = Config.get_config().getint("CSDTracking", "autoResponseRoiRadius",
@@ -209,7 +213,7 @@ class DTITracker(SeedBasedTracker):
         self.options.fa_threshold = fa_threshold
 
     def track(self):
-        Tracker.track(self)
+        SeedBasedTracker.track(self)
         if self.streamlines is not None:
             return
         dti_model = TensorModel(self.data.gtab)
