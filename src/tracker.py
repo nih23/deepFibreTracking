@@ -118,14 +118,15 @@ class SeedBasedTracker(Tracker):
         self.streamlines = streamlines
     def track(self):
         Tracker.track(self)
-        if not self.options.random_seeds:
-            seeds = seeds_from_mask(self.data.binarymask, affine=self.data.aff)
-        else:
-            seeds = random_seeds_from_mask(self.data.binarymask,
-                                           seeds_count=self.options.seeds_count,
-                                           seed_count_per_voxel=self.options.seeds_per_voxel,
-                                           affine=self.data.aff)
-        self.seeds = seeds
+        if self.streamlines is None:
+            if not self.options.random_seeds:
+                seeds = seeds_from_mask(self.data.binarymask, affine=self.data.aff)
+            else:
+                seeds = random_seeds_from_mask(self.data.binarymask,
+                                               seeds_count=self.options.seeds_count,
+                                               seed_count_per_voxel=self.options.seeds_per_voxel,
+                                               affine=self.data.aff)
+            self.seeds = seeds
 
     def get_streamlines(self):
         """Retrieve the calculated streamlines"""
