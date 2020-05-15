@@ -135,7 +135,7 @@ class StreamlineDataset(IterableDataset):
                                        fallback="yes")
         if online_caching is None:
             online_caching = config.getboolean("DatasetOptions", "onlineCaching",
-                                               fallback="no")
+                                               fallback="yes")
         self.options = Object()
         self.options.rotate = rotate
         self.options.append_reverse = append_reverse
