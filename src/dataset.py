@@ -142,10 +142,11 @@ class StreamlineDataset(IterableDataset):
         self.options.grid_dimension = grid_dimension
         self.options.grid_spacing = grid_spacing
         self.options.online_caching = online_caching
-        self.data_specification = "StreamlineDataset-raw-{x}x{y}x{z}-{sw}".format(x=grid_dimension[0],
-                                                                y=grid_dimension[1],
-                                                                z=grid_dimension[2],
-                                                                sw=grid_spacing)
+        self.data_specification = ("StreamlineDataset-raw-{x}x{y}x{z}-{sw}"
+                                   .format(x=grid_dimension[0],
+                                           y=grid_dimension[1],
+                                           z=grid_dimension[2],
+                                           sw=grid_spacing))
         if rotate:
             self.data_specification = self.data_specification + "-rotated"
         if online_caching:
