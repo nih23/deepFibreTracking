@@ -210,6 +210,8 @@ class StreamlineDataset(IterableDataset):
 
     def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
         """Moves all Tensors to specified CUDA device"""
+        if not self.options.online_caching:
+            return
         for index, el in enumerate(self.cache):
             if el is None:
                 continue
@@ -226,6 +228,8 @@ class StreamlineDataset(IterableDataset):
 
     def cpu(self, memory_format=torch.preserve_format):
         """Moves all Tensors to specified CUDA device"""
+        if not self.options.online_caching:
+            return
         for index, el in enumerate(self.cache):
             if el is None:
                 continue
@@ -240,6 +244,8 @@ class StreamlineDataset(IterableDataset):
 
     def to(self, *args, **kwargs):
         """Moves all Tensors to specified device"""
+        if not self.options.online_caching:
+            return
         for index, el in enumerate(self.cache):
             if el is None:
                 continue
