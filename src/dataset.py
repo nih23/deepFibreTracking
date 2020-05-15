@@ -114,7 +114,7 @@ class StreamlineDataset(IterableDataset):
     """Represents a single dataset made of streamlines.
     In current implementation without caching"""
     def __init__(self, tracker, data_container, rotate=None, grid_dimension=None, grid_spacing=None,
-                 device=None, append_reverse=None):
+                 device=None, append_reverse=None, online_caching=None):
         IterableDataset.__init__(self, data_container, device=device)
         self.streamlines = tracker.get_streamlines()
         self.id = self.id + "-(" + tracker.id + ")"
@@ -133,11 +133,17 @@ class StreamlineDataset(IterableDataset):
         if rotate is None:
             rotate = config.getboolean("DatasetOptions", "rotateDataset",
                                        fallback="yes")
+        if online_caching is None:
+            online_caching = config.getboolean("DatasetOptions", "onlineCaching",
+                                               fallback="no")
         self.options = Object()
         self.options.rotate = rotate
         self.options.append_reverse = append_reverse
         self.options.grid_dimension = grid_dimension
         self.options.grid_spacing = grid_spacing
+        self.options.online_caching = online_caching
+        if online_caching:
+            self.cache = [None] * len(self)
         self.grid = self._get_grid(grid_dimension) * grid_spacing
 
     def _get_grid(self, grid_dimension):
@@ -150,6 +156,8 @@ class StreamlineDataset(IterableDataset):
         return len(self.streamlines)
 
     def __getitem__(self, index):
+        if self.options.online_caching and self.cache[index] is not None:
+            return self.cache[index]
         reverse = False
         if self.options.append_reverse and index >= len(self.streamlines):
             reverse = True
@@ -160,6 +168,10 @@ class StreamlineDataset(IterableDataset):
             streamline = self.streamlines[index]
         next_dir, rot_matrix = self._get_next_direction(streamline, rotate=self.options.rotate)
         dwi, _ = self._get_dwi(streamline, rot_matrix=rot_matrix)
+        dwi = torch.from_numpy(dwi).to(self.device)
+        next_dir = torch.from_numpy(next_dir).to(self.device)
+        if self.options.online_caching:
+            self.cache[index] = (dwi, next_dir)
         return dwi, next_dir
 
     def _get_next_direction(self, streamline, rotate=False):
@@ -195,3 +207,47 @@ class StreamlineDataset(IterableDataset):
 
         points = streamline[:, None, None, None, :] + applied_grid
         return points
+
+    def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
+        """Moves all Tensors to specified CUDA device"""
+        for index, el in enumerate(self.cache):
+            if el is None:
+                continue
+            dwi, next_dir = el
+            dwi = dwi.cuda(device=device, non_blocking=non_blocking,
+                           memory_format=memory_format)
+            next_dir = next_dir.cuda(device=device, non_blocking=non_blocking,
+                                     memory_format=memory_format)
+            self.cache[index] = (dwi, next_dir)
+            if self.device == dwi.device:  # move is unnecessary
+                return
+            self.device = dwi.device
+        return self
+
+    def cpu(self, memory_format=torch.preserve_format):
+        """Moves all Tensors to specified CUDA device"""
+        for index, el in enumerate(self.cache):
+            if el is None:
+                continue
+            dwi, next_dir = el
+            dwi = dwi.cpu(memory_format=memory_format)
+            next_dir = next_dir.cpu(memory_format=memory_format)
+            self.cache[index] = (dwi, next_dir)
+            if self.device == dwi.device:  # move is unnecessary
+                return
+            self.device = dwi.device
+        return self
+
+    def to(self, *args, **kwargs):
+        """Moves all Tensors to specified device"""
+        for index, el in enumerate(self.cache):
+            if el is None:
+                continue
+            dwi, next_dir = el
+            dwi = dwi.to(*args, **kwargs)
+            next_dir = next_dir.to(*args, **kwargs)
+            self.cache[index] = (dwi, next_dir)
+            if self.device == dwi.device: # move is unnecessary
+                return
+            self.device = dwi.device
+        return self
