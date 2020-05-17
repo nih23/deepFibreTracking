@@ -301,6 +301,20 @@ class DataContainer():
             result[..., i] = out.reshape((*new_shape[:-1]))
         return result
 
+    def _normalize_dwi(self, weights, b0):
+        #TODO implement normalize(self)
+        b0 = b0[..., None]
+
+        nb_erroneous_voxels = np.sum(weights > b0)
+        if nb_erroneous_voxels != 0:
+            weights = np.minimum(weights, b0)
+
+        weights_normed = weights / b0
+        weights_normed[np.logical_not(np.isfinite(weights_normed))] = 0.
+
+        return weights_normed
+
+
 class HCPDataContainer(DataContainer):
     """The container for HCPData"""
 
