@@ -246,7 +246,7 @@ class HCPDataContainer(DataContainer):
         paths = {'bvals':'bvals', 'bvecs':'bvecs', 'img':'data.nii.gz',
                  't1':'T1w_acpc_dc_restore_1.25.nii.gz', 'mask':'nodif_brain_mask.nii.gz'}
         DataContainer.__init__(self, path, paths, denoise=denoise, b0_threshold=b0_threshold)
-        self.id = "HCPDataContainer-HCP{id}-b0thr-{b0}".format(id=self.hcp_id,b0=b0_threshold)
+        self.id = "HCPDataContainer-HCP{id}-b0thr-{b0}".format(id=self.hcp_id,b0=self.options.b0_threshold)
         if self.options.denoised:
             self.id = self.id + "-denoised"
 
@@ -261,7 +261,7 @@ class ISMRMDataContainer(DataContainer):
             rescale_to_hcp = Config.get_config().getboolean("data", "rescaleHCPData", fallback="no")
         self.options.rescale_to_hcp = rescale_to_hcp
 
-        self.id = "ISMRMDataContainer-b0thr-{b0}".format(b0=b0_threshold)
+        self.id = "ISMRMDataContainer-b0thr-{b0}".format(b0=self.options.b0_threshold)
         if self.options.denoised:
             self.id = self.id + "-denoised"
         if rescale_to_hcp:
