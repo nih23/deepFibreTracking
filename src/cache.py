@@ -148,7 +148,8 @@ class Cache():
 
     def clear(self):
         """Clears the whole cache."""
-        for key in self.objects:
+        keys = [key for key in self.objects]
+        for key in keys:
             self.remove(key)
 
     def save_configuration(self):
