@@ -1,123 +1,5 @@
 # pylint: disable=attribute-defined-outside-init
-"""class:
-
-MovableData
-    A class representing a class containg movable tensors.
-
-    methods:
-
-        MovableData(device=None)
-            Creates a MovableDataset on specified device. Default: cpu
-
-        cuda(device=None, non_blocking=False, memory_format=torch.preserve_format)
-            Moves every Tensor in MovableData to CUDA device (with params)
-
-        cpu(self, memory_format=torch.preserve_format)
-            Moves every Tensor in MovableData to cpu device (with params)
-
-        to(*args, **kwargs)
-            Moves every Tensor in MovableData to specified device
-
-        get_device()
-            If CUDA device, returns the current device number, for example 0 in case of cuda:0
-            Throws a DeviceNotRetrievableError if device is CPU
-
-    attributes:
-
-        device
-            A torch.device, representing the current device.
-
-DataContainer
-    An instance is representing a DWI-Dataset
-
-    methods:
-
-        DataContainer(path, filenames, denoise=None)
-            Creates a DataContainer while retrieving files with filenames from path
-            If denoise is specified, the data will either be denoised or not.
-            Else, the value saved in the configuration will be chosen.
-
-        to_ijk(self, points)
-            Converts given RAS+ points to IJK in DataContainers Image Coordinates
-
-        to_ras(self, points)
-            Converts given IJK points in DataContainers Coordinate System to RAS+
-
-        get_interpolated_dwi(self, points, ignore_outside_points=False)
-            Returns interpolated dwi for given RAS+ points in the same data shape.
-            If ignore_outside_points is set to true,
-            no error will be thrown for points outside of the image
-
-    attributes:
-
-        id
-            A unique identifier of the loaded dataset
-
-        path
-            The path from which the dataset was retrieved.
-
-        data
-            The loaded data as a tuple (bvals, bvecs, gtab, dwi, aff, t1, img).
-
-        is_denoised
-            A boolean indicating wether denoising happened or not.
-
-HCPDataContainer
-    Represents any HCP Dataset
-
-    methods:
-
-        HCPDataContainer(id, denoise=None)
-            Loads HCP-Data with specified ID. Path is retrieved from config.
-            If denoise is specified, the data will either be denoised or not.
-            Else, the value saved in the configuration will be chosen.
-
-    attributes:
-
-        id
-            A unique identifier of the loaded dataset
-
-        path
-            The path from which the dataset was retrieved.
-
-        data
-            The loaded data as an object.
-
-        is_denoised
-            A boolean indicating wether denoising happened or not.
-
-        hcp_id
-            The HCP-ID of the loaded dataset
-
-ISMRMDataContainer
-    Represents the ISMRM 2015 Dataset
-
-    methods:
-
-        ISMRMDataContainer(denoise=None, rescale_to_hcp=None)
-            Loads ISMRMData, path is specified in config.
-            If denoise is specified, the data will either be denoised or not.
-            Else, the value saved in the configuration will be chosen.
-            The same applies to the rescale_to_hcp option,
-            which will rescale the dwi data to 1.25 mm³ measures.
-
-    attributes:
-
-        id
-            A unique identifier of the loaded dataset
-
-        path
-            The path from which the dataset was retrieved.
-
-        data
-            The loaded data as an object.
-
-        is_denoised
-            A boolean indicating wether denoising happened or not.
-
-        is_rescaled
-            A boolean indicating wether the data is rescaled or not.
-
+"""TODO write documentation
 """
 import os
 
@@ -182,6 +64,17 @@ class PointOutsideOfDWIError(Error):
                                   "doesn't lay inside of DataContainer '{id}'.")
                        .format(no_points=points.size, id=data_container.id, aff=affected_points))
 
+class DWIAlreadyCroppedError(Error):
+    """Error thrown if given are outside of the DWI-Image"""
+
+    def __init__(self, data_container, bval, dev):
+        self.data_container = data_container
+        self.bval = bval
+        self.max_deviation = dev
+        Error.__init__(self, msg=("The dataset {id} is already cropped with b_value "
+                                  "{bval} and deviation {dev}.")
+                       .format(id=data_container.id, bval=bval, dev=dev))
+
 class MovableData():
     """The movable data class - make tensor based classes easy movable.
        Tensors musst be attributes of the class and not nested."""
@@ -237,17 +130,22 @@ class MovableData():
 class DataContainer():
     """The DataContainer class representing a single dataset"""
 
-    def __init__(self, path, file_names, denoise=None):
+    def __init__(self, path, file_names, denoise=None, b0_threshold=None):
         if denoise is None:
             denoise = Config.get_config().getboolean("data", "denoise", fallback="no")
-        self.is_denoised = denoise
+        if b0_threshold is None:
+            b0_threshold = Config.get_config().getfloat("data", "b0-threshold", fallback="10")
+        self.options = Object()
+        self.options.denoised = denoise
+        self.options.cropped = False
+        self.options.b0_threshold = b0_threshold
         self.path = path.rstrip(os.path.sep) + os.path.sep
-        self.data = self._retrieve_data(file_names, denoise=denoise)
-        self.id = "DataContainer"+ self.path.replace(os.path.sep, "-").rstrip("-")
-        if self.is_denoised:
+        self.data = self._retrieve_data(file_names, denoise=denoise, b0_threshold=b0_threshold)
+        self.id = "DataContainer"+ self.path.replace(os.path.sep, "-") + "b0thr-" + str(b0_threshold)
+        if self.options.denoised:
             self.id = self.id + "-denoised"
 
-    def _retrieve_data(self, file_names, denoise=False):
+    def _retrieve_data(self, file_names, denoise=False, b0_threshold=None):
         """Reads data from files and saves them into self.data"""
         data = Object()
         try:
@@ -259,7 +157,7 @@ class DataContainer():
             raise DataContainerNotLoadableError(self.path, error.filename) from None
 
         data.gtab = gradient_table(bvals=data.bvals, bvecs=data.bvecs)
-        data.dwi = data.img.get_data()
+        data.dwi = data.img.get_data().astype("float32")
         data.aff = data.img.affine
 
         if denoise:
@@ -272,7 +170,9 @@ class DataContainer():
         if 'mask' in file_names:
             data.binarymask = nb.load(self.path + file_names['mask']).get_data()
         else:
-            _, data.binarymask = median_otsu(data.dwi[:, :, :, 0], 2, 1)
+            _, data.binarymask = median_otsu(data.dwi[..., 0], 2, 1)
+
+        data.b0 = data.dwi[..., data.bvals < b0_threshold].mean(axis=-1)
 
         return data
 
@@ -301,46 +201,68 @@ class DataContainer():
             result[..., i] = out.reshape((*new_shape[:-1]))
         return result
 
-    def _normalize_dwi(self, weights, b0):
-        #TODO implement normalize(self)
-        b0 = b0[..., None]
+    def crop(self, b_value=None, max_deviation=None):
+        """Crop the dataset based on B-value"""
+        if self.options.cropped:
+            raise DWIAlreadyCroppedError(self, self.options.crop_b, self.options.crop_max_deviation)
+        if b_value is None:
+            b_value = Config.get_config().getfloat("data", "cropB-Value", fallback="1000.0")
+        if max_deviation is None:
+            max_deviation = Config.get_config().getfloat("data", "cropMaxDeviation", fallback="100")
 
-        nb_erroneous_voxels = np.sum(weights > b0)
+        indices = np.where(np.abs(self.data.bvals - b_value) < max_deviation)[0]
+        self.data.dwi = self.data.dwi[..., indices]
+        self.data.bvals = self.data.bvals[indices]
+        self.data.bvecs = self.data.bvecs[indices]
+        self.data.gtab = gradient_table(bvals=self.data.bvals, bvecs=self.data.bvecs)
+
+        self.options.cropped = True
+        self.options.crop_b = b_value
+        self.options.crop_max_deviation = max_deviation
+
+        return self
+
+    def normalize(self):
+        """Normalize DWI Data based on b0 image. It is recommendable to crop the dataset first"""
+        b0 = self.data.b0[..., None]
+
+        nb_erroneous_voxels = np.sum(self.data.dwi > b0)
         if nb_erroneous_voxels != 0:
-            weights = np.minimum(weights, b0)
+            weights = np.minimum(self.data.dwi, b0)
 
-        weights_normed = weights / b0
-        weights_normed[np.logical_not(np.isfinite(weights_normed))] = 0.
+        weights = weights / b0
+        weights[np.logical_not(np.isfinite(weights))] = 0.
 
-        return weights_normed
+        self.data.dwi = weights
+        return self
 
 
 class HCPDataContainer(DataContainer):
     """The container for HCPData"""
 
-    def __init__(self, hcpid, denoise=None):
+    def __init__(self, hcpid, denoise=None, b0_threshold=None):
         path = Config.get_config().get("data", "pathHCP", fallback='data/HCP/{id}').format(id=hcpid)
         self.hcp_id = hcpid
         paths = {'bvals':'bvals', 'bvecs':'bvecs', 'img':'data.nii.gz',
                  't1':'T1w_acpc_dc_restore_1.25.nii.gz', 'mask':'nodif_brain_mask.nii.gz'}
-        DataContainer.__init__(self, path, paths, denoise=denoise)
-        self.id = "HCPDataContainer-HCP{id}".format(id=self.hcp_id)
-        if self.is_denoised:
+        DataContainer.__init__(self, path, paths, denoise=denoise, b0_threshold=b0_threshold)
+        self.id = "HCPDataContainer-HCP{id}-b0thr-{b0}".format(id=self.hcp_id,b0=b0_threshold)
+        if self.options.denoised:
             self.id = self.id + "-denoised"
 
 class ISMRMDataContainer(DataContainer):
     """The container for ISMRM2015 Data"""
-    def __init__(self, denoise=None, rescale_to_hcp=None):
+    def __init__(self, denoise=None, rescale_to_hcp=None, b0_threshold=None):
         path = Config.get_config().get("data", "pathISMRM", fallback='data/ISMRM2015')
         paths = {'bvals':'Diffusion.bvals', 'bvecs':'Diffusion.bvecs',
                  'img':'ismrm_denoised_preproc_mrtrix.nii.gz', 't1':'T1.nii.gz'}
-        DataContainer.__init__(self, path, paths, denoise=denoise)
+        DataContainer.__init__(self, path, paths, denoise=denoise, b0_threshold=b0_threshold)
         if rescale_to_hcp is None:
             rescale_to_hcp = Config.get_config().getboolean("data", "rescaleHCPData", fallback="no")
-        self.is_rescaled = rescale_to_hcp
+        self.options.rescale_to_hcp = rescale_to_hcp
 
-        self.id = "ISMRMDataContainer"
-        if self.is_denoised:
+        self.id = "ISMRMDataContainer-b0thr-{b0}".format(b0=b0_threshold)
+        if self.options.denoised:
             self.id = self.id + "-denoised"
         if rescale_to_hcp:
             self._rescale_to_hcp()
