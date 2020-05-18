@@ -2,6 +2,7 @@
 """TODO write documentation
 """
 import os
+import warnings
 
 import torch
 from dipy.core.gradients import gradient_table
@@ -214,7 +215,9 @@ class DataContainer():
         self.data.dwi = self.data.dwi[..., indices]
         self.data.bvals = self.data.bvals[indices]
         self.data.bvecs = self.data.bvecs[indices]
-        self.data.gtab = gradient_table(bvals=self.data.bvals, bvecs=self.data.bvecs)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.data.gtab = gradient_table(bvals=self.data.bvals, bvecs=self.data.bvecs)
 
         self.options.cropped = True
         self.options.crop_b = b_value
@@ -230,8 +233,10 @@ class DataContainer():
         if nb_erroneous_voxels != 0:
             weights = np.minimum(self.data.dwi, b0)
 
-        weights = weights / b0
-        weights[np.logical_not(np.isfinite(weights))] = 0.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            weights = weights / b0
+            weights[np.logical_not(np.isfinite(weights))] = 0.
 
         self.data.dwi = weights
         return self
