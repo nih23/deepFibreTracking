@@ -10,6 +10,7 @@ def main():
     dti_sl = DTITracker(data, random_seeds=True, seeds_count=10000)
     csd_sl.track()
     dti_sl.track()
+    data = data.crop().normalize()
     csd = StreamlineDataset(csd_sl, data)
     dti = StreamlineDataset(dti_sl, data)
     dataset = ConcatenatedDataset([csd, dti])
