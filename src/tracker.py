@@ -69,7 +69,7 @@ class SeedBasedTracker(Tracker):
                  random_seeds=None,
                  seeds_count=None,
                  seeds_per_voxel=None,
-                 step_size=None,
+                 step_width=None,
                  min_length=None,
                  max_length=None):
         Tracker.__init__(self, data_container)
@@ -83,8 +83,8 @@ class SeedBasedTracker(Tracker):
         if seeds_per_voxel is None:
             seeds_per_voxel = Config.get_config().getboolean("tracking", "seedsPerVoxel",
                                                              fallback="no")
-        if step_size is None:
-            step_size = Config.get_config().getfloat("tracking", "stepSize", fallback="1.0")
+        if step_width is None:
+            step_width = Config.get_config().getfloat("tracking", "stepWidth", fallback="1.0")
         if min_length is None:
             min_length = Config.get_config().getfloat("tracking", "minimumStreamlineLength",
                                                       fallback="20")
@@ -95,7 +95,7 @@ class SeedBasedTracker(Tracker):
             self.id = self.id + \
                       "-randomStreamlines-no{n}-perVoxel{perVoxel}".format(n=seeds_count,
                                                                            perVoxel=seeds_per_voxel)
-        self.id = self.id + "-stepSize{ss}-mil{mil}-max{mal}".format(ss=step_size,
+        self.id = self.id + "-sw{ss}-mil{mil}-max{mal}".format(ss=step_width,
                                                                      mil=min_length,
                                                                      mal=max_length)
         self.data = data_container.data
@@ -105,12 +105,12 @@ class SeedBasedTracker(Tracker):
         self.options.random_seeds = random_seeds
         self.options.max_length = max_length
         self.options.min_length = min_length
-        self.options.step_size = step_size
+        self.options.step_width = step_width
     def _track(self, classifier, direction_getter):
         if self.streamlines is not None:
             raise StreamlinesAlreadyTrackedError(self) from None
         streamlines_generator = LocalTracking(direction_getter, classifier, self.seeds,
-                                              self.data.aff, step_size=self.options.step_size)
+                                              self.data.aff, step_width=self.options.step_width)
         streamlines = Streamlines(streamlines_generator)
         streamlines = self.filter_streamlines_by_length(streamlines,
                                                         minimum=self.options.min_length,
@@ -159,12 +159,12 @@ class CSDTracker(SeedBasedTracker):
                  random_seeds=None,
                  seeds_count=None,
                  seeds_per_voxel=None,
-                 step_size=None,
+                 step_width=None,
                  min_length=None,
                  max_length=None,
                  fa_threshold=None):
         SeedBasedTracker.__init__(self, data_container, random_seeds, seeds_count, seeds_per_voxel,
-                                  step_size, min_length, max_length)
+                                  step_width, min_length, max_length)
         if fa_threshold is None:
             fa_threshold = Config.get_config().getfloat("tracking", "faTreshhold", fallback="0.15")
         self.id = self.id + "-fa{fa}".format(fa=fa_threshold)
@@ -203,12 +203,12 @@ class DTITracker(SeedBasedTracker):
                  random_seeds=None,
                  seeds_count=None,
                  seeds_per_voxel=None,
-                 step_size=None,
+                 step_width=None,
                  min_length=None,
                  max_length=None,
                  fa_threshold=None):
         SeedBasedTracker.__init__(self, data_container, random_seeds, seeds_count, seeds_per_voxel,
-                                  step_size, min_length, max_length)
+                                  step_width, min_length, max_length)
         if fa_threshold is None:
             fa_threshold = Config.get_config().getfloat("tracking", "faTreshhold", fallback="0.15")
         self.id = self.id + "-fa{fa}".format(fa=fa_threshold)
