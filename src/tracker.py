@@ -96,8 +96,8 @@ class SeedBasedTracker(Tracker):
                       "-randomStreamlines-no{n}-perVoxel{perVoxel}".format(n=seeds_count,
                                                                            perVoxel=seeds_per_voxel)
         self.id = self.id + "-sw{ss}-mil{mil}-max{mal}".format(ss=step_width,
-                                                                     mil=min_length,
-                                                                     mal=max_length)
+                                                               mil=min_length,
+                                                               mal=max_length)
         self.data = data_container.data
         self.seeds = None
         self.options.seeds_count = seeds_count
@@ -110,7 +110,7 @@ class SeedBasedTracker(Tracker):
         if self.streamlines is not None:
             raise StreamlinesAlreadyTrackedError(self) from None
         streamlines_generator = LocalTracking(direction_getter, classifier, self.seeds,
-                                              self.data.aff, step_width=self.options.step_width)
+                                              self.data.aff, step_size=self.options.step_width)
         streamlines = Streamlines(streamlines_generator)
         streamlines = self.filter_streamlines_by_length(streamlines,
                                                         minimum=self.options.min_length,
