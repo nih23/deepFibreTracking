@@ -114,7 +114,7 @@ class StreamlineDataset(IterableDataset):
     """Represents a single dataset made of streamlines.
     In current implementation without caching"""
     def __init__(self, tracker, data_container, rotate=None, grid_dimension=None, grid_spacing=None,
-                 device=None, append_reverse=None, online_caching=None):
+                 device=None, append_reverse=None, online_caching=None, postprocessing=None):
         IterableDataset.__init__(self, data_container, device=device)
         self.streamlines = tracker.get_streamlines()
         self.id = self.id + "-(" + tracker.id + ")"
@@ -142,6 +142,7 @@ class StreamlineDataset(IterableDataset):
         self.options.grid_dimension = grid_dimension
         self.options.grid_spacing = grid_spacing
         self.options.online_caching = online_caching
+        self.options.postprocessing = postprocessing
         self.data_specification = ("StreamlineDataset-raw-{x}x{y}x{z}-{sw}"
                                    .format(x=grid_dimension[0],
                                            y=grid_dimension[1],
@@ -149,13 +150,17 @@ class StreamlineDataset(IterableDataset):
                                            sw=grid_spacing))
         if rotate:
             self.data_specification = self.data_specification + "-rotated"
+        if postprocessing is not None:
+            self.data_specification = (self.data_specification + "-processed-"
+                                       + postprocessing.id)
         if online_caching:
             self.cache = [None] * len(self)
         self.grid = self._get_grid(grid_dimension) * grid_spacing
+        self.id = self.id + "-" + self.data_specification
 
     def _get_grid(self, grid_dimension):
         (dx, dy, dz) = (grid_dimension - 1)/2
-        return np.moveaxis(np.array(np.mgrid[-dx:dx+1, -dy:dy+1, -dz:dz+1]), 0, 3)
+        return np.moveaxis(np.mgrid[-dx:dx+1, -dy:dy+1, -dz:dz+1], 0, 3)
 
     def __len__(self):
         if self.options.append_reverse:
@@ -175,6 +180,10 @@ class StreamlineDataset(IterableDataset):
             streamline = self.streamlines[index]
         next_dir, rot_matrix = self._get_next_direction(streamline, rotate=self.options.rotate)
         dwi, _ = self._get_dwi(streamline, rot_matrix=rot_matrix)
+        if self.options.postprocessing is not None:
+            dwi = self.options.postprocessing(dwi, self.data_container.data.b0,
+                                              self.data_container.data.bvecs,
+                                              self.data_container.data.bvals)
         dwi = torch.from_numpy(dwi).to(self.device)
         next_dir = torch.from_numpy(next_dir).to(self.device)
         if self.options.online_caching:
