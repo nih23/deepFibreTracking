@@ -6,6 +6,7 @@ from dipy.reconst.shm import real_sym_sh_mrtrix, smooth_pinv
 from dipy.data import get_sphere
 
 from src.config import Config
+from src.util import get_2D_sphere
 
 def raw():
     def _wrapper(dwi, _b0, _bvecs, _bvals):
@@ -48,8 +49,11 @@ def resample(directions=None, sh_order=None, smooth=None, mean_centering=None, s
         sphere = config.get("ResamplingOptions", "sphere", fallback="repulsion100")
     def _wrapper(dwi, b0, bvecs, bvals):
         data_sh = spherical_harmonics(sh_order=sh_order, smooth=smooth)(dwi, b0, bvecs, bvals)
-
-        rsphere = get_sphere(sphere)
+        if isinstance(sphere, Sphere):
+            rsphere = sphere
+            sphere = "custom"
+        else:
+            rsphere = get_sphere(sphere)
 
         if directions is not None:
             rsphere = Sphere(xyz=directions)
@@ -71,3 +75,11 @@ def res100(sh_order=None, smooth=None, mean_centering=None):
     """Resample to 100 directions shortcut"""
     return resample(sh_order=sh_order, smooth=smooth, mean_centering=mean_centering,
                     sphere="repulsion100")
+
+def resample2D(sh_order=None, smooth=None, mean_centering=None, no_thetas=None, no_phis=None):
+    """Resample to 2D Sphere"""
+    func = resample(sh_order=sh_order, smooth=smooth, mean_centering=mean_centering,
+                    sphere=get_2D_sphere(no_phis=no_phis, no_thetas=no_thetas))
+    func.id = ("resample-2Dsphere-{nt}x{np}-sh-order-{sh}-smooth-{sm}-mean_centering-{mc}"
+               .format(nt=no_thetas, np=no_phis, sh=sh_order, sm=smooth, mc=mean_centering))
+    return func

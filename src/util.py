@@ -1,5 +1,6 @@
 """Helpful functions required multiple times"""
 import numpy as np
+from dipy.core.sphere import Sphere
 from src.config import Config
 
 def rotation_from_vectors(rot, vector_orig, vector_fin):
@@ -69,3 +70,18 @@ def get_reference_orientation():
     if orientation[1] is '-':
         ref = ref * -1
     return ref
+
+def get_2D_sphere(no_phis=None, no_thetas=None):
+    """Retrieve evenly distributed 2D sphere out of phi and theta count"""
+    if no_thetas is None:
+        no_thetas = Config.get_config().getint("2DSphereOptions", "noThetas", fallback="16")
+    if no_phis is None:
+        no_phis = Config.get_config().getint("2DSphereOptions", "noPhis", fallback="16")
+    xi = np.arange(0, np.pi, (np.pi) / no_thetas) # theta
+    yi = np.arange(-np.pi, np.pi, 2 * (np.pi) / no_phis) # phi
+
+    basis = np.array(np.meshgrid(yi, xi))
+
+    sphere = Sphere(theta=basis[0, :], phi=basis[1, :])
+
+    return sphere
