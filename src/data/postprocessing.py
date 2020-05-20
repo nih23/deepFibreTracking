@@ -61,6 +61,8 @@ def resample(directions=None, sh_order=None, smooth=None, mean_centering=None, s
             idx = data_resampled.sum(axis=-1).nonzero()
             means = data_resampled[idx].mean(axis=0)
             data_resampled[idx] -= means
+        return data_resampled
+
     _wrapper.id = ("resample-{sphere}-sh-order-{sh}-smooth-{sm}-mean_centering-{mc}"
                    .format(sphere=sphere, sh=sh_order, sm=smooth, mc=mean_centering))
     return _wrapper
