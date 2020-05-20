@@ -23,6 +23,7 @@ def spherical_harmonics(sh_order=None, smooth=None):
         sh_order = config.getint("ResamplingOptions", "sphericalHarmonicsOrder", fallback="8")
     if smooth is None:
         smooth = config.getfloat("ResamplingOptions", "smooth", fallback="0.006")
+
     def _wrapper(dwi, _b0, bvecs, _bvals):
         raw_sphere = Sphere(xyz=bvecs)
 
@@ -47,18 +48,19 @@ def resample(directions=None, sh_order=None, smooth=None, mean_centering=None, s
         mean_centering = config.getboolean("ResamplingOptions", "mean_centering", fallback="yes")
     if sphere is None:
         sphere = config.get("ResamplingOptions", "sphere", fallback="repulsion100")
+
+    if isinstance(sphere, Sphere):
+        rsphere = sphere
+        sphere = "custom"
+    else:
+        rsphere = get_sphere(sphere)
+    if directions is not None:
+        rsphere = Sphere(xyz=directions)
+    real_sh, _, _ = real_sym_sh_mrtrix(sh_order, rsphere.theta, rsphere.phi)
+
     def _wrapper(dwi, b0, bvecs, bvals):
         data_sh = spherical_harmonics(sh_order=sh_order, smooth=smooth)(dwi, b0, bvecs, bvals)
-        if isinstance(sphere, Sphere):
-            rsphere = sphere
-            sphere = "custom"
-        else:
-            rsphere = get_sphere(sphere)
 
-        if directions is not None:
-            rsphere = Sphere(xyz=directions)
-
-        real_sh, _, _ = real_sym_sh_mrtrix(sh_order, rsphere.theta, rsphere.phi)
         data_resampled = np.dot(data_sh, real_sh.T)
 
         if mean_centering:
@@ -66,7 +68,6 @@ def resample(directions=None, sh_order=None, smooth=None, mean_centering=None, s
             means = data_resampled[idx].mean(axis=0)
             data_resampled[idx] -= means
         return data_resampled
-
     _wrapper.id = ("resample-{sphere}-sh-order-{sh}-smooth-{sm}-mean_centering-{mc}"
                    .format(sphere=sphere, sh=sh_order, sm=smooth, mc=mean_centering))
     return _wrapper
