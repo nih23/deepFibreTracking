@@ -2,6 +2,10 @@
 import torch
 import numpy as np
 
+from dipy.core.geometry import sphere_distance
+from dipy.core.sphere import Sphere
+from dipy.data import get_sphere
+
 from src.data import MovableData, Object
 from src.config import Config
 from src.util import get_reference_orientation, rotation_from_vectors
@@ -143,7 +147,7 @@ class StreamlineDataset(IterableDataset):
         self.options.grid_spacing = grid_spacing
         self.options.online_caching = online_caching
         self.options.postprocessing = postprocessing
-        self.data_specification = ("StreamlineDataset-raw-{x}x{y}x{z}-{sw}"
+        self.data_specification = ("StreamlineDataset-{x}x{y}x{z}-{sw}"
                                    .format(x=grid_dimension[0],
                                            y=grid_dimension[1],
                                            z=grid_dimension[2],
@@ -170,6 +174,27 @@ class StreamlineDataset(IterableDataset):
     def __getitem__(self, index):
         if self.options.online_caching and self.cache[index] is not None:
             return self.cache[index]
+        (input, output) = self._calculate_item(index)
+        input = torch.from_numpy(input).to(self.device)
+        output = torch.from_numpy(output).to(self.device)
+
+        if self.options.online_caching:
+            self.cache[index] = (input, output)
+            return self.cache[index]
+        else:
+            return (input, output)
+
+    def _calculate_item(self, index):
+        streamline = self._get_streamline(index)
+        next_dir, rot_matrix = self._get_next_direction(streamline, rotate=self.options.rotate)
+        dwi, _ = self._get_dwi(streamline, rot_matrix=rot_matrix)
+        if self.options.postprocessing is not None:
+            dwi = self.options.postprocessing(dwi, self.data_container.data.b0,
+                                              self.data_container.data.bvecs,
+                                              self.data_container.data.bvals)
+        return dwi, next_dir
+
+    def _get_streamline(self, index):
         reverse = False
         if self.options.append_reverse and index >= len(self.streamlines):
             reverse = True
@@ -178,17 +203,7 @@ class StreamlineDataset(IterableDataset):
             streamline = self.streamlines[index][::-1]
         else:
             streamline = self.streamlines[index]
-        next_dir, rot_matrix = self._get_next_direction(streamline, rotate=self.options.rotate)
-        dwi, _ = self._get_dwi(streamline, rot_matrix=rot_matrix)
-        if self.options.postprocessing is not None:
-            dwi = self.options.postprocessing(dwi, self.data_container.data.b0,
-                                              self.data_container.data.bvecs,
-                                              self.data_container.data.bvals)
-        dwi = torch.from_numpy(dwi).to(self.device)
-        next_dir = torch.from_numpy(next_dir).to(self.device)
-        if self.options.online_caching:
-            self.cache[index] = (dwi, next_dir)
-        return dwi, next_dir
+        return streamline
 
     def _get_next_direction(self, streamline, rotate=False):
         next_dir = streamline[1:] - streamline[:-1]
@@ -273,3 +288,41 @@ class StreamlineDataset(IterableDataset):
                 return
             self.device = dwi.device
         return self
+
+class StreamlineClassificationDataset(StreamlineDataset):
+    def __init__(self, tracker, data_container, rotate=None, grid_dimension=None, grid_spacing=None,
+                 device=None, append_reverse=None, online_caching=None, postprocessing=None,
+                 sphere=None):
+        StreamlineDataset.__init__(self, tracker, data_container, rotate=rotate,
+                                   grid_dimension=grid_dimension, grid_spacing=grid_spacing,
+                                   device=device, append_reverse=append_reverse,
+                                   online_caching=online_caching, postprocessing=postprocessing)
+        if sphere is None:
+            sphere = Config.get_config().get("ClassificationDatasetOptions", "sphere",
+                                             fallback="repulsion724")
+        if isinstance(sphere, Sphere):
+            rsphere = sphere
+            sphere = "custom"
+        else:
+            rsphere = get_sphere(sphere)
+        self.data_specification = ("StreamlineClassificationDataset({sph})".format(sph=sphere) +
+                                   self.data_specification[len("StreamlineDataset"):])
+        self.sphere = rsphere
+        self.options.sphere = sphere
+
+    def _calculate_item(self, index):
+        dwi, next_dir = StreamlineDataset._calculate_item(self, index)
+        sphere = self.sphere
+        # code adapted from Benou "DeepTract",
+        # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
+        sl_len = len(next_dir)
+        l = len(sphere.theta) + 1
+        classification_output = np.zeros((sl_len, l))
+        for i in range(sl_len - 1):
+            labels_odf = np.exp(-1 * sphere_distance(next_dir[i, :], np.asarray(
+                [sphere.x, sphere.y, sphere.z]).T, radius=1) * 10)
+            classification_output[i][:-1] = labels_odf / np.sum(labels_odf)
+            classification_output[i, -1] = 0.0
+
+        classification_output[-1, -1] = 1 # stop condition
+        return dwi, classification_output
