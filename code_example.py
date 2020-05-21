@@ -18,5 +18,6 @@ def main():
     csd_classification = StreamlineClassificationDataset(csd_sl, data, postprocessing=raw())
     dti_classification = StreamlineClassificationDataset(dti_sl, data, postprocessing=raw())
     dataset_classification = ConcatenatedDataset([csd_classification, dti_classification])
-    if __name__ == "__main__":
+
+if __name__ == "__main__":
     main()

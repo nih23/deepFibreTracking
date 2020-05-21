@@ -207,7 +207,7 @@ class StreamlineDataset(IterableDataset):
 
     def _get_next_direction(self, streamline, rotate=False):
         next_dir = streamline[1:] - streamline[:-1]
-        next_dir = next_dir / np.linalg.norm(next_dir, axis=1)[:,None]
+        next_dir = next_dir / np.linalg.norm(next_dir, axis=1)[:, None]
         next_dir = np.concatenate((next_dir, np.array([[0, 0, 0]])))
         rot_matrix = None
 
