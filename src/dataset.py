@@ -207,6 +207,7 @@ class StreamlineDataset(IterableDataset):
 
     def _get_next_direction(self, streamline, rotate=False):
         next_dir = streamline[1:] - streamline[:-1]
+        next_dir = next_dir / np.linalg.norm(next_dir)
         next_dir = np.concatenate((next_dir, np.array([[0, 0, 0]])))
         rot_matrix = None
 
@@ -320,7 +321,7 @@ class StreamlineClassificationDataset(StreamlineDataset):
         classification_output = np.zeros((sl_len, l))
         for i in range(sl_len - 1):
             labels_odf = np.exp(-1 * sphere_distance(next_dir[i, :], np.asarray(
-                [sphere.x, sphere.y, sphere.z]).T, radius=1) * 10)
+                [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
             classification_output[i][:-1] = labels_odf / np.sum(labels_odf)
             classification_output[i, -1] = 0.0
 
