@@ -1,7 +1,7 @@
 """Just example code as explanation. Usable for testing."""
 from src.data import HCPDataContainer
-from src.data.postprocessing import res100
-from src.dataset import StreamlineDataset, ConcatenatedDataset
+from src.data.postprocessing import res100, raw
+from src.dataset import StreamlineDataset, ConcatenatedDataset, StreamlineClassificationDataset
 from src.tracker import CSDTracker, DTITracker
 
 def main():
@@ -15,6 +15,8 @@ def main():
     csd = StreamlineDataset(csd_sl, data, postprocessing=res100())
     dti = StreamlineDataset(dti_sl, data, postprocessing=res100())
     dataset = ConcatenatedDataset([csd, dti])
-
-if __name__ == "__main__":
+    csd_classification = StreamlineClassificationDataset(csd_sl, data, postprocessing=raw())
+    dti_classification = StreamlineClassificationDataset(dti_sl, data, postprocessing=raw())
+    dataset_classification = ConcatenatedDataset([csd_classification, dti_classification])
+    if __name__ == "__main__":
     main()
