@@ -30,6 +30,18 @@ class WrongDatasetTypePassedError(Error):
         self.dataset = dataset
         Error.__init__(self, msg=message)
 
+class FeatureShapesNotEqualError(Error):
+    """Error thrown if get_feature_shape is called on ConcatenatedDataset.
+    If two datasets use different feature shapes"""
+
+    def __init__(self, index, s1, s2):
+        self.shape1 = s1
+        self.shape2 = s2
+        self.index = index
+        Error.__init__(self, msg=("The shape of the dataset {idx} ({shape2}) "
+                                  "is not equal to the base shape of dataset 0 ({shape1})"
+                                  ).format(idx=index, s2=s2, s1=s1))
+
 class BaseDataset(MovableData):
     """The base class for Datasets in this library"""
     def __init__(self, data_container, device=None):
@@ -91,6 +103,16 @@ class ConcatenatedDataset(IterableDataset):
             i = i + 1
 
         return self.datasets[i][index - self.__lens[i]]
+
+    def get_feature_shapes(self):
+        """Return feature shapes"""
+        # assert that each dataset has same dataset shape
+        (inp, out) = self.datasets[0].get_feature_shapes()
+        for i in range(1, len(self.datasets)):
+            (inp2, out2) = self.datasets[i].get_feature_shapes()
+            if not torch.eq(inp, inp2) or not torch.eq(out, out2):
+                raise FeatureShapesNotEqualError(i, (inp, out), (inp2, out2))
+        return (inp, out)
 
     def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
         """Moves all Tensors to specified CUDA device"""
@@ -220,7 +242,7 @@ class StreamlineDataset(IterableDataset):
     def _get_dwi(self, streamline, rot_matrix=None):
         points = self._get_grid_points(streamline, rot_matrix=rot_matrix)
         return self.data_container.get_interpolated_dwi(points), points
-   
+
     def get_feature_shapes(self):
         """Retrieve feature shape of in and output"""
         if self.feature_shapes is None:
