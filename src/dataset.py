@@ -91,6 +91,8 @@ class ConcatenatedDataset(IterableDataset):
             self.__lens.append(len(ds) + self.__lens[-1])
         self.id = self.id[:-2] + "]"
         self.datasets = datasets
+        self.options = Object()
+        self.options.ignore_data_specification = ignore_data_specification
 
     def __len__(self):
         return self.__lens[-1]
@@ -110,7 +112,8 @@ class ConcatenatedDataset(IterableDataset):
         (inp, out) = self.datasets[0].get_feature_shapes()
         for i in range(1, len(self.datasets)):
             (inp2, out2) = self.datasets[i].get_feature_shapes()
-            if not torch.eq(inp, inp2) or not torch.eq(out, out2):
+            if (not torch.eq(torch.tensor(inp), torch.tensor(inp2)) or 
+                    not torch.eq(torch.tensor(out), torch.tensor(out2))):
                 raise FeatureShapesNotEqualError(i, (inp, out), (inp2, out2))
         return (inp, out)
 
