@@ -8,7 +8,7 @@ from dipy.data import get_sphere
 
 from src.data import MovableData, Object
 from src.config import Config
-from src.util import get_reference_orientation, rotation_from_vectors
+from src.util import get_reference_orientation, rotation_from_vectors, get_grid
 
 class Error(Exception):
     """Base class for Dataset exceptions."""
@@ -159,13 +159,9 @@ class StreamlineDataset(IterableDataset):
                                        + postprocessing.id)
         if online_caching:
             self.cache = [None] * len(self)
-        self.grid = self._get_grid(grid_dimension) * grid_spacing
+        self.grid = get_grid(grid_dimension) * grid_spacing
         self.id = self.id + "-" + self.data_specification
-
-    def _get_grid(self, grid_dimension):
-        (dx, dy, dz) = (grid_dimension - 1)/2
-        return np.moveaxis(np.mgrid[-dx:dx+1, -dy:dy+1, -dz:dz+1], 0, 3)
-
+        self.feature_shapes = None
     def __len__(self):
         if self.options.append_reverse:
             return 2*len(self.streamlines)
@@ -224,6 +220,19 @@ class StreamlineDataset(IterableDataset):
     def _get_dwi(self, streamline, rot_matrix=None):
         points = self._get_grid_points(streamline, rot_matrix=rot_matrix)
         return self.data_container.get_interpolated_dwi(points), points
+   
+    def get_feature_shapes(self):
+        """Retrieve feature shape of in and output"""
+        if self.feature_shapes is None:
+            dwi, next_dir = self[0]
+            # assert that every type of data processing maintains same shape
+            # and that every element has same shape
+            input_shape = torch.tensor(dwi.shape)
+            input_shape[0] = -1
+            output_shape = torch.tensor(next_dir.shape)
+            output_shape[0] = -1
+            self.feature_shapes = (torch.Size(input_shape), torch.Size(output_shape))
+        return self.feature_shapes
 
     def _get_grid_points(self, streamline, rot_matrix=None):
         grid = self.grid

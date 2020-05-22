@@ -85,3 +85,8 @@ def get_2D_sphere(no_phis=None, no_thetas=None):
     sphere = Sphere(theta=basis[0, :], phi=basis[1, :])
 
     return sphere
+
+def get_grid(grid_dimension):
+    """Retrieve grid for dimensions"""
+    (dx, dy, dz) = (grid_dimension - 1)/2
+    return np.moveaxis(np.mgrid[-dx:dx+1, -dy:dy+1, -dz:dz+1], 0, 3)
