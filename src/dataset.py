@@ -38,8 +38,8 @@ class FeatureShapesNotEqualError(Error):
         self.shape1 = s1
         self.shape2 = s2
         self.index = index
-        Error.__init__(self, msg=("The shape of the dataset {idx} ({shape2}) "
-                                  "is not equal to the base shape of dataset 0 ({shape1})"
+        Error.__init__(self, msg=("The shape of the dataset {idx} ({s2}) "
+                                  "is not equal to the base shape of dataset 0 ({s1})"
                                   ).format(idx=index, s2=s2, s1=s1))
 
 class BaseDataset(MovableData):
