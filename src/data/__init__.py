@@ -263,7 +263,7 @@ class ISMRMDataContainer(DataContainer):
     def __init__(self, denoise=None, rescale_to_hcp=None, b0_threshold=None):
         path = Config.get_config().get("data", "pathISMRM", fallback='data/ISMRM2015')
         paths = {'bvals':'Diffusion.bvals', 'bvecs':'Diffusion.bvecs',
-                 'img':'ismrm_denoised_preproc_mrtrix.nii.gz', 't1':'T1.nii.gz'}
+                 'img':'Diffusion.nii.gz', 't1':'T1.nii.gz'}
         DataContainer.__init__(self, path, paths, denoise=denoise, b0_threshold=b0_threshold)
         if rescale_to_hcp is None:
             rescale_to_hcp = Config.get_config().getboolean("data", "rescaleHCPData", fallback="no")
