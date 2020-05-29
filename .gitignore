@@ -2,5 +2,5 @@
 .vscode/
 __pycache__/
 *.py[cod]
-cache/
-data/
+/cache/
+/data/
