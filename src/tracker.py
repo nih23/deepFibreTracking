@@ -1,6 +1,7 @@
 """Implementing different tracker classes"""
 
 import os
+import random
 
 from dipy.tracking.utils import random_seeds_from_mask, seeds_from_mask
 from dipy.tracking.local_tracking import LocalTracking
@@ -39,6 +40,16 @@ class StreamlinesAlreadyTrackedError(Error):
         Error.__init__(self, msg=("There are already {sl} streamlines tracked out of dataset {id}. "
                                   "Create a new Tracker object to change parameters.")
                        .format(sl=len(tracker.streamlines), id=self.data_container.id))
+
+class ISMRMStreamlinesNotCorrectError(Error):
+    """Error thrown if streamlines are already tracked."""
+
+    def __init__(self, tracker, path):
+        self.tracker = tracker
+        self.path = path
+        Error.__init__(self, msg=("The streamlines located in {path} do not match the"
+                                  "ISMRM 2015 Ground Truth Streamlines.").format(path=path))
+
 class StreamlinesNotTrackedError(Error):
     """Error thrown if streamlines weren't tracked yet."""
 
@@ -62,6 +73,12 @@ class Tracker():
             raise StreamlinesAlreadyTrackedError(self) from None
         if Cache.get_cache().in_cache(self.id):
             self.streamlines = Cache.get_cache().get(self.id)
+
+    def get_streamlines(self):
+        """Retrieve the calculated streamlines"""
+        if self.streamlines is None:
+            raise StreamlinesNotTrackedError(self) from None
+        return self.streamlines
 
 class SeedBasedTracker(Tracker):
     """Seed based tracker"""
@@ -127,12 +144,6 @@ class SeedBasedTracker(Tracker):
                                                seed_count_per_voxel=self.options.seeds_per_voxel,
                                                affine=self.data.aff)
             self.seeds = seeds
-
-    def get_streamlines(self):
-        """Retrieve the calculated streamlines"""
-        if self.streamlines is None:
-            raise StreamlinesNotTrackedError(self) from None
-        return self.streamlines
 
     def save_to_file(self, path):
         """Save the calculated streamlines to file"""
@@ -239,3 +250,29 @@ class StreamlinesFromFileTracker(Tracker):
     def track(self):
         Tracker.track(self)
         self.streamlines = load_vtk_streamlines(self.path)
+
+class ISMRMReferenceStreamlinesTracker(Tracker):
+    """Class representing the ISMRM 2015 Ground Truth fiber tracks."""
+    def __init__(self, streamline_count=None):
+        Tracker.__init__(self, None)
+        self.options = Object()
+        self.options.streamline_count = streamline_count
+        if streamline_count is not None:
+            self.id = self.id + "-" + str(streamline_count)
+        self.path = Config.get_config().get("data", "pathISMRMGroundTruth",
+                                            fallback='data/ISMRM2015GroundTruth')
+        self.path = self.path.rstrip(os.path.sep)
+
+    def track(self):
+        Tracker.track(self)
+        self.streamlines = []
+        bundle_count = 0
+        for file in os.listdir(self.path):
+            if file.endswith(".fib"):
+                bundle_count = bundle_count + 1
+                sl = load_vtk_streamlines(os.path.join(self.path, file))
+                self.streamlines.extend(sl)
+        if len(self.streamlines) != 200433 or bundle_count != 25:
+            raise ISMRMStreamlinesNotCorrectError(self, self.path)
+        if self.options.streamline_count is not None:
+            self.streamlines = random.sample(self.streamlines, self.options.streamline_count)
