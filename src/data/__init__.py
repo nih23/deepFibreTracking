@@ -140,9 +140,9 @@ class DataContainer():
         self.options.denoised = denoise
         self.options.cropped = False
         self.options.b0_threshold = b0_threshold
-        self.path = path.rstrip(os.path.sep) + os.path.sep
+        self.path = path.rstrip(os.path.sep)
         self.data = self._retrieve_data(file_names, denoise=denoise, b0_threshold=b0_threshold)
-        self.id = ("DataContainer" + self.path.replace(os.path.sep, "-") +
+        self.id = ("DataContainer" + self.path.replace(os.path.sep, "-") + "-"
                    "b0thr-" + str(b0_threshold))
         if self.options.denoised:
             self.id = self.id + "-denoised"
@@ -151,10 +151,10 @@ class DataContainer():
         """Reads data from files and saves them into self.data"""
         data = Object()
         try:
-            data.bvals, data.bvecs = read_bvals_bvecs(self.path + file_names['bvals'],
-                                                      self.path + file_names['bvecs'])
-            data.img = nb.load(self.path + file_names['img'])
-            data.t1 = nb.load(self.path + file_names['t1']).get_data()
+            data.bvals, data.bvecs = read_bvals_bvecs(os.path.join(self.path, file_names['bvals']),
+                                                      os.path.join(self.path, file_names['bvecs']))
+            data.img = nb.load(os.path.join(self.path, file_names['img']))
+            data.t1 = nb.load(os.path.join(self.path, file_names['t1'])).get_data()
         except FileNotFoundError as error:
             raise DataContainerNotLoadableError(self.path, error.filename) from None
 
@@ -170,7 +170,7 @@ class DataContainer():
                                 patch_radius=Config.get_config().getint("denoise", "pathRadius",
                                                                         fallback="2"))
         if 'mask' in file_names:
-            data.binarymask = nb.load(self.path + file_names['mask']).get_data()
+            data.binarymask = nb.load(os.path.join(self.path, file_names['mask'])).get_data()
         else:
             _, data.binarymask = median_otsu(data.dwi[..., 0], 2, 1)
 
