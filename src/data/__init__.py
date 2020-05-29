@@ -1,6 +1,14 @@
 # pylint: disable=attribute-defined-outside-init
-"""TODO write documentation
 """
+The data module is handling any kind of DWI-Data.
+It also contains a plain Object class, used to store information.
+
+Available subpackages
+---------------------
+postprocessing
+    Provides multiple postprocessing options for raw dwi data.
+"""
+
 import os
 import warnings
 
@@ -21,32 +29,146 @@ from nibabel.affines import apply_affine
 from src.config import Config
 
 class Object():
-    """Just a plain object usable to store information"""
+    """
+    Just a plain object usable to store information.
+
+    It can be used to notate arbitrary attributes by name to make the code
+    more readable.
+
+    Examples
+    --------
+
+    An example usage of the Object class
+
+    >>> a = Object()
+    >>> a.message = "Hello World!"
+    >>> a.message
+    'Hello World!'
+    """
 
 class Error(Exception):
-    """Base class for Data exceptions."""
+    """
+    Base class for Data exceptions.
+
+    Every Error happening from code of this class will inherit this one.
+    The single parameter `msg` represents the error representing message.
+
+    This class can be used to filter the exceptions for data exceptions.
+
+    Attributes
+    ----------
+    message: str, optional
+        The message given is stored here.
+
+    Examples
+    --------
+
+    >>> e = Error(msg='Just a sample message')
+    >>> raise e from None
+    Traceback (most recent call last):
+    File "<stdin>", line 1, in <module>
+    src.data.Error: Just a sample message
+    """
 
     def __init__(self, msg=''):
+        """    
+        Parameters
+        ----------
+        msg : str
+            The message which accompanying the error, by default ''.
+        """
         self.message = msg
         Exception.__init__(self, msg)
 
     def __repr__(self):
         return self.message
 
-    __str__ = __repr__
+    __str__ = __repr__ # simplify stringify behaviour
 
 class DeviceNotRetrievableError(Error):
-    """Error thrown if get_device is called on CUDA tensor."""
+    """Exception thrown if get_device is called on non-CUDA tensor.
+
+    There is only one CPU usable for active workload. Therefore,
+    no cpu number is specified.
+
+    Attributes
+    ----------
+    message: str
+        The error message is stored here.
+    device:
+        The device currently active.
+
+    Examples
+    --------
+    The error class can be initialized with the following:
+
+    >>> import torch
+    >>> a = DeviceNotRetrievableError(torch.device('cpu'))
+    >>> raise a from None
+    Traceback (most recent call last):
+    File "<stdin>", line 1, in <module>
+    src.data.DeviceNotRetrievableError: get_device() can't be called on non-CUDA Tensors.
+                                        Current device: cpu
+
+    A common mistake, on which the exception could be raised, would be the following:
+
+    >>> a = MovableData()
+    >>> a.get_device()
+    Traceback (most recent call last):
+    File "<stdin>", line 1, in <module>
+    File "/home/jos/deepFibreTracking/src/data/__init__.py", line 165, in get_device
+
+    src.data.DeviceNotRetrievableError: get_device() can't be called on non-CUDA Tensors.
+    Current device: cpu
+    """
 
     def __init__(self, device):
+        """
+        Parameters
+        ----------
+        device: torch.device
+            The current device on which the error occured.
+        """
         self.device = device
-        Error.__init__(self, msg=("get_device() can't be called on non-CUDA Tensors."
+        Error.__init__(self, msg=("get_device() can't be called on non-CUDA Tensors. "
                                   "Current device: {}".format(device)))
 
 class DataContainerNotLoadableError(Error):
-    """Error thrown if DataContainer is unable to load specified files"""
+    """Exception thrown if DataContainer is unable to load specified files.
+
+    After initializing a DataContainer, it looks for defined files in given folder.
+    If the software is unable to find a concrete file, this exception is thrown.
+
+    Attributes
+    ----------
+    message: str
+        The error message is stored here.
+    path: str
+        The path in which the software was unable to find the file.
+    file: str
+        The filename which couldn't be found in folder.
+
+    Examples
+    --------
+    An example initiation of the error:
+
+    >>> a = DataContainerNotLoadableError("path/to/folder", "notexisting.txt")
+    >>> raise a from None
+    Traceback (most recent call last):
+    File "<stdin>", line 1, in <module>
+    src.data.DataContainerNotLoadableError: The File 'notexisting.txt' \
+        can't be retrieved from folder 'path/to/folder' for the dataset.
+    """
 
     def __init__(self, path, file):
+        """
+        Parameters
+        ----------
+        path: str
+            The path in which the software was unable to find the file.
+        file: str
+            The filename which couldn't be found in folder.
+        """
         self.path = path
         self.file = file
         Error.__init__(self, msg=("The File '{file}' "
@@ -54,9 +176,33 @@ class DataContainerNotLoadableError(Error):
                        .format(file=file, path=path))
 
 class PointOutsideOfDWIError(Error):
-    """Error thrown if given are outside of the DWI-Image"""
+    """Error thrown if given points are outside of the DWI-Image.
+
+    This can be bypassed by passing `ignore_outside_points = True`
+    to the raising function. However, it should be noted that this
+    is not recommendable behaviour.
+
+    Attributes
+    ----------
+    data_container : DataContainer
+        The `DataContainer` whose DWI-Image is too small to cover the points.
+    points: ndarray
+        The point array which is responsible for raising the error.
+    affected_points: ndarray
+        The affected points beingn outside of the DWI-image.
+    """
 
     def __init__(self, data_container, points, affected_points):
+        """
+        Parameters
+        ----------
+        data_container : DataContainer
+            The `DataContainer` whose DWI-Image is too small to cover the points.
+        points: ndarray
+            The point array which is responsible for raising the error.
+        affected_points: ndarray
+            The affected points beingn outside of the DWI-image.
+        """
         self.data_container = data_container
         self.points = points
         self.affected_points = affected_points
@@ -66,9 +212,33 @@ class PointOutsideOfDWIError(Error):
                        .format(no_points=points.size, id=data_container.id, aff=affected_points))
 
 class DWIAlreadyCroppedError(Error):
-    """Error thrown if given are outside of the DWI-Image"""
+    """Error thrown if the DWI data should be cropped multiple times.
+
+    The cropping of DWI is not reversable in `DataContainer`. Therefore,
+    `dc.crop(*args)` doesn't necessarily equal `dc.crop(*other_args).crop(*args)`.
+    To prevent this potential confusing behaviour, this exception will be thrown on the latter.
+
+    Attributes
+    ----------
+    data_container : DataContainer
+        The affected `DataContainer`.
+    bval: float
+        The b-value used for the first, real cropping of the `DataContainer`.
+    max_deviation: float
+        The maximum deviation allowed while cropping.
+    """
 
     def __init__(self, data_container, bval, dev):
+        """
+        Parameters
+        ----------
+        data_container : DataContainer
+            The affected `DataContainer`.
+        bval: float
+            The b-value used for the first, real cropping of the `DataContainer`.
+        dev: float
+            The maximum deviation allowed while cropping.
+        """
         self.data_container = data_container
         self.bval = bval
         self.max_deviation = dev
@@ -77,10 +247,51 @@ class DWIAlreadyCroppedError(Error):
                        .format(id=data_container.id, bval=bval, dev=dev))
 
 class MovableData():
-    """The movable data class - make tensor based classes easy movable.
-       Tensors musst be attributes of the class and not nested."""
+    """This class can be used to make classes handling multiple tensors more easily movable.
+
+    With simple inheritance, all of those must be instances of `torch.Tensor` or `MovableData`.
+    Also, they have to be direct attributes of the object and are not allowed to be nested.
+
+    Attributes
+    ----------
+    device: torch.device, optional
+        The device the movable data currently is located on.
+
+    Methods
+    -------
+    cuda(device=None, non_blocking=False, memory_format=torch.preserve_format)
+        Moves the MovableData to specified or default CUDA device.
+    cpu(memory_format=torch.preserve_format)
+        Moves the MovableData to cpu.
+    to(*args, **kwargs)
+        Moves the MovableData to specified device.
+        See `torch.Tensor.to(...)` for more details on usage.
+    get_device()
+        Returns the CUDA device number if possible. Raises `DeviceNotRetrievableError` otherwise.
+
+    Inheritance
+    -----------
+    To modify and inherit the `MovableData` class, overwrite the following functions:
+
+    _get_tensors()
+        This should return all `torch.Tensor` and `MovableData` instances of your class,
+        in a key value pair `dict`.
+
+    _set_tensor(key, tensor)
+        This should replace the reference to the tensor with given key with the new, moved tensor.
+
+    If those two methods are properly inherited, the visible functions should work as normal.
+    If you plan on add other class types to the `_get_tensors` method, make sure that they implement
+    the cuda, cpu, to and get_device methods in the same manner as `torch.Tensor` instances.
+    """
     device = None
     def __init__(self, device=None):
+        """
+        Parameters
+        ----------
+        device : torch.device, optional
+            The device which the `MovableData` should be moved to on load, by default cpu.
+        """
         if device is None:
             device = torch.device("cpu")
         self.device = device
@@ -89,13 +300,13 @@ class MovableData():
         """Returns all retrieved tensors of class"""
         tensors = {}
         for key, value in vars(self).items():
-            if isinstance(value, torch.Tensor):
+            if isinstance(value, torch.Tensor) or isinstance(value, MovableData):
                 tensors[key] = value
         return tensors
 
-    def _set_tensor(self, attribute, tensor):
+    def _set_tensor(self, key, tensor):
         """Sets tensor with key from _get_tensors()"""
-        setattr(self, attribute, tensor)
+        setattr(self, key, tensor)
 
     def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
         """Moves all Tensors to specified CUDA device"""
