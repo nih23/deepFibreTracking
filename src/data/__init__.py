@@ -297,7 +297,23 @@ class MovableData():
         self.device = device
 
     def _get_tensors(self):
-        """Returns all retrieved tensors of class"""
+        """
+        Returns a dict containing all `torch.Tensor` and `MovableData` instances
+        and their assigned keys.
+
+        The default implementation searches for those on the attribute level.
+        If your child class contains tensors at other positions, it is recommendable to
+        overwrite this function and the `_set_tensor` function.
+
+        Returns
+        -------
+        dict
+            The dict containing every `torch.Tensor` and `MovableData` with their assigned keys.
+
+        See Also
+        --------
+        _set_tensor: implementations depend on each other
+        """
         tensors = {}
         for key, value in vars(self).items():
             if isinstance(value, torch.Tensor) or isinstance(value, MovableData):
@@ -305,11 +321,47 @@ class MovableData():
         return tensors
 
     def _set_tensor(self, key, tensor):
-        """Sets tensor with key from _get_tensors()"""
+        """Sets the tensor with the assigned key to his value.
+
+        In the default implementation, this works analogously to `_get_tensors`:
+        It sets the attribute with the name key to the given object/tensor.
+        If your child class contains tensors at other positions, it is recommendable to
+        overwrite this function and the `_get_tensors` function.
+
+        Parameters
+        ----------
+        key : str
+            The key of the original tensor.
+        tensor : object
+            The new tensor which should replace the original one.
+
+        See Also
+        --------
+        _get_tensors: implementations depend on each other
+        """
         setattr(self, key, tensor)
 
     def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
-        """Moves all Tensors to specified CUDA device"""
+        """Returns this object in CUDA memory.
+
+        If this object is already in CUDA memory and on the correct device,
+        then no movement is performed and the original object is returned.
+
+        Parameters
+        ----------
+        device : `torch.device`, optional
+            The destination GPU device. Defaults to the current CUDA device.
+        non_blocking : `bool`, optional
+             If `True` and the source is in pinned memory, the copy will be asynchronous with
+             respect to the host. Otherwise, the argument has no effect, by default `False`.
+        memory_format : `torch.memory_format`, optional
+            the desired memory format of returned Tensor, by default `torch.preserve_format`.
+
+        Returns
+        -------
+        MovableData
+            The object moved to specified device
+        """
         for attribute, tensor in self._get_tensors().items():
             cuda_tensor = tensor.cuda(device=device, non_blocking=non_blocking,
                                       memory_format=memory_format)
@@ -318,7 +370,22 @@ class MovableData():
         return self
 
     def cpu(self, memory_format=torch.preserve_format):
-        """Moves all Tensors to CPU"""
+        """
+        Returns a copy of this object in CPU memory.
+
+        If this object is already in CPU memory and on the correct device,
+        then no copy is performed and the original object is returned.
+
+        Parameters
+        ----------
+        memory_format : `torch.memory_format`, optional
+            the desired memory format of returned Tensor, by default `torch.preserve_format`.
+
+        Returns
+        -------
+        MovableData
+            The object moved to specified device
+        """
         for attribute, tensor in self._get_tensors().items():
             cpu_tensor = tensor.cpu(memory_format=memory_format)
             self._set_tensor(attribute, cpu_tensor)
@@ -326,7 +393,27 @@ class MovableData():
         return self
 
     def to(self, *args, **kwargs):
-        """Moves all tensors to specified device"""
+        """
+        Performs Tensor dtype and/or device conversion.
+        A `torch.dtype` and `torch.device` are inferred from the arguments of 
+        `self.to(*args, **kwargs)`.
+
+        Here are the ways to call `to`:
+
+        to(dtype, non_blocking=False, copy=False, memory_format=torch.preserve_format) -> Tensor
+            Returns MovableData with specified `dtype`
+
+        to(device=None, dtype=None, non_blocking=False, copy=False,
+        memory_format=torch.preserve_format) -> Tensor
+            Returns MovableData on specified `device`
+
+        to(other, non_blocking=False, copy=False) → Tensor
+            Returns MovableData with same `dtype` and `device` as `other`
+        Returns
+        -------
+        MovableData
+            The object moved to specified device
+        """
         for attribute, tensor in self._get_tensors().items():
             tensor = tensor.to(*args, **kwargs)
             self._set_tensor(attribute, tensor)
@@ -334,7 +421,21 @@ class MovableData():
         return self
 
     def get_device(self):
-        """Returns CUDA device number. Throwns a DeviceNotRetrievableError if on CPU."""
+        """
+        For CUDA tensors, this function returns the device ordinal of the GPU on which the tensor
+        resides. For CPU tensors, an error is thrown.
+
+        Returns
+        -------
+        int
+            The device ordinal
+
+        Raises
+        ------
+        DeviceNotRetrievableError
+            This description is thrown if the tensor is currently on the cpu,
+            therefore, no device ordinal exists.
+        """
         if self.device.type == "cpu":
             raise DeviceNotRetrievableError(self.device)
         return self.device.index
