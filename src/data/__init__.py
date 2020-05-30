@@ -71,7 +71,7 @@ class Error(Exception):
     """
 
     def __init__(self, msg=''):
-        """    
+        """
         Parameters
         ----------
         msg : str
@@ -86,7 +86,8 @@ class Error(Exception):
     __str__ = __repr__ # simplify stringify behaviour
 
 class DeviceNotRetrievableError(Error):
-    """Exception thrown if get_device is called on non-CUDA tensor.
+    """
+    Exception thrown if get_device is called on non-CUDA tensor.
 
     There is only one CPU usable for active workload. Therefore,
     no cpu number is specified.
@@ -134,7 +135,8 @@ class DeviceNotRetrievableError(Error):
                                   "Current device: {}".format(device)))
 
 class DataContainerNotLoadableError(Error):
-    """Exception thrown if DataContainer is unable to load specified files.
+    """
+    Exception thrown if DataContainer is unable to load specified files.
 
     After initializing a DataContainer, it looks for defined files in given folder.
     If the software is unable to find a concrete file, this exception is thrown.
@@ -176,7 +178,8 @@ class DataContainerNotLoadableError(Error):
                        .format(file=file, path=path))
 
 class PointOutsideOfDWIError(Error):
-    """Error thrown if given points are outside of the DWI-Image.
+    """
+    Error thrown if given points are outside of the DWI-Image.
 
     This can be bypassed by passing `ignore_outside_points = True`
     to the raising function. However, it should be noted that this
@@ -212,7 +215,8 @@ class PointOutsideOfDWIError(Error):
                        .format(no_points=points.size, id=data_container.id, aff=affected_points))
 
 class DWIAlreadyCroppedError(Error):
-    """Error thrown if the DWI data should be cropped multiple times.
+    """
+    Error thrown if the DWI data should be cropped multiple times.
 
     The cropping of DWI is not reversable in `DataContainer`. Therefore,
     `dc.crop(*args)` doesn't necessarily equal `dc.crop(*other_args).crop(*args)`.
@@ -247,7 +251,8 @@ class DWIAlreadyCroppedError(Error):
                        .format(id=data_container.id, bval=bval, dev=dev))
 
 class MovableData():
-    """This class can be used to make classes handling multiple tensors more easily movable.
+    """
+    This class can be used to make classes handling multiple tensors more easily movable.
 
     With simple inheritance, all of those must be instances of `torch.Tensor` or `MovableData`.
     Also, they have to be direct attributes of the object and are not allowed to be nested.
@@ -321,7 +326,8 @@ class MovableData():
         return tensors
 
     def _set_tensor(self, key, tensor):
-        """Sets the tensor with the assigned key to his value.
+        """
+        Sets the tensor with the assigned key to his value.
 
         In the default implementation, this works analogously to `_get_tensors`:
         It sets the attribute with the name key to the given object/tensor.
@@ -342,7 +348,8 @@ class MovableData():
         setattr(self, key, tensor)
 
     def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
-        """Returns this object in CUDA memory.
+        """
+        Returns this object in CUDA memory.
 
         If this object is already in CUDA memory and on the correct device,
         then no movement is performed and the original object is returned.
@@ -395,7 +402,7 @@ class MovableData():
     def to(self, *args, **kwargs):
         """
         Performs Tensor dtype and/or device conversion.
-        A `torch.dtype` and `torch.device` are inferred from the arguments of 
+        A `torch.dtype` and `torch.device` are inferred from the arguments of
         `self.to(*args, **kwargs)`.
 
         Here are the ways to call `to`:
@@ -441,7 +448,66 @@ class MovableData():
         return self.device.index
 
 class DataContainer():
-    """The DataContainer class representing a single dataset"""
+    """
+    The DataContainer class is representing a single DWI Dataset.
+
+    It contains basic functions to work with the data.
+    The data itself is accessable in the `self.data` attribute.
+
+    The `self.data` attribute contains the following
+        - bvals: the B-values 
+        - bvecs: the B-vectors matching the bvals
+        - img: the DWI-Image file
+        - t1: the T1-File data
+        - gtab: the calculated gradient table
+        - dwi: the real DWI data
+        - aff: the affine used for coordinate transformation
+        - binarymask: a binarymask usable to separate brain from the rest
+        - b0: the b0 image usable for normalization etc.
+
+    Attributes
+    ----------
+    options: Object
+        The configuration of the current DWI Object.
+    path: str
+        The path of the loaded DWI-Data.
+    data: Object
+        The dwi data, referenced in the Object attributes.
+    id: str
+        An identifier of the current DWI-Object including its preprocessing.
+
+    Methods
+    -------
+    to_ijk(points)
+        Returns conversion of given RAS+ points into IJK format for DWI-File.
+    to_ras(points)
+        Returns conversion of given IJK points for DWI-File into RAS+ format.
+    get_interpolated_dwi(points, ignore_outside_points=False)
+        Returns 3D-interpolated DWI-Image values at the given RAS+ points.
+    crop(b_value=None, max_deviation=None)
+        Crops DWI-Data to given b_value and deviation. If param equals `None`,
+        the values specified in the configuration file are used.
+        Returns `self`.
+    normalize()
+        Normalizes the DWI-Image based on b0-Image. If you want to crop the image,
+        apply crop ahead of normalization.
+        Returns `self`.
+    Inheritance
+    -----------
+    To inherit the `DataContainer` class, you should know the following function:
+
+    _retrieve_data(self, file_names, denoise=False, b0_threshold=None)
+        This reads the properties of the given path based on the filenames and denoises the image.
+
+    For correct inheritance, call the constructor with the correct filenames and
+    pass denoise and threshold values. Example for HCP:
+
+    >>> paths = {'bvals':'bvals', 'bvecs':'bvecs', 'img':'data.nii.gz',
+                 't1':'T1w_acpc_dc_restore_1.25.nii.gz', 'mask':'nodif_brain_mask.nii.gz'}
+    >>> DataContainer.__init__(self, path, paths, denoise=denoise, b0_threshold=b0_threshold)
+
+    Then, your data is automatically correctly loaded and the other functions are working as well.
+    """
 
     def __init__(self, path, file_names, denoise=None, b0_threshold=None):
         if denoise is None:
