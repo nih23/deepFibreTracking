@@ -455,7 +455,7 @@ class DataContainer():
     The data itself is accessable in the `self.data` attribute.
 
     The `self.data` attribute contains the following
-        - bvals: the B-values 
+        - bvals: the B-values
         - bvecs: the B-vectors matching the bvals
         - img: the DWI-Image file
         - t1: the T1-File data
@@ -510,6 +510,20 @@ class DataContainer():
     """
 
     def __init__(self, path, file_names, denoise=None, b0_threshold=None):
+        """
+        Parameters
+        ----------
+        path : str
+            The path leading to the DWI-Data Folder.
+        file_names : dict
+            A dictionary containg the file names for the specific values, e.g. 'img':'data.nii.gz'.
+        denoise : bool, optional
+            A boolean indicating wether the given data should be denoised,
+            by default as in configuration file.
+        b0_threshold : float, optional
+            A single value indicating the b0 threshold used for b0 calculation,
+            by default as in configuration file.
+        """
         if denoise is None:
             denoise = Config.get_config().getboolean("data", "denoise", fallback="no")
         if b0_threshold is None:
@@ -525,8 +539,35 @@ class DataContainer():
         if self.options.denoised:
             self.id = self.id + "-denoised"
 
-    def _retrieve_data(self, file_names, denoise=False, b0_threshold=None):
-        """Reads data from files and saves them into self.data"""
+    def _retrieve_data(self, file_names, denoise=False, b0_threshold=10):
+        """
+        Reads data from specific files and returns them as object.
+
+        This functions reads the filenames of the DWI image and loads/parses them accordingly.
+        Also, it denoises them, if specified and generates a b0 image.
+
+        The `file_names` param should be a dict with the following keys:
+        `['bvals', 'bvecs', 'img', 't1', 'mask']`
+
+        Parameters
+        ----------
+        file_names : dict
+            The filenames, or relative paths from `self.path`.
+        denoise : bool, optional
+            A boolean indicating wether the given data should be denoised, by default False
+        b0_threshold : float, optional
+            A single value indicating the b0 threshold used for b0 calculation, by default 10.0
+
+        Returns
+        -------
+        Object
+            An object holding all data as attributes, usable for further processing.
+
+        Raises
+        ------
+        DataContainerNotLoadableError
+            This error is thrown if one or multiple files cannot be foud.
+        """
         data = Object()
         try:
             data.bvals, data.bvecs = read_bvals_bvecs(os.path.join(self.path, file_names['bvals']),
@@ -557,19 +598,82 @@ class DataContainer():
         return data
 
     def to_ijk(self, points):
-        """Converts given RAS+ points to IJK in DataContainers Image Coordinates"""
+        """
+        Converts given RAS+ points to IJK in DataContainers Image Coordinates.
+
+        The conversion happens using the affine of the DWI image.
+        It should be noted that the dimension of the given points stays identical.
+
+        Parameters
+        ----------
+        points : ndarray
+            The points to convert.
+
+        Returns
+        -------
+        ndarray
+            The converted points.
+
+        See also
+        --------
+        to_ras(points): the reverse method.
+        """
         aff = np.linalg.inv(self.data.aff)
         return apply_affine(aff, points)
 
     def to_ras(self, points):
-        """Converts given IJK points in DataContainers Coordinate System to RAS+"""
+        """
+        Converts given IJK points in DataContainers Coordinate System to RAS+.
+
+        The conversion happens using the affine of the DWI image.
+        It should be noted that the dimension of the given points stays identical.
+
+        Parameters
+        ----------
+        points : ndarray
+            The points to convert.
+
+        Returns
+        -------
+        ndarray
+            The converted points.
+
+        See also
+        --------
+        to_ijk(points): the reverse method.
+        """
         aff = self.data.aff
         return apply_affine(aff, points)
 
     def get_interpolated_dwi(self, points, ignore_outside_points=False):
-        """Returns interpolated dwi for given RAS+ points.
-        If ignore_outside_points is set to true,
-        no error will be thrown for points outside of the image"""
+        """
+        Returns interpolated dwi for given RAS+ points.
+
+        The shape of the input points will be retained for the return array,
+        only the last dimension will be changed from 3 to the DWI-size accordingly.
+        If `ignore_outside_points` is set to `True`,
+        no error will be thrown for points outside of the image.
+
+        Parameters
+        ----------
+        points : ndarray
+            The array containing the points. Shape is matched in output.
+        ignore_outside_points : bool, optional
+            A boolean indicating wether points outside of the image should be ignored,
+            by default False.
+
+        Returns
+        -------
+        ndarray
+            The DWI-Values interpolated for the given points.
+            The input shape is matched aside of the last dimension.
+
+        Raises
+        ------
+        PointOutsideOfDWIError
+            This will be raised if some points are outside of the DWI image
+            and ignore_outside_points isn't set to True.
+        """
         points = self.to_ijk(points)
         shape = points.shape
         new_shape = (*shape[:-1], self.data.dwi.shape[-1])
@@ -581,9 +685,36 @@ class DataContainer():
             result[..., i] = out.reshape((*new_shape[:-1]))
         return result
 
-    def crop(self, b_value=None, max_deviation=None):
-        """Crop the dataset based on B-value"""
-        if self.options.cropped:
+    def crop(self, b_value=None, max_deviation=None, ignore_already_cropped=False):
+        """Crops the dataset based on B-value.
+
+        This function crops the DWI-Image based on B-Value.
+        Every value deviating more than `max_deviation` from the specified `b_value`
+        will be irretrievably removed in `self`.
+
+        Parameters
+        ----------
+        b_value : float, optional
+            The b-value used for cropping, by default as in configuration.
+        max_deviation : float, optional
+            The maximum deviation allowed around given b-value, by default as in configuration.
+        ignore_already_cropped : bool, optional
+            If set to true, no `DWIAlreadyCroppedError` will be thrown even if applicable,
+            by default `False`
+
+        Returns
+        -------
+        DataContainer
+            self after applying the crop.
+
+        Raises
+        ------
+        DWIAlreadyCroppedError
+            This error will be thrown to prevent multiple cropping which
+            - because of the irretrievably - could lead to unexpected results.
+            To use multiple cropping intentionally, set ignore_already_cropped to True.
+        """
+        if self.options.cropped and not ignore_already_cropped:
             raise DWIAlreadyCroppedError(self, self.options.crop_b, self.options.crop_max_deviation)
         if b_value is None:
             b_value = Config.get_config().getfloat("data", "cropB-Value", fallback="1000.0")
@@ -605,7 +736,16 @@ class DataContainer():
         return self
 
     def normalize(self):
-        """Normalize DWI Data based on b0 image. It is recommendable to crop the dataset first"""
+        """Normalize DWI Data based on b0 image.
+
+        The weights are divided by their b0 value.
+
+        Returns
+        -------
+        DataContainer
+            self after applying the normalization.
+        """
+        # TODO - test cropping and normalizing in both variations
         b0 = self.data.b0[..., None]
 
         nb_erroneous_voxels = np.sum(self.data.dwi > b0)
