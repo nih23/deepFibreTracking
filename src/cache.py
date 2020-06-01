@@ -90,6 +90,8 @@ class Cache():
 
     def set(self, key, tensor):
         """Saves the given tensor into the cache folder"""
+        if "custom" in key:
+            return
         if self.in_cache(key):
             self.current_size -= self.objects[key]["size"]
         suffix = ".dat"
