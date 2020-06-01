@@ -1,4 +1,23 @@
-"""All postprocessing options for datasets"""
+"""
+The postprocessing submodule of the data module hosts different options
+of postprocessing the DWI data. Those can be passed to datasets for further use.
+
+Each postprocessing function returns a function to pass to the Dataset.
+For unique identification, each of those functions contains an attribute `id`.
+
+Methods
+-------
+raw()
+    A raw data representation. Equal to no postprocessing
+spherical_harmonics(sh_order=None, smooth=None)
+    A data representation based on spherical harmonics
+resample(directions=None, sphere=None, sh_order=None, smooth=None, mean_centering=None)
+    Resampled data along given sphere.
+res100()
+    Shortcut for repulsion100 sphere resampling
+resample2D(sh_order=None, smooth=None, mean_centering=None, no_thetas=None, no_phis=None)
+    2D sphere resampling, usable for CNN for example.
+"""
 
 import numpy as np
 from dipy.core.sphere import Sphere
@@ -9,15 +28,29 @@ from src.config import Config
 from src.util import get_2D_sphere
 
 def raw():
+    """This is just a raw data representation, equals `None`.
+
+    Returns
+    -------
+    function
+        A function with `id` attribute, which parses dwi according given params.
+    """
     def _wrapper(dwi, _b0, _bvecs, _bvals):
-        """raw data representation. Unnecessary for practical use, just here for completeness."""
         return dwi
     _wrapper.id = "raw"
     return _wrapper
 
 
 def spherical_harmonics(sh_order=None, smooth=None):
-    """Spherical Harmonics data representation"""
+    """This is a spherical Harmonics data representation.
+
+    The data is calculated out of the real DWI Sphere.
+
+    Returns
+    -------
+    function
+        A function with `id` attribute, which parses dwi accordingly.
+    """
     config = Config.get_config()
     if sh_order is None:
         sh_order = config.getint("ResamplingOptions", "sphericalHarmonicsOrder", fallback="8")
@@ -38,7 +71,15 @@ def spherical_harmonics(sh_order=None, smooth=None):
 
 
 def resample(directions=None, sh_order=None, smooth=None, mean_centering=None, sphere=None):
-    """Resample the values according to given sphere"""
+    """Resample the values according to given sphere or directions.
+
+    The real sphere data is resampled to the new sphere, then spherical harmonics are applied.
+
+    Returns
+    -------
+    function
+        A function with `id` attribute, which parses dwi accordingly.
+    """
     config = Config.get_config()
     if sh_order is None:
         sh_order = config.getint("ResamplingOptions", "sphericalHarmonicsOrder", fallback="8")
@@ -73,12 +114,37 @@ def resample(directions=None, sh_order=None, smooth=None, mean_centering=None, s
     return _wrapper
 
 def res100(sh_order=None, smooth=None, mean_centering=None):
-    """Resample to 100 directions shortcut"""
+    """Resamples the value to 100 directions with the repulsion100 sphere.
+
+    Just a shortcut for the `resample` option.
+
+    See Also
+    --------
+    resample: the function this is based on.
+
+    Returns
+    -------
+    function
+        A function with `id` attribute, which parses dwi accordingly.
+    """
     return resample(sh_order=sh_order, smooth=smooth, mean_centering=mean_centering,
                     sphere="repulsion100")
 
 def resample2D(sh_order=None, smooth=None, mean_centering=None, no_thetas=None, no_phis=None):
-    """Resample to 2D Sphere"""
+    """Resamples the value to directions with the 2D sphere.
+
+    Just a shortcut for the `resample` option with 2D sphere.
+
+    See Also
+    --------
+    resample: the function this is based on.
+    src.util.get_2D_sphere: the function the 2D sphere is generated with.
+
+    Returns
+    -------
+    function
+        A function with `id` attribute, which parses dwi accordingly.
+    """
     func = resample(sh_order=sh_order, smooth=smooth, mean_centering=mean_centering,
                     sphere=get_2D_sphere(no_phis=no_phis, no_thetas=no_thetas))
     func.id = ("resample-2Dsphere-{nt}x{np}-sh-order-{sh}-smooth-{sm}-mean_centering-{mc}"
