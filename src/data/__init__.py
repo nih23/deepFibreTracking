@@ -763,9 +763,67 @@ class DataContainer():
 
 
 class HCPDataContainer(DataContainer):
-    """The container for HCPData"""
+    """
+    The HCPDataContainer class is representing a single HCP Dataset.
+
+    It contains basic functions to work with the data.
+    The data itself is accessable in the `self.data` attribute.
+
+    The `self.data` attribute contains the following
+        - bvals: the B-values
+        - bvecs: the B-vectors matching the bvals
+        - img: the DWI-Image file
+        - t1: the T1-File data
+        - gtab: the calculated gradient table
+        - dwi: the real DWI data
+        - aff: the affine used for coordinate transformation
+        - binarymask: a binarymask usable to separate brain from the rest
+        - b0: the b0 image usable for normalization etc.
+
+    Attributes
+    ----------
+    options: Object
+        The configuration of the current DWI Object.
+    path: str
+        The path of the loaded DWI-Data.
+    data: Object
+        The dwi data, referenced in the Object attributes.
+    id: str
+        An identifier of the current DWI-Object including its preprocessing.
+    hcp_id: int
+        The HCP ID from which the data was retrieved.
+
+    Methods
+    -------
+    to_ijk(points)
+        Returns conversion of given RAS+ points into IJK format for DWI-File.
+    to_ras(points)
+        Returns conversion of given IJK points for DWI-File into RAS+ format.
+    get_interpolated_dwi(points, ignore_outside_points=False)
+        Returns 3D-interpolated DWI-Image values at the given RAS+ points.
+    crop(b_value=None, max_deviation=None)
+        Crops DWI-Data to given b_value and deviation. If param equals `None`,
+        the values specified in the configuration file are used.
+        Returns `self`.
+    normalize()
+        Normalizes the DWI-Image based on b0-Image. If you want to crop the image,
+        apply crop ahead of normalization.
+        Returns `self`.
+    """
 
     def __init__(self, hcpid, denoise=None, b0_threshold=None):
+        """
+        Parameters
+        ----------
+        hcpid : int
+            The id of the HCP Dataset to load.
+        denoise : bool, optional
+            A boolean indicating wether the given data should be denoised,
+            by default as in configuration file.
+        b0_threshold : float, optional
+            A single value indicating the b0 threshold used for b0 calculation,
+            by default as in configuration file.
+        """
         path = Config.get_config().get("data", "pathHCP", fallback='data/HCP/{id}').format(id=hcpid)
         self.hcp_id = hcpid
         paths = {'bvals':'bvals', 'bvecs':'bvecs', 'img':'data.nii.gz',
@@ -777,33 +835,71 @@ class HCPDataContainer(DataContainer):
             self.id = self.id + "-denoised"
 
 class ISMRMDataContainer(DataContainer):
-    """The container for ISMRM2015 Data"""
-    def __init__(self, denoise=None, rescale_to_hcp=None, b0_threshold=None):
+    """
+    The ISMRMDataContainer class is representing the artificial generated ISMRM Data.
+
+    It contains basic functions to work with the data.
+    The data itself is accessable in the `self.data` attribute.
+
+    The `self.data` attribute contains the following
+        - bvals: the B-values
+        - bvecs: the B-vectors matching the bvals
+        - img: the DWI-Image file
+        - t1: the T1-File data
+        - gtab: the calculated gradient table
+        - dwi: the real DWI data
+        - aff: the affine used for coordinate transformation
+        - binarymask: a binarymask usable to separate brain from the rest
+        - b0: the b0 image usable for normalization etc.
+
+    Attributes
+    ----------
+    options: Object
+        The configuration of the current DWI Object.
+    path: str
+        The path of the loaded DWI-Data.
+    data: Object
+        The dwi data, referenced in the Object attributes.
+    id: str
+        An identifier of the current DWI-Object including its preprocessing.
+
+    Methods
+    -------
+    to_ijk(points)
+        Returns conversion of given RAS+ points into IJK format for DWI-File.
+    to_ras(points)
+        Returns conversion of given IJK points for DWI-File into RAS+ format.
+    get_interpolated_dwi(points, ignore_outside_points=False)
+        Returns 3D-interpolated DWI-Image values at the given RAS+ points.
+    crop(b_value=None, max_deviation=None)
+        Crops DWI-Data to given b_value and deviation. If param equals `None`,
+        the values specified in the configuration file are used.
+        Returns `self`.
+    normalize()
+        Normalizes the DWI-Image based on b0-Image. If you want to crop the image,
+        apply crop ahead of normalization.
+        Returns `self`.
+
+    See Also
+    --------
+    src.tracker.ISMRMReferenceStreamlinesTracker: The streamlines matching this dataset.
+    """
+    def __init__(self, denoise=None, b0_threshold=None):
+        """
+        Parameters
+        ----------
+        denoise : bool, optional
+            A boolean indicating wether the given data should be denoised,
+            by default as in configuration file.
+        b0_threshold : float, optional
+            A single value indicating the b0 threshold used for b0 calculation,
+            by default as in configuration file.
+        """
         path = Config.get_config().get("data", "pathISMRM", fallback='data/ISMRM2015')
         paths = {'bvals':'Diffusion.bvals', 'bvecs':'Diffusion.bvecs',
                  'img':'Diffusion.nii.gz', 't1':'T1.nii.gz'}
         DataContainer.__init__(self, path, paths, denoise=denoise, b0_threshold=b0_threshold)
-        if rescale_to_hcp is None:
-            rescale_to_hcp = Config.get_config().getboolean("data", "rescaleHCPData", fallback="no")
-        self.options.rescale_to_hcp = rescale_to_hcp
 
         self.id = "ISMRMDataContainer-b0thr-{b0}".format(b0=self.options.b0_threshold)
         if self.options.denoised:
             self.id = self.id + "-denoised"
-        if rescale_to_hcp:
-            self._rescale_to_hcp()
-            self.id = self.id + "-rescaled"
-
-    def _rescale_to_hcp(self):
-        """Rescales the ISMRM Dataset to HCP Coordinates"""
-        data = self.data
-        zooms = data.img.header.get_zooms()[:3]
-        new_zooms = (1.25, 1.25, 1.25) # similar to HCP
-        data.dwi, data.aff = reslice(data.dwi, data.aff, zooms, new_zooms)
-        self.data = data
-
-
-class TypeClass:
-    """A class representing a type"""
-    def __init__(self):
-        self.type = None
