@@ -7,6 +7,29 @@ Available subpackages
 ---------------------
 postprocessing
     Provides multiple postprocessing options for raw dwi data.
+
+Classes
+-------
+Object
+    Provides basic object with free writable attributes for information storage.
+Error
+    Base class for Data exceptions.
+DeviceNotRetrievableError
+    Exception thrown if get_device is called on non-CUDA tensor.
+DataContainerNotLoadableError
+    Exception thrown if DataContainer is unable to load specified files.
+PointOutsideOfDWIError
+    Error thrown if given points are outside of the DWI-Image.
+DWIAlreadyCroppedError
+    Error thrown if the DWI data should be cropped multiple times.
+MovableData
+    Class can be used to make classes handling multiple tensors more easily movable.
+DataContainer
+    DataContainer is representing a single DWI Image.
+HCPDataContainer
+    DataContainer representing a HCP Image
+ISMRMDataContainer
+    DataContainer representing ISMRM Image.
 """
 
 import os
