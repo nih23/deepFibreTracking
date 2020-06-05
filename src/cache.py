@@ -152,7 +152,7 @@ class Cache():
     def __init__(self, path):
         """
         It is not recommended to call this function directly!
-        Use get_cache() instead. 
+        Use get_cache() instead.
         Parameters
         ----------
         path : str

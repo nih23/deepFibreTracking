@@ -512,8 +512,7 @@ class DataContainer():
         the values specified in the configuration file are used.
         Returns `self`.
     normalize()
-        Normalizes the DWI-Image based on b0-Image. If you want to crop the image,
-        apply crop ahead of normalization.
+        Normalizes the DWI-Image based on b0-Image.
         Returns `self`.
     Inheritance
     -----------
@@ -554,6 +553,7 @@ class DataContainer():
         self.options = Object()
         self.options.denoised = denoise
         self.options.cropped = False
+        self.options.normalized = False
         self.options.b0_threshold = b0_threshold
         self.path = path.rstrip(os.path.sep)
         self.data = self._retrieve_data(file_names, denoise=denoise, b0_threshold=b0_threshold)
@@ -768,7 +768,8 @@ class DataContainer():
         DataContainer
             self after applying the normalization.
         """
-        # TODO - test cropping and normalizing in both variations
+        if self.options.normalized:
+            return # TODO - perhaps adding error
         b0 = self.data.b0[..., None]
 
         nb_erroneous_voxels = np.sum(self.data.dwi > b0)
@@ -782,6 +783,7 @@ class DataContainer():
 
         self.data.dwi = weights
         self.id = self.id + "-normalized"
+        self.options.normalized = True
         return self
 
 
@@ -829,8 +831,7 @@ class HCPDataContainer(DataContainer):
         the values specified in the configuration file are used.
         Returns `self`.
     normalize()
-        Normalizes the DWI-Image based on b0-Image. If you want to crop the image,
-        apply crop ahead of normalization.
+        Normalizes the DWI-Image based on b0-Image.
         Returns `self`.
     """
 
@@ -899,8 +900,7 @@ class ISMRMDataContainer(DataContainer):
         the values specified in the configuration file are used.
         Returns `self`.
     normalize()
-        Normalizes the DWI-Image based on b0-Image. If you want to crop the image,
-        apply crop ahead of normalization.
+        Normalizes the DWI-Image based on b0-Image.
         Returns `self`.
 
     See Also
