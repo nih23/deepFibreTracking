@@ -10,16 +10,19 @@ from src.data.postprocessing import res100
 from src.dataset import StreamlineDataset, StreamlineClassificationDataset
 from src.tracker import CSDTracker, ISMRMReferenceStreamlinesTracker
 
-def collate_fn(inputs, outputs):
+def collate_fn(el):
     '''
     Padds batch of variable length
     '''
-    ## get sequence lengths
-    lengths = torch.tensor([t.shape[0] for t in inputs]).cuda()
-    ## padding and dimension swap
+    inputs = [torch.flatten(t[0], start_dim=1) for t in el]
+    outputs = [torch.flatten(t[1], start_dim=1) for t in el]
+    
+    lengths = torch.tensor([t[0].shape[0] for t in el[0]])
+    
     inputs = torch.nn.utils.rnn.pad_sequence(inputs).cuda()
     outputs = torch.nn.utils.rnn.pad_sequence(outputs).cuda()
     return inputs, outputs, lengths
+
 
 def getdatasets(dataset, training_part=0.9):
     """Retrieves a dataset from given path and splits them randomly in train and test data.
@@ -46,14 +49,15 @@ def feed_model(model, generator, optimizer=None):
     return 0
 def main():
     data = ISMRMDataContainer(denoise=True)
-    tracker = ISMRMReferenceStreamlinesTracker()
+    tracker = ISMRMReferenceStreamlinesTracker(data)
+    tracker.track()
     print("Loaded Data")
     dataset = StreamlineDataset(tracker, data, rotate=True, grid_dimension=(7, 3, 3),
                                 append_reverse=True, postprocessing=res100())
     training_set, validation_set = getdatasets(dataset)
     print("Initialized Dataset")
     sizes = dataset.get_feature_shapes()
-    sizes = (torch.prod(sizes[0]), torch.prod(sizes[1]))
+    sizes = (torch.prod(torch.tensor(sizes[0])).item()*-1, torch.prod(torch.tensor(sizes[1])).item()*-1)
 
     model = ModelLSTM(dropout=0.05, hidden_sizes=[256, 256], sizes=sizes,
                       activation_function=nn.Tanh()).cuda()
