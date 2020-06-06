@@ -17,7 +17,7 @@ def collate_fn(el):
     inputs = [torch.flatten(t[0], start_dim=1) for t in el]
     outputs = [torch.flatten(t[1], start_dim=1) for t in el]
     
-    lengths = torch.tensor([t[0].shape[0] for t in el[0]])
+    lengths = torch.tensor([t[0].shape[0] for t in el])
     
     inputs = torch.nn.utils.rnn.pad_sequence(inputs).cuda()
     outputs = torch.nn.utils.rnn.pad_sequence(outputs).cuda()
@@ -45,10 +45,10 @@ def feed_model(model, generator, optimizer=None):
             optimizer.zero_grad()
         model.reset()
         batch_len = len(dwi)
-        mask =  torch.arange(200)[None, :] < lengths[:, None]
+        mask =  (torch.arange(200)[None, :] < lengths[:, None]).cuda()
     return 0
 def main():
-    data = ISMRMDataContainer(denoise=True)
+    data = ISMRMDataContainer()
     tracker = ISMRMReferenceStreamlinesTracker(data)
     tracker.track()
     print("Loaded Data")
