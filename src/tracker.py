@@ -253,8 +253,8 @@ class StreamlinesFromFileTracker(Tracker):
 
 class ISMRMReferenceStreamlinesTracker(Tracker):
     """Class representing the ISMRM 2015 Ground Truth fiber tracks."""
-    def __init__(self, streamline_count=None):
-        Tracker.__init__(self, None)
+    def __init__(self, data_container, streamline_count=None):
+        Tracker.__init__(self, data_container)
         self.options = Object()
         self.options.streamline_count = streamline_count
         if streamline_count is not None:
@@ -262,6 +262,7 @@ class ISMRMReferenceStreamlinesTracker(Tracker):
         self.path = Config.get_config().get("data", "pathISMRMGroundTruth",
                                             fallback='data/ISMRM2015GroundTruth')
         self.path = self.path.rstrip(os.path.sep)
+
 
     def track(self):
         Tracker.track(self)

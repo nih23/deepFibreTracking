@@ -9,7 +9,7 @@ def main():
     hcp_data = HCPDataContainer(100307)
     hcp_sl = CSDTracker(hcp_data, random_seeds=True, seeds_count=10000)
     ismrm_data = ISMRMDataContainer()
-    ismrm_sl = ISMRMReferenceStreamlinesTracker(streamline_count=10000)
+    ismrm_sl = ISMRMReferenceStreamlinesTracker(ismrm_data, streamline_count=10000)
     hcp_sl.track()
     ismrm_sl.track()
     ismrm_data = ismrm_data.crop().normalize()
