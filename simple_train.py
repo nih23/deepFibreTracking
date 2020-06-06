@@ -34,19 +34,40 @@ def getdatasets(dataset, training_part=0.9):
     test_len = len(dataset) - train_len
     (train_split, test_split) = torch.utils.data.random_split(dataset, (train_len, test_len))
     return train_split, test_split
+
+def radians_loss(input_data, target, mask):
+    """Quick implementation of the radian loss 1- cos(alpha).
+
+    Arguments:
+    input_data: the network output
+    target: the supposed output
+    mask: mask for masking out unused padding areas. Essential to prevent division by zero."""
+    cossim = torch.nn.CosineSimilarity(dim=2)
+    output = cossim(input_data, target)**2
+    output = output[mask.squeeze() != 0]
+    return 1 - torch.mean(output)
 def feed_model(model, generator, optimizer=None):
-    mse_loss = torch.nn.MSELoss()
+    complete_loss = 0
     for dwi, next_dir, lengths in generator:
-        print("SHAPES:")
-        print(dwi.shape)
-        print(next_dir.shape)
-        print(lengths.shape)
+        #print("SHAPES:")
+        #print(dwi.shape) # torch.Size([165, 64, 6300])
+        #print(next_dir.shape) # torch.Size([165, 64, 3])
+        #print(lengths.shape) # torch.Size([64])
         if optimizer is not None:
             optimizer.zero_grad()
         model.reset()
-        batch_len = len(dwi)
-        mask =  (torch.arange(200)[None, :] < lengths[:, None]).cuda()
-    return 0
+        pred_next_dir = model(dwi)
+
+        mask = (torch.arange(dwi.shape[0])[None, :] < lengths[:, None]).transpose(0, 1).cuda()
+        # torch.Size[165, 64]
+        pred_next_dir = pred_next_dir * mask
+        loss = radians_loss(next_dir, pred_next_dir, mask)
+        complete_loss = complete_loss + (len(lengths)/len(generator)) * loss.item()
+        if optimizer is not None:
+            loss.backward()
+            optimizer.step()
+
+    return complete_loss
 def main():
     data = ISMRMDataContainer()
     tracker = ISMRMReferenceStreamlinesTracker(data)
@@ -57,7 +78,8 @@ def main():
     training_set, validation_set = getdatasets(dataset)
     print("Initialized Dataset")
     sizes = dataset.get_feature_shapes()
-    sizes = (torch.prod(torch.tensor(sizes[0])).item()*-1, torch.prod(torch.tensor(sizes[1])).item()*-1)
+    sizes = (torch.prod(torch.tensor(sizes[0])).item()*-1,
+             torch.prod(torch.tensor(sizes[1])).item()*-1)
 
     model = ModelLSTM(dropout=0.05, hidden_sizes=[256, 256], sizes=sizes,
                       activation_function=nn.Tanh()).cuda()
@@ -69,15 +91,18 @@ def main():
     validation_generator = dataL.DataLoader(validation_set, **params)
     print("Starting to train")
     epochs = 1000
+    best_loss = 1e10
     for epoch in range(1, epochs + 1):
         model.train()
-        _ = feed_model(model, training_generator, optimizer=optimizer)
+        train_loss = feed_model(model, training_generator, optimizer=optimizer)
         model.eval()
         with torch.no_grad():
-            pass
-            #(loss, rad_loss, pStop_loss) = feed_model(model, validation_generator)
-        print(("Epoch {:5d}/{:<5d} - loss: {:6.5f} rad_loss :"
-               "{:6.5f} pStop_loss: {:6.5f} ").format(epoch, epochs, loss, rad_loss, pStop_loss))
-if __name__ == "__main__":
-   main()
+            loss = feed_model(model, validation_generator)
+            if loss < best_loss:
+                torch.save(model.state_dict(), 'model.pt')
+                best_loss = loss
+        print(("Epoch {:5d}/{:<5d} - train loss: {:6.5f} - best loss: {:6.5f} - loss: {:6.5f}")
+              .format(epoch, epochs, train_loss, best_loss, loss))
 
+if __name__ == "__main__":
+    main()
