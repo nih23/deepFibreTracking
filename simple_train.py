@@ -19,8 +19,8 @@ def collate_fn(el):
     
     lengths = torch.tensor([t[0].shape[0] for t in el])
     
-    inputs = torch.nn.utils.rnn.pad_sequence(inputs).cuda()
-    outputs = torch.nn.utils.rnn.pad_sequence(outputs).cuda()
+    inputs = torch.nn.utils.rnn.pad_sequence(inputs).double()
+    outputs = torch.nn.utils.rnn.pad_sequence(outputs).double()
     return inputs, outputs, lengths
 
 
@@ -48,6 +48,7 @@ def radians_loss(input_data, target, mask):
     return 1 - torch.mean(output)
 def feed_model(model, generator, optimizer=None):
     complete_loss = 0
+    progress = 0
     for dwi, next_dir, lengths in generator:
         #print("SHAPES:")
         #print(dwi.shape) # torch.Size([165, 64, 6300])
@@ -56,13 +57,18 @@ def feed_model(model, generator, optimizer=None):
         if optimizer is not None:
             optimizer.zero_grad()
         model.reset()
+        dwi = dwi.cuda()
         pred_next_dir = model(dwi)
-
+        next_dir = next_dir.cuda()
         mask = (torch.arange(dwi.shape[0])[None, :] < lengths[:, None]).transpose(0, 1).cuda()
         # torch.Size[165, 64]
-        pred_next_dir = pred_next_dir * mask
+        #print(pred_next_dir.shape)
+        #print(mask.shape)
+        pred_next_dir = pred_next_dir * mask[..., None]
         loss = radians_loss(next_dir, pred_next_dir, mask)
-        complete_loss = complete_loss + (len(lengths)/len(generator)) * loss.item()
+        complete_loss = complete_loss + (len(lengths)/len(generator.dataset)) * loss.item()
+        progress = progress + len(lengths)
+        print("Element {}/{} - loss: {:6.5f}".format(progress, len(generator.dataset), loss),end='\r')
         if optimizer is not None:
             loss.backward()
             optimizer.step()
@@ -76,17 +82,19 @@ def main():
     dataset = StreamlineDataset(tracker, data, rotate=True, grid_dimension=(7, 3, 3),
                                 append_reverse=True, postprocessing=res100())
     training_set, validation_set = getdatasets(dataset)
+    print(len(dataset))
+    print(len(training_set))
     print("Initialized Dataset")
     sizes = dataset.get_feature_shapes()
     sizes = (torch.prod(torch.tensor(sizes[0])).item()*-1,
              torch.prod(torch.tensor(sizes[1])).item()*-1)
 
     model = ModelLSTM(dropout=0.05, hidden_sizes=[256, 256], sizes=sizes,
-                      activation_function=nn.Tanh()).cuda()
+                      activation_function=nn.Tanh()).double().cuda()
     print("Initialized Model")
     optimizer = optim.Adam(model.parameters(), lr=1e-5)
 
-    params = {'batch_size': 64, 'shuffle': True, 'collate_fn': collate_fn}
+    params = {'batch_size': 64, 'num_workers': 24, 'shuffle': True, 'collate_fn': collate_fn}
     training_generator = dataL.DataLoader(training_set, **params)
     validation_generator = dataL.DataLoader(validation_set, **params)
     print("Starting to train")
