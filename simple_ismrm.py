@@ -1,8 +1,13 @@
+import torch.nn as nn
+import numpy as np
+
+from src.data import ISMRMDataContainer
+from src.models import ModelLSTM
 from src.tracker import SeedBasedTracker, StreamlinesAlreadyTrackedError
 from src.config import Config
 from src.cache import Cache
 from src.util import get_reference_orientation, rotation_from_vectors, get_grid
-import numpy as np
+
 class ModelTracker(SeedBasedTracker):
     """A CSD based Tracker"""
     def __init__(self, data_container,
@@ -60,7 +65,7 @@ class ModelTracker(SeedBasedTracker):
 
 def main():
     data = ISMRMDataContainer()
-    model = ModelLSTM(dropout=0.05, hidden_sizes=[256, 256], sizes=sizes,
+    model = ModelLSTM(dropout=0.05, hidden_sizes=[256, 256], sizes=(6300, 3),
                       activation_function=nn.Tanh()).double().cuda()
     tracker = ModelTracker(data, model, seeds_count=30000)
     tracker.track()
