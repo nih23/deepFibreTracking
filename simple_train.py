@@ -7,8 +7,8 @@ from torch.utils import data as dataL
 from src.models import ModelLSTM
 from src.data import ISMRMDataContainer
 from src.data.postprocessing import res100
-from src.dataset import StreamlineDataset, StreamlineClassificationDataset
-from src.tracker import CSDTracker, ISMRMReferenceStreamlinesTracker
+from src.dataset import StreamlineDataset
+from src.tracker import ISMRMReferenceStreamlinesTracker
 
 def collate_fn(el):
     '''
@@ -16,9 +16,9 @@ def collate_fn(el):
     '''
     inputs = [torch.flatten(t[0], start_dim=1) for t in el]
     outputs = [torch.flatten(t[1], start_dim=1) for t in el]
-    
+
     lengths = torch.tensor([t[0].shape[0] for t in el])
-    
+
     inputs = torch.nn.utils.rnn.pad_sequence(inputs).double()
     outputs = torch.nn.utils.rnn.pad_sequence(outputs).double()
     return inputs, outputs, lengths
@@ -68,7 +68,8 @@ def feed_model(model, generator, optimizer=None):
         loss = radians_loss(next_dir, pred_next_dir, mask)
         complete_loss = complete_loss + (len(lengths)/len(generator.dataset)) * loss.item()
         progress = progress + len(lengths)
-        print("Element {}/{} - loss: {:6.5f}".format(progress, len(generator.dataset), loss),end='\r')
+        print("Element {}/{} - loss: {:6.5f}".format(progress, len(generator.dataset), loss),
+              end='\r')
         if optimizer is not None:
             loss.backward()
             optimizer.step()
