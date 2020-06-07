@@ -33,7 +33,7 @@ class ModelTracker(SeedBasedTracker):
         model = self.model.cuda()
         data_container = self.data_container
         seeds = self.seeds
-        grid = get_grid((7,3,3))
+        grid = get_grid((7, 3, 3)) * self.options.step_width
         streamlines = np.zeros((2* len(seeds), no_iterations + 1, 3))
         streamlines[:len(seeds), 0] = seeds
         streamlines[len(seeds):,0] = seeds
@@ -57,3 +57,13 @@ class ModelTracker(SeedBasedTracker):
             return
         self._track()
         Cache.get_cache().set(self.id, self.streamlines)
+
+def main():
+    data = ISMRMDataContainer()
+    model = ModelLSTM(dropout=0.05, hidden_sizes=[256, 256], sizes=sizes,
+                      activation_function=nn.Tanh()).double().cuda()
+    tracker = ModelTracker(data, model, seeds_count=30000)
+    tracker.track()
+
+if __name__ == "__main__":
+    main()
