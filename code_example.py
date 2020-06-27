@@ -19,7 +19,7 @@ def main():
     dataset = ConcatenatedDataset([csd, ismrm_set])
 
     csd_classification = StreamlineClassificationDataset(hcp_sl, hcp_data,
-                                                        postprocessing=spherical_harmonics())
+                                                         postprocessing=spherical_harmonics())
     ismrm_classification = StreamlineClassificationDataset(ismrm_sl, ismrm_data,
                                                            postprocessing=spherical_harmonics())
     dataset_classification = ConcatenatedDataset([csd_classification, ismrm_classification])
