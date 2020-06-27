@@ -43,7 +43,7 @@ from dipy.denoise.pca_noise_estimate import pca_noise_estimate
 from dipy.align.reslice import reslice
 from dipy.segment.mask import median_otsu
 from dipy.align.imaffine import interpolate_scalar_3d
-
+import dipy.reconst.dti as dti
 
 import numpy as np
 import nibabel as nb
@@ -514,6 +514,8 @@ class DataContainer():
     normalize()
         Normalizes the DWI-Image based on b0-Image.
         Returns `self`.
+    get_fa()
+        Generates the FA based on eigenvalues and returns them.
     Inheritance
     -----------
     To inherit the `DataContainer` class, you should know the following function:
@@ -603,6 +605,7 @@ class DataContainer():
         data.gtab = gradient_table(bvals=data.bvals, bvecs=data.bvecs)
         data.dwi = data.img.get_data().astype("float32")
         data.aff = data.img.affine
+        data.fa = None
 
         if denoise:
             sigma = pca_noise_estimate(data.dwi, data.gtab, correct_bias=True,
@@ -769,7 +772,7 @@ class DataContainer():
             self after applying the normalization.
         """
         if self.options.normalized:
-            return # TODO - perhaps adding error
+            return # TODO - perhaps add error
         b0 = self.data.b0[..., None]
 
         nb_erroneous_voxels = np.sum(self.data.dwi > b0)
@@ -786,6 +789,23 @@ class DataContainer():
         self.options.normalized = True
         return self
 
+    def get_fa(self):
+        """Generates the FA Values for DataContainer.
+
+        Normalization is required. It is advised to call the routine ahead of cropping!
+
+        Returns
+        -------
+        Function
+            Fractional anisotropy (FA) calculated from cached eigenvalues.
+        """
+        #if not self.options.normalized:
+        #    return # TODO  - perhaps add error
+        if self.data.fa is None:
+            dti_model = dti.TensorModel(self.data.gtab, fit_method='LS')
+            dti_fit = dti_model.fit(self.data.dwi)
+            self.data.fa = dti_fit.fa
+        return self.data.fa
 
 class HCPDataContainer(DataContainer):
     """
@@ -833,6 +853,8 @@ class HCPDataContainer(DataContainer):
     normalize()
         Normalizes the DWI-Image based on b0-Image.
         Returns `self`.
+    get_fa()
+        Generates the FA based on eigenvalues and returns them.
     """
 
     def __init__(self, hcpid, denoise=None, b0_threshold=None):
@@ -902,6 +924,8 @@ class ISMRMDataContainer(DataContainer):
     normalize()
         Normalizes the DWI-Image based on b0-Image.
         Returns `self`.
+    get_fa()
+        Generates the FA based on eigenvalues and returns them.
 
     See Also
     --------
