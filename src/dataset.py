@@ -1,4 +1,26 @@
-"""Class responsible for handling datasets"""
+"""
+The dataset module is handling the datasets usable for training and testing.
+
+Classes
+-------
+Error
+    The base error class of all datasets.
+WrongDatasetTypePassedError
+    Error thrown if the passed Dataset has a wrong type.
+FeatureShapesNotEqualError
+    Error thrown if get_feature_shape is called on Dataset with multiple shapes
+BaseDataset
+    The base dataset every single dataset is based on. Inherits MovableData
+IterableDataset
+    Represents a dataset with fixed length and items.
+ConcatenatedDataset
+    A datasetclass used to concatenate multiple IterableDatasets
+StreamlineDataset
+    A Dataset consisting of streamlines and their DWI-Data.
+StreamlineClassificationDataset
+    A dataset like the StreamlineDataset, but with output classification instead of a regression.
+
+"""
 import torch
 import numpy as np
 
@@ -11,9 +33,36 @@ from src.config import Config
 from src.util import get_reference_orientation, rotation_from_vectors, get_grid
 
 class Error(Exception):
-    """Base class for Dataset exceptions."""
+    """
+    Base class for Dataset exceptions.
+
+    Every Error happening from code of this class will inherit this one.
+    The single parameter `msg` represents the error representing message.
+
+    This class can be used to filter the exceptions for data exceptions.
+
+    Attributes
+    ----------
+    message: str
+        The message given is stored here.
+
+    Examples
+    --------
+
+    >>> e = Error(msg='Just a sample message')
+    >>> raise e from None
+    Traceback (most recent call last):
+    File "<stdin>", line 1, in <module>
+    src.data.Error: Just a sample message
+    """
 
     def __init__(self, msg=''):
+        """
+        Parameters
+        ----------
+        msg : str
+            The message which accompanying the error, by default ''.
+        """
         self.message = msg
         Exception.__init__(self, msg)
 
@@ -23,23 +72,71 @@ class Error(Exception):
     __str__ = __repr__
 
 class WrongDatasetTypePassedError(Error):
-    """Error thrown if get_device is called on CUDA tensor."""
+    """Error thrown if `ConcatenatedDataset` retrieves wrong datasets.
+
+    There are two cases in which this error will occur:
+    1. The datasets you passed aren't exclusively IterableDatasets
+    2. The specification of your datasets doesn't match and the option
+        `ignore_data_specification` isn't set to True
+
+    Attributes
+    ----------
+    caller: ConcatenatedDataset
+        The ConcatenatedDataset raising the error.
+    dataset: BaseDataset
+        The dataset causig the error.
+    msg: str
+        The error message.
+    """
 
     def __init__(self, concat, dataset, message):
+        """
+        Parameters
+        ----------
+        concat : ConcatenatedDataset
+            The dataset raising the error.
+        dataset : BaseDataset
+            The dataset responsible for the error.
+        message : str
+            Your specific error message.
+        """
         self.caller = concat
         self.dataset = dataset
         Error.__init__(self, msg=message)
 
 class FeatureShapesNotEqualError(Error):
-    """Error thrown if get_feature_shape is called on ConcatenatedDataset.
-    If two datasets use different feature shapes"""
+    """Error thrown if FeatureShapes of `ConcatenatedDataset` are not equal, but requested.
 
+    This error only occurs, if `ConcatenatedDataset().get_feature_shape` is called,
+    and the Datasets in the ConcatenatedDataset doesn't have equal feature shapes.
+
+    Attributes
+    ----------
+    index: int
+        The index of the BaseDataset responsible for the error.
+    shape1: tuple
+        The shape of the reference dataset.
+    shape2: tuple
+        The shape of the different dataset.
+    msg: str
+        The error message.
+    """
     def __init__(self, index, s1, s2):
+        """
+        Parameters
+        ----------
+        index : int
+            The index of the BaseDataset responsible for the error.
+        s1 : tuple
+            The shape of the reference dataset.
+        s2 : tuple
+            The shape of the dataset causing the error.
+        """
         self.shape1 = s1
         self.shape2 = s2
         self.index = index
         Error.__init__(self, msg=("The shape of the dataset {idx} ({s2}) "
-                                  "is not equal to the base shape of dataset 0 ({s1})"
+                                  "is not equal to the base shape of the reference dataset 0 ({s1})"
                                   ).format(idx=index, s2=s2, s1=s1))
 
 class BaseDataset(MovableData):
@@ -195,15 +292,15 @@ class StreamlineDataset(IterableDataset):
     def __getitem__(self, index):
         if self.options.online_caching and self.cache[index] is not None:
             return self.cache[index]
-        (input, output) = self._calculate_item(index)
-        input = torch.from_numpy(input).to(self.device)
+        (inp, output) = self._calculate_item(index)
+        inp = torch.from_numpy(inp).to(self.device)
         output = torch.from_numpy(output).to(self.device)
 
         if self.options.online_caching:
-            self.cache[index] = (input, output)
+            self.cache[index] = (inp, output)
             return self.cache[index]
         else:
-            return (input, output)
+            return (inp, output)
 
     def _calculate_item(self, index):
         streamline = self._get_streamline(index)

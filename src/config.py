@@ -65,6 +65,8 @@ class PathAlreadySetError(Error):
         The path your code was trying to set.
     current_path : str
         The actual path the configuration was initialized with.
+    msg: str
+        The error message
     """
 
     def __init__(self, path):
