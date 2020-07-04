@@ -1,7 +1,7 @@
 """Just example code as explanation. Usable for testing."""
 from src.data import HCPDataContainer, ISMRMDataContainer
 from src.data.postprocessing import res100, spherical_harmonics
-from src.dataset import StreamlineDataset, ConcatenatedDataset, StreamlineClassificationDataset
+from src.dataset import StreamlineDataset, ConcatenatedDataset
 from src.tracker import CSDTracker, ISMRMReferenceStreamlinesTracker
 from src.dataset.processing import RegressionProcessing, ClassificationProcessing
 def main():
