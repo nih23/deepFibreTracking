@@ -13,7 +13,7 @@ class Processing():
         raise NotImplementedError
 
 class RegressionProcessing(Processing):
-    def __init__(self, rotate=None, grid_dimension=None, grid_spacing=None, postprocessing=None):
+    def __init__(self, rotate=None, grid_dimension=None, grid_spacing=None, postprocessing=None, normalize=None, normalize_mean=None, normalize_std=None):
         config = Config.get_config()
         if grid_dimension is None:
             grid_dimension = np.array((config.getint("GridOptions", "sizeX", fallback="3"),
@@ -22,19 +22,54 @@ class RegressionProcessing(Processing):
 
         if isinstance(grid_dimension, tuple):
             grid_dimension = np.array(grid_dimension)
+
+        
+
         if grid_spacing is None:
             grid_spacing = config.getfloat("GridOptions", "spacing", fallback="1.0")
         if rotate is None:
-            rotate = config.getboolean("DatasetOptions", "rotateDataset",
+            rotate = config.getboolean("Processing", "rotateDataset",
                                        fallback="yes")
+        if rotate and normalize is None:
+            normalize = config.getboolean("Processing", "normalizeRotatedDataset",
+                                          fallback="yes")
+        else:
+            normalize = False
+
         self.options = SimpleNamespace()
+
+        if rotate and normalize:
+            if normalize_mean is None:
+                normalize_mean = np.array((config.getfloat("RotationNorm", "meanX",
+                                                           fallback="9.8811e-01"),
+                                           config.getfloat("RotationNorm", "meanY",
+                                                           fallback="2.6814e-04"),
+                                           config.getfloat("RotationNorm", "meanZ",
+                                                           fallback="1.2876e-03")))
+            if isinstance(normalize_mean, tuple):
+                normalize_mean = np.array(normalize_mean)
+
+            if normalize_std is None:
+                normalize_std = np.array((config.getfloat("RotationNorm", "stdX",
+                                                          fallback="0.0262"),
+                                          config.getfloat("RotationNorm", "stdY",
+                                                          fallback="0.1064"),
+                                          config.getfloat("RotationNorm", "stdZ",
+                                                          fallback="0.1078")))
+            if isinstance(normalize_std, tuple):
+                normalize_std = np.array(normalize_std)
+
+            self.options.normalize_mean = normalize_mean
+            self.options.normalize_std = normalize_std
+
         self.options.rotate = rotate
+        self.options.normalize = normalize
         self.options.grid_dimension = grid_dimension
         self.options.grid_spacing = grid_spacing
         self.options.postprocessing = postprocessing
         self.grid = get_grid(grid_dimension) * grid_spacing
 
-        self.id = "RegressionProcessing-r{}-grid{}x{}x{}-spacing{}-postprocessing-{}".format(rotate, *grid_dimension, postprocessing)
+        self.id = "RegressionProcessing-r{}-grid{}x{}x{}-spacing{}-postprocessing-{}".format(rotate, *grid_dimension, grid_spacing, postprocessing.id)
 
     def calculate_streamline(self, data_container, streamline):
         next_dir, rot_matrix = self._get_next_direction(streamline)
@@ -43,6 +78,8 @@ class RegressionProcessing(Processing):
             dwi = self.options.postprocessing(dwi, data_container.data.b0,
                                               data_container.data.bvecs,
                                               data_container.data.bvals)
+        if self.options.normalize:
+            next_dir = (next_dir - self.options.normalize_mean)/self.options.normalize_std
         return (dwi, next_dir)
 
     def _get_dwi(self, data_container, streamline, rot_matrix=None):
@@ -86,9 +123,10 @@ class ClassificationProcessing(RegressionProcessing):
                  sphere=None):
 
         RegressionProcessing.__init__(self, rotate=rotate, grid_dimension=grid_dimension,
-                                      grid_spacing=grid_spacing, postprocessing=grid_spacing)
+                                      grid_spacing=grid_spacing, postprocessing=grid_spacing,
+                                      normalize=False)
         if sphere is None:
-            sphere = Config.get_config().get("ClassificationDatasetOptions", "sphere",
+            sphere = Config.get_config().get("Processing", "classificationSphere",
                                              fallback="repulsion724")
         if isinstance(sphere, Sphere):
             rsphere = sphere
@@ -98,10 +136,10 @@ class ClassificationProcessing(RegressionProcessing):
         self.sphere = rsphere
         self.options.sphere = sphere
         self.id = ("ClassificationProcessing-r{}-sphere-{}-grid{}x{}x{}-spacing{}-postprocessing-{}"
-                   .format(rotate, sphere, *grid_dimension, postprocessing))
+                   .format(rotate, sphere, *grid_dimension, grid_spacing, postprocessing.id))
 
     def calculate_streamline(self, data_container, streamline):
-        dwi, next_dir = RegressionProcessing.calculate_streamline(self, data_container, streamline):
+        dwi, next_dir = RegressionProcessing.calculate_streamline(self, data_container, streamline)
         sphere = self.sphere
         # code adapted from Benou "DeepTract",
         # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
