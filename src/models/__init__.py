@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
 
+from src.config import Config
 class ModelLSTM(nn.Module):
     'LSTM Model'
-    def __init__(self, hidden_sizes=None, activation_function=None, dropout=0, sizes=(2700 , 3)):
+    def __init__(self, hidden_sizes=None, activation_function=None, dropout=0, sizes=(2700, 3)):
         """Initializes the LSTM model with given parameters.
 
         Parameters
@@ -18,6 +19,9 @@ class ModelLSTM(nn.Module):
             the input size of dwi data.
         """
         super(ModelLSTM, self).__init__()
+        self.optimizer = None
+        self.loss = None
+        self.stop_training = False
         # [timestep, batch, feature=100]
         self.hidden_state = [None] * len(hidden_sizes)
         self.hidden_len = len(hidden_sizes)
@@ -56,3 +60,47 @@ class ModelLSTM(nn.Module):
         new_state: the new hidden state.
         """
         self.hidden_state = new_state
+    def compile_model(self, optimizer, loss):
+        self.optimizer = optimizer
+        self.loss = loss
+    def train_model(self, training_set, validation_set=None, epochs=None):
+        "Trains the model"
+        #TODO - Add Callbacks
+        self.stop_training = False
+        if self.optimizer is None or self.loss is None:
+            return #TODO - Add Error if model is not compiled 
+        config = Config.get_config()
+        if epochs is None:
+            epochs = config.getint("TrainingOptions", "epochs",
+                                   fallback="200")
+        for epoch in range(1, epochs + 1):
+            self.train()
+            train_loss = self._feed_model(training_set)
+            if validation_set is not None:
+                self.eval()
+                test_loss = self._feed_model(validation_set, validation=True)
+
+            if self.stop_training:
+                return
+
+    def _feed_model(self, generator, validation=False):
+        epoch_loss = torch.zeros(0)
+        for dwi, next_dir, lengths in generator:
+            if not validation:
+                self.optimizer.zero_grad()
+            self.reset()
+
+            pred_next_dir = self(dwi)
+
+            mask = (torch.arange(dwi.shape[0])[None, :] < lengths[:, None]).transpose(0, 1)
+
+            pred_next_dir = pred_next_dir * mask[..., None]
+            next_dir = next_dir * mask[..., None]
+            loss = self.loss(next_dir, pred_next_dir)
+            epoch_loss = epoch_loss + len(lengths) * loss
+
+            if not validation:
+                loss.backward()
+                self.optimizer.step()
+        epoch_loss = epoch_loss / len(generator.dataset)
+        return epoch_loss
