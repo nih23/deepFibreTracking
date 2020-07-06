@@ -1,4 +1,5 @@
 """Helpful functions required multiple times"""
+import torch
 import numpy as np
 from dipy.core.sphere import Sphere
 from src.config import Config
@@ -90,3 +91,14 @@ def get_grid(grid_dimension):
     """Retrieve grid for dimensions"""
     (dx, dy, dz) = (grid_dimension - 1)/2
     return np.moveaxis(np.mgrid[-dx:dx+1, -dy:dy+1, -dz:dz+1], 0, 3)
+
+def random_split(dataset, training_part=0.9):
+    """Retrieves a dataset from given path and splits them randomly in train and test data.
+        Arguments:
+        dataset: the dataset
+        training_part: float indicating the percentage of training data. default: 0.9 (90%)
+    """
+    train_len = int(training_part*len(dataset))
+    test_len = len(dataset) - train_len
+    (train_split, test_split) = torch.utils.data.random_split(dataset, (train_len, test_len))
+    return train_split, test_split
