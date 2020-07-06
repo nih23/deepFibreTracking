@@ -265,8 +265,8 @@ class StreamlineDataset(IterableDataset):
         if self.options.online_caching and self.cache[index] is not None:
             return self.cache[index]
         (inp, output) = self._calculate_item(index)
-        inp = torch.from_numpy(inp).to(self.device)
-        output = torch.from_numpy(output).to(self.device)
+        inp = torch.from_numpy(inp).float().to(self.device)
+        output = torch.from_numpy(output).float().to(self.device)
 
         if self.options.online_caching:
             self.cache[index] = (inp, output)
@@ -291,16 +291,17 @@ class StreamlineDataset(IterableDataset):
 
 
     def get_feature_shapes(self):
-        """Retrieve feature shape of in and output"""
+        """Retrieve feature shape of in and output for neural network"""
         if self.feature_shapes is None:
             dwi, next_dir = self[0]
             # assert that every type of data processing maintains same shape
             # and that every element has same shape
             input_shape = torch.tensor(dwi.shape)
-            input_shape[0] = -1
+            input_shape[0] = 1
+
             output_shape = torch.tensor(next_dir.shape)
-            output_shape[0] = -1
-            self.feature_shapes = (torch.Size(input_shape), torch.Size(output_shape))
+            output_shape[0] = 1
+            self.feature_shapes = (torch.prod(input_shape).item(), torch.prod(output_shape).item())
         return self.feature_shapes
 
     def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
