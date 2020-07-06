@@ -21,7 +21,6 @@ def radians_loss(x, y):
     x: the network output
     y: the supposed output
     """
-    mask = (y == 0)
     mask = ((y == 0).sum(-1) < 3) # zero vectors in supposed output
     cossim = torch.nn.CosineSimilarity(dim=2)
     output = cossim(x, y)**2
