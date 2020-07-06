@@ -18,6 +18,7 @@ res100()
 resample2D(sh_order=None, smooth=None, mean_centering=None, no_thetas=None, no_phis=None)
     2D sphere resampling, usable for CNN for example.
 """
+import warnings
 
 import numpy as np
 from dipy.core.sphere import Sphere
@@ -58,7 +59,9 @@ def spherical_harmonics(sh_order=None, smooth=None):
         smooth = config.getfloat("ResamplingOptions", "smooth", fallback="0.006")
 
     def _wrapper(dwi, _b0, bvecs, _bvals):
-        raw_sphere = Sphere(xyz=bvecs)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning) # TODO - look if bvecs should be normalized, then this can be removed
+            raw_sphere = Sphere(xyz=bvecs)
 
         real_sh, _, n = real_sym_sh_mrtrix(sh_order, raw_sphere.theta, raw_sphere.phi)
         l = -n * (n + 1)
