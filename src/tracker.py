@@ -47,7 +47,7 @@ class ISMRMStreamlinesNotCorrectError(Error):
     def __init__(self, tracker, path):
         self.tracker = tracker
         self.path = path
-        Error.__init__(self, msg=("The streamlines located in {path} do not match the"
+        Error.__init__(self, msg=("The streamlines located in {path} do not match the "
                                   "ISMRM 2015 Ground Truth Streamlines.").format(path=path))
 
 class StreamlinesNotTrackedError(Error):
