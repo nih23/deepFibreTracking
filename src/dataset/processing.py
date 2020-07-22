@@ -72,7 +72,8 @@ class RegressionProcessing(Processing):
         self.id = "RegressionProcessing-r{}-grid{}x{}x{}-spacing{}-postprocessing-{}".format(rotate, *grid_dimension, grid_spacing, postprocessing.id)
 
     def calculate_streamline(self, data_container, streamline):
-        next_dir, rot_matrix = self._get_next_direction(streamline)
+        next_dir = self._get_next_direction(streamline)
+        next_dir, rot_matrix = self._apply_rot_matrix(next_dir)
         dwi, _ = self._get_dwi(data_container, streamline, rot_matrix=rot_matrix)
         if self.options.postprocessing is not None:
             dwi = self.options.postprocessing(dwi, data_container.data.b0,
@@ -90,17 +91,19 @@ class RegressionProcessing(Processing):
         next_dir = streamline[1:] - streamline[:-1]
         next_dir = next_dir / np.linalg.norm(next_dir, axis=1)[:, None]
         next_dir = np.concatenate((next_dir, np.array([[0, 0, 0]])))
-        rot_matrix = None
+        return next_dir
 
-        if self.options.rotate:
-            reference = get_reference_orientation()
-            rot_matrix = np.empty([len(next_dir), 3, 3])
-            rot_matrix[0] = np.eye(3)
-            for i in range(len(next_dir) - 1):
-                rotation_from_vectors(rot_matrix[i + 1], reference, next_dir[i])
-                next_dir[i] = rot_matrix[i].T @ next_dir[i]
-
+    def _apply_rot_matrix(self, next_dir):
+        if not self.options.rotate:
+            return next_dir, None
+        reference = get_reference_orientation()
+        rot_matrix = np.empty([len(next_dir), 3, 3])
+        rot_matrix[0] = np.eye(3)
+        for i in range(len(next_dir) - 1):
+            rotation_from_vectors(rot_matrix[i + 1], reference, next_dir[i])
+            next_dir[i] = rot_matrix[i].T @ next_dir[i]
         return next_dir, rot_matrix
+        
 
     def _get_grid_points(self, streamline, rot_matrix=None):
         grid = self.grid

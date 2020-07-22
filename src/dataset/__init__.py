@@ -353,3 +353,50 @@ class StreamlineDataset(IterableDataset):
                 return
         self.device = dwi.device
         return self
+
+class SingleDirectionsDataset(IterableDataset):
+    """Represents a single dataset just made out of DWI and direction.
+    Practical for non-reccurent networks"""
+    def __init__(self, tracker, data_container, processing,
+                 device=None, append_reverse=None, online_caching=None):
+        IterableDataset.__init__(self, data_container, device=device)
+        self.streamlines = tracker.get_streamlines()
+        self.size = 0
+        for streamline in self.streamlines:
+            self.size += len(streamline) - 1
+
+        self.id = self.id + "-{}-(".format(processing.id) + tracker.id + ")"
+        config = Config.get_config()
+        if append_reverse is None:
+            append_reverse = config.getboolean("DatasetOptions", "appendReverseStreamlines",
+                                               fallback="yes")
+        if online_caching is None:
+            online_caching = config.getboolean("DatasetOptions", "onlineCaching",
+                                               fallback="yes")
+        self.options = Object()
+        self.options.append_reverse = append_reverse
+        self.options.online_caching = online_caching
+        self.options.processing = processing
+        self.calc_data = Object()
+        self.calc_data.points = torch.zeros(len(self), 3)
+        self.calc_data.next_dir = torch.zeros(len(self), 3)
+        idx = 0
+        for streamline in self.streamlines:
+            self.calc_data.points[idx:] = streamline[:-1]
+            self.calc_data.next_dir[idx:] = streamline[1:] - streamline[:-1]
+            idx += len(streamline) - 1 
+        if append_reverse:
+            for streamline in self.streamlines:
+                streamline = streamline[::-1]
+                self.calc_data.points[idx:] = streamline[:-1]
+                self.calc_data.next_dir[idx:] = streamline[1:] - streamline[:-1]
+                idx += len(streamline) - 1 
+        assert idx == len(self)
+        self.calc_data.next_dir = (self.calc_data.next_dir /
+                                   np.linalg.norm(self.calc_data.next_dir, axis=1)[:, None])
+        if online_caching:
+            self.cache = [] * len(self)
+        self.feature_shapes = None
+
+    def __len__(self):
+        return len(self.calc_data.points)
