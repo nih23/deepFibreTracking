@@ -137,8 +137,45 @@ class FeatureShapesNotEqualError(Error):
                                   ).format(idx=index, s2=s2, s1=s1))
 
 class BaseDataset(MovableData):
-    """The base class for Datasets in this library"""
+    """The base class for Datasets in this library.
+
+    It extends `MovableData`.
+    
+    Attributes
+    ----------
+    device: torch.device, optional
+        The device the movable data currently is located on.
+    data_container: DataContainer
+        The DataContainer the dataset is based on
+    id: str
+        An ID representing this Dataset. This is not unique to any instance, but it consists of parameters and used dataset. 
+
+    Methods
+    -------
+    cuda(device=None, non_blocking=False, memory_format=torch.preserve_format)
+        Moves the MovableData to specified or default CUDA device.
+    cpu(memory_format=torch.preserve_format)
+        Moves the MovableData to cpu.
+    to(*args, **kwargs)
+        Moves the MovableData to specified device.
+        See `torch.Tensor.to(...)` for more details on usage.
+    get_device()
+        Returns the CUDA device number if possible. Raises `DeviceNotRetrievableError` otherwise.
+
+    Inheritance
+    -----------
+    See `MovableData` for details.
+
+    """
     def __init__(self, data_container, device=None):
+        """
+        Parameters
+        ----------
+        data_container: DataContainer
+            The DataContainer the dataset uses
+        device : torch.device, optional
+            The device which the `MovableData` should be moved to on load, by default cpu.
+        """
         MovableData.__init__(self, device=device)
         self.data_container = data_container
         self.id = str(self.__class__.__name__)
@@ -147,8 +184,48 @@ class BaseDataset(MovableData):
 
 
 class IterableDataset(BaseDataset, torch.utils.data.Dataset):
-    """Any map type dataset, implementing __len__ and __getitem__"""
+    """The IterableDataset is the parent class of all maptype datasets.
+
+    This class also implements torch.util.data.Dataset!
+    Look up its attributes and methods too.
+
+    It's childs should implement __len__ and __getitem__.
+    Use this to check wether you are able to iterate over an unknown dataset.
+
+    Attributes
+    ----------
+    device: torch.device, optional
+        The device the movable data currently is located on.
+    data_container: DataContainer
+        The DataContainer the dataset is based on
+    id: str
+        An ID representing this Dataset. This is not unique to any instance, but it consists of parameters and used dataset. 
+
+    Methods
+    -------
+    cuda(device=None, non_blocking=False, memory_format=torch.preserve_format)
+        Moves the MovableData to specified or default CUDA device.
+    cpu(memory_format=torch.preserve_format)
+        Moves the MovableData to cpu.
+    to(*args, **kwargs)
+        Moves the MovableData to specified device.
+        See `torch.Tensor.to(...)` for more details on usage.
+    get_device()
+        Returns the CUDA device number if possible. Raises `DeviceNotRetrievableError` otherwise.
+
+    Inheritance
+    -----------
+    See `MovableData` for details.
+    """
     def __init__(self, data_container, device=None):
+        """
+        Parameters
+        ----------
+        data_container: DataContainer
+            The DataContainer the dataset uses
+        device : torch.device, optional
+            The device which the `MovableData` should be moved to on load, by default cpu.
+        """
         BaseDataset.__init__(self, data_container, device=device)
         torch.utils.data.Dataset.__init__(self)
 
