@@ -37,7 +37,7 @@ def main():
 
     processing = RegressionProcessing(rotate=False, grid_dimension=(3, 3, 3),
                                       postprocessing=res100())
-    dataset = StreamlineDataset(tracker, data, processing, append_reverse=True, online_caching=True)
+    dataset = StreamlineDataset(tracker, data, processing, append_reverse=True, ram_caching=True)
     training_set, validation_set = random_split(dataset)
 
     model = ModelLSTM(dropout=0.05, hidden_sizes=[256, 256], sizes=dataset.get_feature_shapes(),

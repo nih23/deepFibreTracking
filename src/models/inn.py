@@ -13,6 +13,8 @@ from FrEIA.modules import GLOWCouplingBlock, PermuteRandom
 
 
 class INN():
+    # x: Direction
+    # y: DWI
     def __init__(self, ndim_tot, ndim_y, ndim_x,  ndim_z, feature, num_blocks, batch_size, lr, lambd_predict = 1., lambd_latent = 300., lambd_rev = 450., turn=True, device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")):
         self.ndim_tot = ndim_tot
         self.ndim_y =  ndim_y 
