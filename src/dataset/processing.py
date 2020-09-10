@@ -11,6 +11,8 @@ class Processing():
     # TODO - Live Calculation for Tracker
     def calculate_streamline(self, data_container, streamline):
         raise NotImplementedError
+    def calculate_item(self, data_container, point, next_dir):
+        raise NotImplementedError
 
 class RegressionProcessing(Processing):
     def __init__(self, rotate=None, grid_dimension=None, grid_spacing=None, postprocessing=None, normalize=None, normalize_mean=None, normalize_std=None):
@@ -70,6 +72,16 @@ class RegressionProcessing(Processing):
         self.grid = get_grid(grid_dimension) * grid_spacing
 
         self.id = "RegressionProcessing-r{}-grid{}x{}x{}-spacing{}-postprocessing-{}".format(rotate, *grid_dimension, grid_spacing, postprocessing.id)
+
+    def calculate_item(self, data_container, point, next_dir):
+        assert self.options.rotate == False # TODO throw error
+        dwi, _ = self._get_dwi(data_container, point[np.newaxis, ...])
+        if self.options.postprocessing is not None:
+            dwi = self.options.postprocessing(dwi, data_container.data.b0,
+                                              data_container.data.bvecs,
+                                              data_container.data.bvals)
+        dwi = dwi.squeeze(axis=0)
+        return dwi, next_dir
 
     def calculate_streamline(self, data_container, streamline):
         next_dir = self._get_next_direction(streamline)
@@ -156,4 +168,20 @@ class ClassificationProcessing(RegressionProcessing):
             classification_output[i, -1] = 0.0
 
         classification_output[-1, -1] = 1 # stop condition
+        return dwi, classification_output
+
+    def calculate_item(self, data_container, point, next_dir):
+        assert self.options.rotate == False # TODO throw error
+        dwi, next_dir = RegressionProcessing.calculate_item(data_container, point, next_dir)
+        sphere = self.sphere
+        # code adapted from Benou "DeepTract",
+        # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
+        sl_len = len(next_dir)
+        l = len(sphere.theta) + 1
+        classification_output = np.zeros((l))
+        if isDirection:
+            labels_odf = np.exp(-1 * sphere_distance(next_dir[:], np.asarray(
+                [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
+            classification_output[:-1] = labels_odf / np.sum(labels_odf)
+        classification_output[-1] = 0.0 if isDirection else 1.0
         return dwi, classification_output
