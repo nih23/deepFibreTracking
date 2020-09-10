@@ -441,7 +441,6 @@ class SingleDirectionsDataset(IterableDataset):
         self.size = 0
         for streamline in self.streamlines:
             self.size += len(streamline) - 1
-
         self.id = self.id + "-{}-(".format(processing.id) + tracker.id + ")"
         config = Config.get_config()
         if append_reverse is None:
@@ -454,20 +453,24 @@ class SingleDirectionsDataset(IterableDataset):
         self.options.append_reverse = append_reverse
         self.options.online_caching = online_caching
         self.options.processing = processing
+        if append_reverse:
+            self.size = self.size * 2
         self.calc_data = Object()
-        self.calc_data.points = torch.zeros(len(self), 3)
-        self.calc_data.next_dir = torch.zeros(len(self), 3)
+        self.calc_data.points = np.zeros((self.size, 3))
+        self.calc_data.next_dir = np.zeros((self.size, 3))
         idx = 0
         for streamline in self.streamlines:
-            self.calc_data.points[idx:] = streamline[:-1]
-            self.calc_data.next_dir[idx:] = streamline[1:] - streamline[:-1]
-            idx += len(streamline) - 1 
+            sl_len = len(streamline) - 1
+            self.calc_data.points[idx:(idx+sl_len)] = streamline[:-1]
+            self.calc_data.next_dir[idx:(idx+sl_len)] = streamline[1:] - streamline[:-1]
+            idx += sl_len
         if append_reverse:
             for streamline in self.streamlines:
+                sl_len = len(streamline) - 1
                 streamline = streamline[::-1]
-                self.calc_data.points[idx:] = streamline[:-1]
-                self.calc_data.next_dir[idx:] = streamline[1:] - streamline[:-1]
-                idx += len(streamline) - 1 
+                self.calc_data.points[idx:(idx+sl_len)] = streamline[:-1]
+                self.calc_data.next_dir[idx:(idx+sl_len)] = streamline[1:] - streamline[:-1]
+                idx += sl_len
         assert idx == len(self)
         self.calc_data.next_dir = (self.calc_data.next_dir /
                                    np.linalg.norm(self.calc_data.next_dir, axis=1)[:, None])
@@ -476,4 +479,34 @@ class SingleDirectionsDataset(IterableDataset):
         self.feature_shapes = None
 
     def __len__(self):
-        return len(self.calc_data.points)
+        return self.size
+
+    def get_feature_shapes(self):
+        """Retrieve feature shape of in and output for neural network"""
+        if self.feature_shapes is None:
+            dwi, next_dir = self[0]
+            # assert that every type of data processing maintains same shape
+            # and that every element has same shape
+            input_shape = torch.tensor(dwi.shape)
+            input_shape[0] = 1
+
+            output_shape = torch.tensor(next_dir.shape)
+            output_shape[0] = 1
+            self.feature_shapes = (torch.prod(input_shape).item(), torch.prod(output_shape).item())
+        return self.feature_shapes
+    def __getitem__(self, index):
+        if self.options.online_caching and self.cache[index] is not None:
+            return self.cache[index]
+        (inp, output) = self._calculate_item(index)
+        inp = torch.from_numpy(inp).float().to(self.device)
+        output = torch.from_numpy(output).float().to(self.device)
+
+        if self.options.online_caching:
+            self.cache[index] = (inp, output)
+            return self.cache[index]
+        else:
+            return (inp, output)
+
+    def _calculate_item(self, index):
+        return self.options.processing.calculate_item(self.data_container, self.calc_data.points[index], self.calc_data.next_dir[index])
+
