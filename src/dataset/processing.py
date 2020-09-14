@@ -1,5 +1,17 @@
+"""The processing submodule contains processing options for the raw streamline and DWI data.
+
+Classes
+-------
+Processing
+    The base class for all processing instructions
+RegressionProcessing
+    The basic processing, calculates direction vectors out of streamlines and interpolates DWI along a grid 
+ClassificationProcessing
+    Based on RegressionProcessing, however it reshapes the regression problem of the direction vector as a classification problem.
+"""
 from types import SimpleNamespace
 import numpy as np
+import torch
 from dipy.core.geometry import sphere_distance
 from dipy.core.sphere import Sphere
 from dipy.data import get_sphere
@@ -8,14 +20,111 @@ from src.config import Config
 from src.util import get_reference_orientation, rotation_from_vectors, get_grid
 
 class Processing():
+    """The basic Processing class.
+
+    Every Processing should extend this function and implement the following:
+
+    Methods
+    -------
+    calculate_streamline(data_container, streamline)
+        Calculates the (input, output) tuple for a complete streamline
+    calculate_item(data_container, point, next_direction)
+        Calculates the (input, output) tuple for a single streamline point
+
+    The methods can work together, but they do not have to. 
+    The existence of both must be guaranteed to be able to use every dataset.
+    """
     # TODO - Live Calculation for Tracker
     def calculate_streamline(self, data_container, streamline):
+        """Calculates the (input, output) tuple for a whole streamline.
+
+        Arguments
+        ---------
+        data_container : DataContainer
+            The DataContainer the streamline is associated with
+        streamline: Tensor
+            The streamline the input and output data should be calculated for
+
+        Raises
+        ------
+        NotImplementedError
+            If the Processing subclass didn't overwrite the function.
+        
+        Returns
+        -------
+        tuple
+            The (input, output) data for the requested item.
+
+        """
         raise NotImplementedError
-    def calculate_item(self, data_container, point, next_dir):
+    def calculate_item(self, data_container, point, next_dir=None):
+        """Calculates the (input, output) tuple for a single streamline point.
+
+        Arguments
+        ---------
+        data_container : DataContainer
+            The DataContainer the streamline is associated with
+        point: Tensor
+            The point the data should be calculated for in RAS*
+        next_dir: Tensor, optional
+            The next direction, you do not have to provide it if you only need the input part.
+        Raises
+        ------
+        NotImplementedError
+            If the Processing subclass didn't overwrite the function.
+
+        Returns
+        -------
+        tuple
+            The (input, output) data for the requested item.
+        """
         raise NotImplementedError
 
 class RegressionProcessing(Processing):
+    """Provides a Processing option for regression training.
+
+    There are many configuration options specified in the constructor.
+    An instance of this class has to be passed onto a Dataset.
+
+    Attributes
+    ----------
+    options: SimpleNamespace
+        An object holding all configuration options of this dataset.
+    grid: numpy.ndarray
+        The grid, precalculated for this processing option
+    id: str
+        An ID representing this Dataset. This is not unique to any instance, but it consists of parameters and used dataset. 
+
+    Methods
+    -------
+    calculate_streamline(data_container, streamline)
+        Calculates the (input, output) tuple for a complete streamline
+    calculate_item(data_container, point, next_direction)
+        Calculates the (input, output) tuple for a single streamline point
+
+    """
     def __init__(self, rotate=None, grid_dimension=None, grid_spacing=None, postprocessing=None, normalize=None, normalize_mean=None, normalize_std=None):
+        """
+
+        If the parameters are passed as none, the value from the config.ini is used.
+
+        Parameters
+        ----------
+        rotate : bool, optional
+            Indicates wether grid should be rotated along fiber, by default None
+        grid_dimension : numpy.ndarray, optional
+            Grid dimension (X,Y,Z) of the interpolation grid, by default None
+        grid_spacing : float, optional
+            Grid spacing, by default None
+        postprocessing : data.postprocessing, optional
+            The postprocessing to be done on the interpolated DWI, by default None
+        normalize : bool, optional
+            Indicates wether data should be normalized, by default None
+        normalize_mean : numpy.ndarray, optional
+            Give mean for normalization, by default None
+        normalize_std : numpy.ndarray, optional
+            Give std for normalization, by default None
+        """
         config = Config.get_config()
         if grid_dimension is None:
             grid_dimension = np.array((config.getint("GridOptions", "sizeX", fallback="3"),
@@ -73,8 +182,24 @@ class RegressionProcessing(Processing):
 
         self.id = "RegressionProcessing-r{}-grid{}x{}x{}-spacing{}-postprocessing-{}".format(rotate, *grid_dimension, grid_spacing, postprocessing.id)
 
-    def calculate_item(self, data_container, point, next_dir):
-        assert self.options.rotate == False # TODO throw error
+    def calculate_item(self, data_container, point, next_dir=None):
+        """Calculates the (input, output) tuple for a single streamline point.
+
+        Arguments
+        ---------
+        data_container : DataContainer
+            The DataContainer the streamline is associated with
+        point: Tensor
+            The point the data should be calculated for in RAS*
+        next_dir: Tensor, optional
+            The next direction, you do not have to provide it if you only need the input part.
+
+        Returns
+        -------
+        tuple
+            The (input, output) data for the requested item.
+        """
+        assert self.options.rotate == False # TODO add rot_matrix as optional parameter
         dwi, _ = self._get_dwi(data_container, point[np.newaxis, ...])
         if self.options.postprocessing is not None:
             dwi = self.options.postprocessing(dwi, data_container.data.b0,
@@ -84,6 +209,21 @@ class RegressionProcessing(Processing):
         return dwi, next_dir
 
     def calculate_streamline(self, data_container, streamline):
+        """Calculates the (input, output) tuple for a whole streamline.
+
+        Arguments
+        ---------
+        data_container : DataContainer
+            The DataContainer the streamline is associated with
+        streamline: Tensor
+            The streamline the input and output data should be calculated for
+        
+        Returns
+        -------
+        tuple
+            The (input, output) data for the requested item.
+
+        """
         next_dir = self._get_next_direction(streamline)
         next_dir, rot_matrix = self._apply_rot_matrix(next_dir)
         dwi, _ = self._get_dwi(data_container, streamline, rot_matrix=rot_matrix)
@@ -134,8 +274,46 @@ class RegressionProcessing(Processing):
 
 
 class ClassificationProcessing(RegressionProcessing):
+    """Provides a Processing option for regression training.
+
+    There are many configuration options specified in the constructor.
+    An instance of this class has to be passed onto a Dataset.
+
+    Attributes
+    ----------
+    options: SimpleNamespace
+        An object holding all configuration options of this dataset.
+    grid: numpy.ndarray
+        The grid, precalculated for this processing option
+    id: str
+        An ID representing this Dataset. This is not unique to any instance, but it consists of parameters and used dataset. 
+
+    Methods
+    -------
+    calculate_streamline(data_container, streamline)
+        Calculates the (input, output) tuple for a complete streamline
+    calculate_item(data_container, point, next_direction)
+        Calculates the (input, output) tuple for a single streamline point
+    """
     def __init__(self, rotate=None, grid_dimension=None, grid_spacing=None, postprocessing=None,
                  sphere=None):
+        """
+
+        If the parameters are passed as none, the value from the config.ini is used.
+
+        Parameters
+        ----------
+        rotate : bool, optional
+            Indicates wether grid should be rotated along fiber, by default None
+        grid_dimension : numpy.ndarray, optional
+            Grid dimension (X,Y,Z) of the interpolation grid, by default None
+        grid_spacing : float, optional
+            Grid spacing, by default None
+        postprocessing : data.postprocessing, optional
+            The postprocessing to be done on the interpolated DWI, by default None
+        sphere : Sphere or str, optional
+            The sphere to use for interpolation
+        """
 
         RegressionProcessing.__init__(self, rotate=rotate, grid_dimension=grid_dimension,
                                       grid_spacing=grid_spacing, postprocessing=grid_spacing,
@@ -154,6 +332,21 @@ class ClassificationProcessing(RegressionProcessing):
                    .format(rotate, sphere, *grid_dimension, grid_spacing, postprocessing.id))
 
     def calculate_streamline(self, data_container, streamline):
+        """Calculates the classification (input, output) tuple for a whole streamline.
+
+        Arguments
+        ---------
+        data_container : DataContainer
+            The DataContainer the streamline is associated with
+        streamline: Tensor
+            The streamline the input and output data should be calculated for
+        
+        Returns
+        -------
+        tuple
+            The (input, output) data for the requested item.
+
+        """
         dwi, next_dir = RegressionProcessing.calculate_streamline(self, data_container, streamline)
         sphere = self.sphere
         # code adapted from Benou "DeepTract",
@@ -170,18 +363,37 @@ class ClassificationProcessing(RegressionProcessing):
         classification_output[-1, -1] = 1 # stop condition
         return dwi, classification_output
 
-    def calculate_item(self, data_container, point, next_dir):
-        assert self.options.rotate == False # TODO throw error
-        dwi, next_dir = RegressionProcessing.calculate_item(data_container, point, next_dir)
-        sphere = self.sphere
-        # code adapted from Benou "DeepTract",
-        # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
-        sl_len = len(next_dir)
-        l = len(sphere.theta) + 1
-        classification_output = np.zeros((l))
-        if isDirection:
-            labels_odf = np.exp(-1 * sphere_distance(next_dir[:], np.asarray(
-                [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
-            classification_output[:-1] = labels_odf / np.sum(labels_odf)
-        classification_output[-1] = 0.0 if isDirection else 1.0
-        return dwi, classification_output
+    def calculate_item(self, data_container, point, next_dir=None):
+        """Calculates the classification (input, output) tuple for a single streamline point.
+
+        Arguments
+        ---------
+        data_container : DataContainer
+            The DataContainer the streamline is associated with
+        point: Tensor
+            The point the data should be calculated for in RAS*
+        next_dir: Tensor, optional
+            The next direction, you do not have to provide it if you only need the input part.
+
+        Returns
+        -------
+        tuple
+            The (input, output) data for the requested item.
+        """
+        assert self.options.rotate == False # TODO add rot_matrix as optional parameter
+        dwi, next_dir = RegressionProcessing.calculate_item(data_container, point, next_dir=next_dir)
+        if next_dir is not None:
+            sphere = self.sphere
+            # code adapted from Benou "DeepTract",
+            # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
+            sl_len = len(next_dir)
+            l = len(sphere.theta) + 1
+            classification_output = np.zeros((l))
+            is_direction = torch.sum(next_dir**2) != 0
+            if is_direction: # if is real direction
+                labels_odf = np.exp(-1 * sphere_distance(next_dir[:], np.asarray(
+                    [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
+                classification_output[:-1] = labels_odf / np.sum(labels_odf)
+            classification_output[-1] = 0.0 if is_direction else 1.0
+            return dwi, classification_output
+        return dwi, next_dir
