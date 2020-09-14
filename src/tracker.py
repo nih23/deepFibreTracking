@@ -15,7 +15,7 @@ from dipy.data import get_sphere, default_sphere
 from dipy.direction import peaks_from_model, DeterministicMaximumDirectionGetter
 import dipy.reconst.dti as dti
 
-from src.data import Object
+from types import SimpleNamespace
 from src.config import Config
 from src.cache import Cache
 
@@ -90,7 +90,7 @@ class SeedBasedTracker(Tracker):
                  min_length=None,
                  max_length=None):
         Tracker.__init__(self, data_container)
-        self.options = Object()
+        self.options = SimpleNamespace()
         if seeds_count is not None and random_seeds is None:
             random_seeds = True
         if random_seeds is None:
@@ -255,7 +255,7 @@ class ISMRMReferenceStreamlinesTracker(Tracker):
     """Class representing the ISMRM 2015 Ground Truth fiber tracks."""
     def __init__(self, data_container, streamline_count=None):
         Tracker.__init__(self, data_container)
-        self.options = Object()
+        self.options = SimpleNamespace()
         self.options.streamline_count = streamline_count
         if streamline_count is not None:
             self.id = self.id + "-" + str(streamline_count)

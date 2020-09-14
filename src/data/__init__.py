@@ -1,7 +1,6 @@
 # pylint: disable=attribute-defined-outside-init
 """
 The data module is handling any kind of DWI-Data.
-It also contains a plain Object class, used to store information.
 
 Available subpackages
 ---------------------
@@ -10,8 +9,6 @@ postprocessing
 
 Classes
 -------
-Object
-    Provides basic object with free writable attributes for information storage.
 Error
     Base class for Data exceptions.
 DeviceNotRetrievableError
@@ -50,25 +47,6 @@ import nibabel as nb
 from nibabel.affines import apply_affine
 
 from src.config import Config
-
-class Object():
-    """
-    Just a plain object usable to store information.
-
-    It can be used to notate arbitrary attributes by name to make the code
-    more readable.
-
-    Examples
-    --------
-
-    An example usage of the Object class
-
-    >>> a = Object()
-    >>> a.message = "Hello World!"
-    >>> a.message
-    'Hello World!'
-    """
-
 class Error(Exception):
     """
     Base class for Data exceptions.
@@ -490,14 +468,14 @@ class DataContainer():
 
     Attributes
     ----------
-    options: Object
-        The configuration of the current DWI Object.
+    options: SimpleNamespace
+        The configuration of the current DWI.
     path: str
         The path of the loaded DWI-Data.
-    data: Object
-        The dwi data, referenced in the Object attributes.
+    data: SimpleNamespace
+        The dwi data, referenced in the SimpleNamespace's attributes.
     id: str
-        An identifier of the current DWI-Object including its preprocessing.
+        An identifier of the current DWI-Data including its preprocessing.
 
     Methods
     -------
@@ -552,7 +530,7 @@ class DataContainer():
             denoise = Config.get_config().getboolean("data", "denoise", fallback="no")
         if b0_threshold is None:
             b0_threshold = Config.get_config().getfloat("data", "b0-threshold", fallback="10")
-        self.options = Object()
+        self.options = SimpleNamespace()
         self.options.denoised = denoise
         self.options.cropped = False
         self.options.normalized = False
@@ -585,7 +563,7 @@ class DataContainer():
 
         Returns
         -------
-        Object
+        SimpleNamespace
             An object holding all data as attributes, usable for further processing.
 
         Raises
@@ -593,7 +571,7 @@ class DataContainer():
         DataContainerNotLoadableError
             This error is thrown if one or multiple files cannot be foud.
         """
-        data = Object()
+        data = SimpleNamespace()
         try:
             data.bvals, data.bvecs = read_bvals_bvecs(os.path.join(self.path, file_names['bvals']),
                                                       os.path.join(self.path, file_names['bvecs']))
@@ -827,14 +805,14 @@ class HCPDataContainer(DataContainer):
 
     Attributes
     ----------
-    options: Object
-        The configuration of the current DWI Object.
+    options: SimpleNamespace
+        The configuration of the current DWI Data.
     path: str
         The path of the loaded DWI-Data.
-    data: Object
-        The dwi data, referenced in the Object attributes.
+    data: SimpleNamespace
+        The dwi data, referenced in the SimpleNamespace's attributes.
     id: str
-        An identifier of the current DWI-Object including its preprocessing.
+        An identifier of the current DWI-data including its preprocessing.
     hcp_id: int
         The HCP ID from which the data was retrieved.
 
@@ -900,14 +878,14 @@ class ISMRMDataContainer(DataContainer):
 
     Attributes
     ----------
-    options: Object
-        The configuration of the current DWI Object.
+    options: SimpleNamespace
+        The configuration of the current DWI.
     path: str
         The path of the loaded DWI-Data.
-    data: Object
-        The dwi data, referenced in the Object attributes.
+    data: SimpleNamespace
+        The dwi data, referenced in the SimpleNamespace's attributes.
     id: str
-        An identifier of the current DWI-Object including its preprocessing.
+        An identifier of the current DWI-data including its preprocessing.
 
     Methods
     -------

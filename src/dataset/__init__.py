@@ -25,7 +25,8 @@ from dipy.core.geometry import sphere_distance
 from dipy.core.sphere import Sphere
 from dipy.data import get_sphere
 
-from src.data import MovableData, Object
+from src.data import MovableData
+from types import SimpleNamespace
 from src.config import Config
 from src.util import get_reference_orientation, rotation_from_vectors, get_grid
 
@@ -256,8 +257,8 @@ class ConcatenatedDataset(IterableDataset):
     data_specification: str
         An string representing the type of Dataset this Concatenated dataset holds. If `ignore_data_specification=True`,
         it holds the specification of the first dataset.
-    options: Object
-        An object holding all configuration options of this dataset.
+    options: SimpleNamespace
+        An Namespace holding all configuration options of this dataset.
 
     Methods
     -------
@@ -312,7 +313,7 @@ class ConcatenatedDataset(IterableDataset):
             self.__lens.append(len(ds) + self.__lens[-1])
         self.id = self.id[:-2] + "]"
         self.datasets = datasets
-        self.options = Object()
+        self.options = SimpleNamespace()
         self.options.ignore_data_specification = ignore_data_specification
 
     def __len__(self):
@@ -442,7 +443,7 @@ class StreamlineDataset(IterableDataset):
         The DataContainer the dataset is based on
     streamlines: list
         A list containing all the streamlines in RAS+
-    options: Object
+    options: SimpleNamespace
         A namespace containing all specified options.
     cache: list, optional
         If online caching is active, the cache.
@@ -497,7 +498,7 @@ class StreamlineDataset(IterableDataset):
         if ram_caching is None:
             ram_caching = config.getboolean("DatasetOptions", "ramCaching",
                                                fallback="yes")
-        self.options = Object()
+        self.options = SimpleNamespace()
         self.options.append_reverse = append_reverse
         self.options.ram_caching = ram_caching
         self.options.processing = processing
@@ -718,7 +719,7 @@ class SingleDirectionsDataset(IterableDataset):
         The size of the Dataset
     calc_data: Tensor
         Preprocessed Data for generating the single elements live.
-    options: Object
+    options: SimpleNamespace
         A namespace containing all specified options.
     cache: list, optional
         If online caching is active, the cache.
@@ -776,13 +777,13 @@ class SingleDirectionsDataset(IterableDataset):
         if ram_caching is None:
             ram_caching = config.getboolean("DatasetOptions", "ramCaching",
                                                fallback="yes")
-        self.options = Object()
+        self.options = SimpleNamespace
         self.options.append_reverse = append_reverse
         self.options.ram_caching = ram_caching
         self.options.processing = processing
         if append_reverse:
             self.size = self.size * 2
-        self.calc_data = Object()
+        self.calc_data = SimpleNamespace()
         self.calc_data.points = np.zeros((self.size, 3))
         self.calc_data.next_dir = np.zeros((self.size, 3))
         idx = 0
