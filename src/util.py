@@ -1,4 +1,18 @@
-"""Helpful functions required multiple times"""
+"""Helpful functions required multiple times in different contexts
+
+Methods
+-------
+rotation_from_vectors(rot, vector_orig, vector_fin)
+    Calculates the rotation matrix required to rotate from one vector to another.
+get_reference_orientation()
+    Returns the reference orientation to use with this library. This could change, depending on config!
+get_2D_sphere(no_phis=None, no_thetas=None)
+    Retrieve evenly distributed 2D sphere out of phi and theta count
+get_grid(grid_dimension)
+    Calculates a (unrotated) grid for given dimensions
+random_split(dataset, training_part=0.9)
+    Splits a given dataset into train and validation part
+"""
 import torch
 import numpy as np
 from dipy.core.sphere import Sphere
@@ -58,7 +72,13 @@ def rotation_from_vectors(rot, vector_orig, vector_fin):
     rot[2, 2] = 1.0 + (1.0 - ca)*(z**2 - 1.0)
 
 def get_reference_orientation():
-    """Get current reference rotation"""
+    """Get current reference rotation
+    
+    Returns
+    -------
+    numpy.ndarray
+        The reference rotation usable for rotations.
+    """
     config = Config.get_config()
     orientation = config.get("DatasetOptions", "referenceOrientation", fallback="R+").upper()
     ref = None
@@ -73,7 +93,21 @@ def get_reference_orientation():
     return ref
 
 def get_2D_sphere(no_phis=None, no_thetas=None):
-    """Retrieve evenly distributed 2D sphere out of phi and theta count"""
+    """Retrieve evenly distributed 2D sphere out of phi and theta count.
+
+
+    Parameters
+    ----------
+    no_phis : int, optional
+        The numbers of phis in the sphere, by default as in config file / 16
+    no_thetas : int, optional
+        The numbers of thetas in the sphere, by default as in config file / 16
+
+    Returns
+    -------
+    Sphere
+        The 2D sphere requested
+    """
     if no_thetas is None:
         no_thetas = Config.get_config().getint("2DSphereOptions", "noThetas", fallback="16")
     if no_phis is None:
@@ -88,15 +122,35 @@ def get_2D_sphere(no_phis=None, no_thetas=None):
     return sphere
 
 def get_grid(grid_dimension):
-    """Retrieve grid for dimensions"""
+    """Calculates grid for given dimension
+
+    Parameters
+    ----------
+    grid_dimension : numpy.ndarray
+        The grid dimensions of the grid to calculate
+
+    Returns
+    -------
+    numpy.ndarray
+        The requested grid
+    """
     (dx, dy, dz) = (grid_dimension - 1)/2
     return np.moveaxis(np.mgrid[-dx:dx+1, -dy:dy+1, -dz:dz+1], 0, 3)
 
 def random_split(dataset, training_part=0.9):
     """Retrieves a dataset from given path and splits them randomly in train and test data.
-        Arguments:
-        dataset: the dataset
-        training_part: float indicating the percentage of training data. default: 0.9 (90%)
+
+    Parameters
+    ----------
+    dataset : Dataset
+        The dataset to use
+    training_part : float, optional
+        The training part, by default 0.9 (90%)
+
+    Returns
+    -------
+    tuple
+        A tuple containing (train_dataset, validation_dataset)
     """
     train_len = int(training_part*len(dataset))
     test_len = len(dataset) - train_len
