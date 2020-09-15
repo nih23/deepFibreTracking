@@ -1,6 +1,11 @@
 """
 The dataset module is handling the datasets usable for training and testing.
 
+Available subpackages
+---------------------
+processing
+    Provides processing options for datasets.
+
 Classes
 -------
 Error
