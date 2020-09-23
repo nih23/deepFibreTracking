@@ -204,7 +204,7 @@ class RegressionProcessing(Processing):
         next_dirs, rot_matrix = self._apply_rot_matrix(next_dirs)
         
         next_dir = next_dirs[-1]
-        rot_matrix = None if rot_matrix is None else rot_matrix[1:2]
+        rot_matrix = None if rot_matrix is None else rot_matrix[np.newaxis, -1]
         dwi, _ = self._get_dwi(data_container, previous_sl[np.newaxis, -1], rot_matrix=rot_matrix)
         if self.options.postprocessing is not None:
             dwi = self.options.postprocessing(dwi, data_container.data.b0,
