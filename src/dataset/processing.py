@@ -320,7 +320,7 @@ class ClassificationProcessing(RegressionProcessing):
         """
 
         RegressionProcessing.__init__(self, rotate=rotate, grid_dimension=grid_dimension,
-                                      grid_spacing=grid_spacing, postprocessing=grid_spacing,
+                                      grid_spacing=grid_spacing, postprocessing=postprocessing,
                                       normalize=False)
         if sphere is None:
             sphere = Config.get_config().get("Processing", "classificationSphere",
