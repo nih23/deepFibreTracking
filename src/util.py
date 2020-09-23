@@ -169,5 +169,4 @@ def get_mask_from_lengths(lengths):
     -------
     Tensor
         The requested mask."""
-    
-    return (torch.arange(torch.max(lengths))[None, :] < lengths[:, None])
+    return (torch.arange(torch.max(lengths, device=lengths.device))[None, :] < lengths[:, None])
