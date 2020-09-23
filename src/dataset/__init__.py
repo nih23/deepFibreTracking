@@ -475,7 +475,7 @@ class StreamlineDataset(IterableDataset):
 
     """
     def __init__(self, tracker, data_container, processing,
-                 device=None, append_reverse=None, ram_caching=None):
+                 device=None, append_reverse=None, online_caching=None):
         """
         Parameters
         ----------
@@ -489,7 +489,7 @@ class StreamlineDataset(IterableDataset):
             The device which the `MovableData` should be moved to on load, by default cpu.
         append_reverse: boolean, optional
             A boolean indicating wether the reversed streamlines should be appended to the Dataset.
-        ram_caching : boolean, optional
+        online_caching : boolean, optional
             A boolean indicating wether the object should cache all generated streamlines.
 
         """
@@ -500,14 +500,14 @@ class StreamlineDataset(IterableDataset):
         if append_reverse is None:
             append_reverse = config.getboolean("DatasetOptions", "appendReverseStreamlines",
                                                fallback="yes")
-        if ram_caching is None:
-            ram_caching = config.getboolean("DatasetOptions", "ramCaching",
+        if online_caching is None:
+            online_caching = config.getboolean("DatasetOptions", "onlineCaching",
                                                fallback="yes")
         self.options = SimpleNamespace()
         self.options.append_reverse = append_reverse
-        self.options.ram_caching = ram_caching
+        self.options.online_caching = online_caching
         self.options.processing = processing
-        if ram_caching:
+        if online_caching:
             self.cache = [None] * len(self)
         self.feature_shapes = None
 
@@ -517,13 +517,13 @@ class StreamlineDataset(IterableDataset):
         return len(self.streamlines)
 
     def __getitem__(self, index):
-        if self.options.ram_caching and self.cache[index] is not None:
+        if self.options.online_caching and self.cache[index] is not None:
             return self.cache[index]
         (inp, output) = self._calculate_item(index)
         inp = torch.from_numpy(inp).float().to(self.device)
         output = torch.from_numpy(output).float().to(self.device)
 
-        if self.options.ram_caching:
+        if self.options.online_caching:
             self.cache[index] = (inp, output)
             return self.cache[index]
         else:
@@ -613,7 +613,7 @@ class StreamlineDataset(IterableDataset):
         StreamlineDataset
             The object moved to specified device
         """
-        if not self.options.ram_caching:
+        if not self.options.online_caching:
             return
         for index, el in enumerate(self.cache):
             if el is None:
@@ -646,7 +646,7 @@ class StreamlineDataset(IterableDataset):
         StreamlineDataset
             The object moved to specified device
         """
-        if not self.options.ram_caching:
+        if not self.options.online_caching:
             return
         for index, el in enumerate(self.cache):
             if el is None:
@@ -682,7 +682,7 @@ class StreamlineDataset(IterableDataset):
         ConcatenatedDataset
             The object moved to specified device
         """
-        if not self.options.ram_caching:
+        if not self.options.online_caching:
             return
         for index, el in enumerate(self.cache):
             if el is None:
@@ -750,7 +750,7 @@ class SingleDirectionsDataset(IterableDataset):
     Also `_calculate_item(index)` generates an item and `_get_streamline(index)` retrieves the streamline in RAS+.
     """
     def __init__(self, tracker, data_container, processing,
-                 device=None, append_reverse=None, ram_caching=None):
+                 device=None, append_reverse=None, online_caching=None):
         """
 
         ! Only unrotated data !
@@ -766,7 +766,7 @@ class SingleDirectionsDataset(IterableDataset):
             The device which the `MovableData` should be moved to on load, by default cpu.
         append_reverse: boolean, optional
             A boolean indicating wether the reversed streamlines should be appended to the Dataset.
-        ram_caching : boolean, optional
+        online_caching : boolean, optional
             A boolean indicating wether the object should cache all generated streamlines.
         """
         IterableDataset.__init__(self, data_container, device=device)
@@ -794,12 +794,12 @@ class SingleDirectionsDataset(IterableDataset):
         if append_reverse is None:
             append_reverse = config.getboolean("DatasetOptions", "appendReverseStreamlines",
                                                fallback="yes")
-        if ram_caching is None:
-            ram_caching = config.getboolean("DatasetOptions", "ramCaching",
+        if online_caching is None:
+            online_caching = config.getboolean("DatasetOptions", "onlineCaching",
                                                fallback="yes")
         self.options = SimpleNamespace
         self.options.append_reverse = append_reverse
-        self.options.ram_caching = ram_caching
+        self.options.online_caching = online_caching
         self.options.processing = processing
 
         self.calc_data = np.zeros((self.size, 2))
@@ -814,7 +814,7 @@ class SingleDirectionsDataset(IterableDataset):
 
         assert idx == self.size
 
-        if ram_caching:
+        if online_caching:
             self.cache = [] * len(self)
         self.feature_shapes = None
 
@@ -843,13 +843,13 @@ class SingleDirectionsDataset(IterableDataset):
             self.feature_shapes = (torch.prod(input_shape).item(), torch.prod(output_shape).item())
         return self.feature_shapes
     def __getitem__(self, index):
-        if self.options.ram_caching and self.cache[index] is not None:
+        if self.options.online_caching and self.cache[index] is not None:
             return self.cache[index]
         (inp, output) = self._calculate_item(index)
         inp = torch.from_numpy(inp).float().to(self.device)
         output = torch.from_numpy(output).float().to(self.device)
 
-        if self.options.ram_caching:
+        if self.options.online_caching:
             self.cache[index] = (inp, output)
             return self.cache[index]
         else:
