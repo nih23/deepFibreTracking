@@ -200,16 +200,19 @@ class RegressionProcessing(Processing):
             The (input, output) data for the requested item.
         """
         # create artificial next_dirs consisting of last and next dir for rot_mat calculation
-        next_dirs = np.concatenate((previous_sl[1:] - previous_sl[:-1])[-1:], next_dir) 
+        next_dirs = np.concatenate(((previous_sl[1:] - previous_sl[:-1])[-1:], next_dir[np.newaxis, ...])) 
         next_dirs, rot_matrix = self._apply_rot_matrix(next_dirs)
         
-        next_dir = next_dirs[1:2]
-        dwi, _ = self._get_dwi(data_container, point[np.newaxis, ...], rot_matrix=rot_matrix[1:2])
+        next_dir = next_dirs[-1]
+        rot_matrix = None if rot_matrix is None else rot_matrix[1:2]
+        dwi, _ = self._get_dwi(data_container, previous_sl[np.newaxis, -1], rot_matrix=rot_matrix)
         if self.options.postprocessing is not None:
             dwi = self.options.postprocessing(dwi, data_container.data.b0,
                                               data_container.data.bvecs,
                                               data_container.data.bvals)
         dwi = dwi.squeeze(axis=0)
+        if self.options.normalize:
+            next_dir = (next_dir - self.options.normalize_mean)/self.options.normalize_std
         return dwi, next_dir
 
     def calculate_streamline(self, data_container, streamline):
@@ -255,8 +258,9 @@ class RegressionProcessing(Processing):
         reference = get_reference_orientation()
         rot_matrix = np.empty([len(next_dir), 3, 3])
         rot_matrix[0] = np.eye(3)
-        for i in range(len(next_dir) - 1):
-            rotation_from_vectors(rot_matrix[i + 1], reference, next_dir[i])
+        for i in range(len(next_dir)):
+            if i + 1 < len(next_dir):
+                rotation_from_vectors(rot_matrix[i + 1], reference, next_dir[i])
             next_dir[i] = rot_matrix[i].T @ next_dir[i]
         return next_dir, rot_matrix
         

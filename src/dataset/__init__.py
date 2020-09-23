@@ -769,9 +769,9 @@ class SingleDirectionsDataset(IterableDataset):
             self.size += len(streamline)
 
         if not append_end:
-            self.size -= len(streamlines)
+            self.size -= len(self.streamlines)
         if not append_start:
-            self.size -= len(streamlines)
+            self.size -= len(self.streamlines)
 
 
         self.id = self.id + "-{}-(".format(processing.id) + tracker.id + ")"
@@ -782,19 +782,19 @@ class SingleDirectionsDataset(IterableDataset):
         if online_caching is None:
             online_caching = config.getboolean("DatasetOptions", "onlineCaching",
                                                fallback="yes")
-        self.options = SimpleNamespace
+        self.options = SimpleNamespace()
         self.options.append_reverse = append_reverse
         self.options.online_caching = online_caching
         self.options.processing = processing
 
-        self.calc_data = np.zeros((self.size, 2))
+        self.calc_data = np.zeros((self.size, 2), dtype=np.int)
         idx = 0
         _START_OFFSET = 0 if append_start else 1
         _END_OFFSET = 0 if append_end else 1
         for i, streamline in enumerate(self.streamlines):
             sl_len = len(streamline) - _START_OFFSET - _END_OFFSET
-            self.calc_data[idx:(idx+sl_len)][0] = i
-            self.calc_data[idx:(idx+sl_len)][1] = np.arange(_START_OFFSET, sl_len)
+            self.calc_data[idx:(idx+sl_len), 0] = i
+            self.calc_data[idx:(idx+sl_len), 1] = np.arange(_START_OFFSET, sl_len + _START_OFFSET)
             idx += sl_len
 
         assert idx == self.size
