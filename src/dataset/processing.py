@@ -333,7 +333,7 @@ class ClassificationProcessing(RegressionProcessing):
         self.sphere = rsphere
         self.options.sphere = sphere
         self.id = ("ClassificationProcessing-r{}-sphere-{}-grid{}x{}x{}-spacing{}-postprocessing-{}"
-                   .format(rotate, sphere, *grid_dimension, grid_spacing, postprocessing.id))
+                   .format(self.options.rotate, self.options.sphere, *self.options.grid_dimension, self.options.grid_spacing, self.options.postprocessing.id))
 
     def calculate_streamline(self, data_container, streamline):
         """Calculates the classification (input, output) tuple for a whole streamline.
