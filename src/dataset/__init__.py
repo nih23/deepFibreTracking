@@ -77,10 +77,7 @@ class Error(Exception):
 class WrongDatasetTypePassedError(Error):
     """Error thrown if `ConcatenatedDataset` retrieves wrong datasets.
 
-    There are two cases in which this error will occur:
-    1. The datasets you passed aren't exclusively IterableDatasets
-    2. The specification of your datasets doesn't match and the option
-        `ignore_data_specification` isn't set to True
+    This means that the datasets you passed aren't exclusively IterableDatasets
 
     Attributes
     ----------
@@ -249,7 +246,6 @@ class ConcatenatedDataset(IterableDataset):
     
     This is pratical for combining the data of multiple DataContainers into a single dataset for training.
     It is advised to use the same type of data, but is not not necessary for using it. 
-    To prevent data_specification checking, pass `ignore_data_specification=True` to the constructor.
     
     Attributes
     ----------
@@ -259,9 +255,6 @@ class ConcatenatedDataset(IterableDataset):
         A list of the datasets in this ConcatenatedDataset
     id: str
         An ID representing this Dataset. This is not unique to any instance, but it consists of parameters and used dataset.
-    data_specification: str
-        An string representing the type of Dataset this Concatenated dataset holds. If `ignore_data_specification=True`,
-        it holds the specification of the first dataset.
     options: SimpleNamespace
         An Namespace holding all configuration options of this dataset.
 
@@ -283,7 +276,7 @@ class ConcatenatedDataset(IterableDataset):
     -----------
     See `MovableData` for details.
     """
-    def __init__(self, datasets, device=None, ignore_data_specification=False):
+    def __init__(self, datasets, device=None):
         """
         Parameters
         ----------
@@ -291,35 +284,27 @@ class ConcatenatedDataset(IterableDataset):
             A list of Datasets to use
         device : torch.device, optional
             The device which the `MovableData` should be moved to on load, by default cpu.
-        ignore_data_specification : boolean, optional
-            A boolean indicating wether the check of same dataset types should be ignored, default False.
 
         Raises
         ------
         WrongDatasetTypePassedError:
-            Not all Datasets have the same type. To prevent this error from being thrown, pass `ignore_data_specification=True`
+            Not all Datasets are iterable.
         """
         IterableDataset.__init__(self, None, device=device)
         self.id = self.id + "["
         self.__lens = [0]
-        self.data_specification = datasets[0].data_specification
         for index, ds in enumerate(datasets):
             if not isinstance(ds, IterableDataset):
                 raise WrongDatasetTypePassedError(self, ds,
                                                   ("Dataset {} doesn't inherit IterableDataset. "
                                                    "It is {} ").format(index, type(ds))
                                                  ) from None
-            if ds.data_specification != self.data_specification and not ignore_data_specification:
-                raise WrongDatasetTypePassedError(self, ds,
-                                                  "Dataset {} doesn't match in DataSpecification."
-                                                  .format(index)) from None
             ds.to(self.device)
             self.id = self.id + ds.id + ", "
             self.__lens.append(len(ds) + self.__lens[-1])
         self.id = self.id[:-2] + "]"
         self.datasets = datasets
         self.options = SimpleNamespace()
-        self.options.ignore_data_specification = ignore_data_specification
 
     def __len__(self):
         return self.__lens[-1]
