@@ -836,10 +836,10 @@ class SingleDirectionsDataset(IterableDataset):
             # assert that every type of data processing maintains same shape
             # and that every element has same shape
             input_shape = torch.tensor(dwi.shape)
-            input_shape[0] = 1
+            #input_shape[0] = 1
 
             output_shape = torch.tensor(next_dir.shape)
-            output_shape[0] = 1
+            #output_shape[0] = 1
             self.feature_shapes = (torch.prod(input_shape).item(), torch.prod(output_shape).item())
         return self.feature_shapes
     def __getitem__(self, index):
