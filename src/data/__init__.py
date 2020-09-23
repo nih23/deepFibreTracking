@@ -251,6 +251,46 @@ class DWIAlreadyCroppedError(Error):
                                   "{bval} and deviation {dev}.")
                        .format(id=data_container.id, bval=bval, dev=dev))
 
+class DWIAlreadyNormalizedError(Error):
+    """Error thrown if DWI normalize function is getting called multiple times.
+
+    You have to recreate a new DataContainer if you want to change the normalization
+
+    Attributes
+    ----------
+    data_container : DataContainer
+        The affected `DataContainer`.
+    """
+    def __init__(self, data_container):
+        """Parameters
+        ----------
+        data_container : DataContainer
+            The DataContainer which is already normalized.    
+        """
+
+        self.data_container = data_container
+        Error.__init__(self, msg="The DWI of the DataContainer {id} is already normalized. ".format(id=data_container.id))
+
+class DWINotNormalizedError(Error):
+    """Error thrown if DWI has to be normalized for calling this function.
+
+    Call DataContainer.normalize() to normalize.
+
+    Attributes
+    ----------
+    data_container : DataContainer
+        The affected `DataContainer`.
+    """
+    def __init__(self, data_container):
+        """Parameters
+        ----------
+        data_container : DataContainer
+            The DataContainer which is already normalized.    
+        """
+
+        self.data_container = data_container
+        Error.__init__(self, msg="The DWI of the DataContainer {id} isn't normalized yet. Call .normalize() first!".format(id=data_container.id))
+
 class MovableData():
     """
     This class can be used to make classes handling multiple tensors more easily movable.
@@ -750,7 +790,7 @@ class DataContainer():
             self after applying the normalization.
         """
         if self.options.normalized:
-            return # TODO - perhaps add error
+            raise DWIAlreadyNormalizedError(self) from None
         b0 = self.data.b0[..., None]
 
         nb_erroneous_voxels = np.sum(self.data.dwi > b0)
@@ -777,8 +817,8 @@ class DataContainer():
         Function
             Fractional anisotropy (FA) calculated from cached eigenvalues.
         """
-        #if not self.options.normalized:
-        #    return # TODO  - perhaps add error
+        if not self.options.normalized:
+            raise DWINotNormalizedError(self) from None
         if self.data.fa is None:
             dti_model = dti.TensorModel(self.data.gtab, fit_method='LS')
             dti_fit = dti_model.fit(self.data.dwi)
