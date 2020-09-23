@@ -156,3 +156,18 @@ def random_split(dataset, training_part=0.9):
     test_len = len(dataset) - train_len
     (train_split, test_split) = torch.utils.data.random_split(dataset, (train_len, test_len))
     return train_split, test_split
+
+
+def get_mask_from_lengths(lengths):
+    """Returns a mask for given array of lengths
+    
+    Parameters
+    ----------
+    lenghts: Tensor
+        The lengths to padd
+    Returns
+    -------
+    Tensor
+        The requested mask."""
+    
+    return (torch.arange(torch.max(lengths))[None, :] < lengths[:, None])
