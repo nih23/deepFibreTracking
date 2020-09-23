@@ -770,10 +770,25 @@ class SingleDirectionsDataset(IterableDataset):
             A boolean indicating wether the object should cache all generated streamlines.
         """
         IterableDataset.__init__(self, data_container, device=device)
+
+        #!! TODO Discuss ->  asserting every streamline is len 3 or longer
+        append_end = False
+        append_start = not processing.options.rotate
+        #!!
+
         self.streamlines = tracker.get_streamlines()
+
         self.size = 0
         for streamline in self.streamlines:
-            self.size += len(streamline) - 1
+            assert len(streamline) > 2
+            self.size += len(streamline)
+
+        if not append_end:
+            self.size -= len(streamlines)
+        if not append_start:
+            self.size -= len(streamlines)
+
+
         self.id = self.id + "-{}-(".format(processing.id) + tracker.id + ")"
         config = Config.get_config()
         if append_reverse is None:
@@ -786,32 +801,26 @@ class SingleDirectionsDataset(IterableDataset):
         self.options.append_reverse = append_reverse
         self.options.ram_caching = ram_caching
         self.options.processing = processing
-        if append_reverse:
-            self.size = self.size * 2
-        self.calc_data = SimpleNamespace()
-        self.calc_data.points = np.zeros((self.size, 3))
-        self.calc_data.next_dir = np.zeros((self.size, 3))
+
+        self.calc_data = np.zeros((self.size, 2))
         idx = 0
-        for streamline in self.streamlines:
-            sl_len = len(streamline) - 1
-            self.calc_data.points[idx:(idx+sl_len)] = streamline[:-1]
-            self.calc_data.next_dir[idx:(idx+sl_len)] = streamline[1:] - streamline[:-1]
+        _START_OFFSET = 0 if append_start else 1
+        _END_OFFSET = 0 if append_end else 1
+        for i, streamline in enumerate(self.streamlines):
+            sl_len = len(streamline) - _START_OFFSET - _END_OFFSET
+            self.calc_data[idx:(idx+sl_len)][0] = i
+            self.calc_data[idx:(idx+sl_len)][1] = np.arange(_START_OFFSET, sl_len)
             idx += sl_len
-        if append_reverse:
-            for streamline in self.streamlines:
-                sl_len = len(streamline) - 1
-                streamline = streamline[::-1]
-                self.calc_data.points[idx:(idx+sl_len)] = streamline[:-1]
-                self.calc_data.next_dir[idx:(idx+sl_len)] = streamline[1:] - streamline[:-1]
-                idx += sl_len
-        assert idx == len(self)
-        self.calc_data.next_dir = (self.calc_data.next_dir /
-                                   np.linalg.norm(self.calc_data.next_dir, axis=1)[:, None])
+
+        assert idx == self.size
+
         if ram_caching:
             self.cache = [] * len(self)
         self.feature_shapes = None
 
     def __len__(self):
+        if self.options.append_reverse:
+            return 2*self.size
         return self.size
 
     def get_feature_shapes(self):
@@ -859,5 +868,17 @@ class SingleDirectionsDataset(IterableDataset):
         object:
             The item calculated.
         """
-        return self.options.processing.calculate_item(self.data_container, self.calc_data.points[index], self.calc_data.next_dir[index])
+        is_reverse = False
+        if index >= self.size:
+            is_reverse = True
+            index = index - self.size
+        (idx1, idx2) = self.calc_data[index]
+        sl = self.streamlines[idx1]
+        if not is_reverse:
+            previous_sl = sl[:(idx2+1)]
+            next_dir = sl[min(idx2+1, len(sl) - 1)] - sl[idx2] # is zero vector if empty
+        else:
+            previous_sl = sl[idx2:][::-1]
+            next_dir = sl[max(idx2-1, 0)] - sl[idx2] # is zero vector if empty
+        return self.options.processing.calculate_item(self.data_container, previous_sl, next_dir)
 

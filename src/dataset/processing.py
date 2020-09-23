@@ -57,7 +57,7 @@ class Processing():
 
         """
         raise NotImplementedError
-    def calculate_item(self, data_container, point, next_dir=None):
+    def calculate_item(self, data_container, previous_sl, next_dir):
         """Calculates the (input, output) tuple for a single streamline point.
 
         Arguments
@@ -182,25 +182,29 @@ class RegressionProcessing(Processing):
 
         self.id = "RegressionProcessing-r{}-grid{}x{}x{}-spacing{}-postprocessing-{}".format(rotate, *grid_dimension, grid_spacing, postprocessing.id)
 
-    def calculate_item(self, data_container, point, next_dir=None):
-        """Calculates the (input, output) tuple for a single streamline point.
+    def calculate_item(self, data_container, previous_sl, next_dir):
+        """Calculates the (input, output) tuple for the last streamline point.
 
         Arguments
         ---------
         data_container : DataContainer
             The DataContainer the streamline is associated with
-        point: Tensor
-            The point the data should be calculated for in RAS*
-        next_dir: Tensor, optional
-            The next direction, you do not have to provide it if you only need the input part.
+        previous_sl: np.array
+            The previous streamline point including the point the data should be calculated for in RAS*
+        next_dir: Tensor
+            The next direction, provide a null vector [0,0,0] if it is irrelevant.
 
         Returns
         -------
         tuple
             The (input, output) data for the requested item.
         """
-        assert self.options.rotate == False # TODO add rot_matrix as optional parameter
-        dwi, _ = self._get_dwi(data_container, point[np.newaxis, ...])
+        # create artificial next_dirs consisting of last and next dir for rot_mat calculation
+        next_dirs = np.concatenate((previous_sl[1:] - previous_sl[:-1])[-1:], next_dir) 
+        next_dirs, rot_matrix = self._apply_rot_matrix(next_dirs)
+        
+        next_dir = next_dirs[1:2]
+        dwi, _ = self._get_dwi(data_container, point[np.newaxis, ...], rot_matrix=rot_matrix[1:2])
         if self.options.postprocessing is not None:
             dwi = self.options.postprocessing(dwi, data_container.data.b0,
                                               data_container.data.bvecs,
@@ -363,37 +367,34 @@ class ClassificationProcessing(RegressionProcessing):
         classification_output[-1, -1] = 1 # stop condition
         return dwi, classification_output
 
-    def calculate_item(self, data_container, point, next_dir=None):
-        """Calculates the classification (input, output) tuple for a single streamline point.
+    def calculate_item(self, data_container, previous_sl, next_dir):
+        """Calculates the classification (input, output) tuple for the last streamline point.
 
         Arguments
         ---------
         data_container : DataContainer
             The DataContainer the streamline is associated with
-        point: Tensor
-            The point the data should be calculated for in RAS*
-        next_dir: Tensor, optional
-            The next direction, you do not have to provide it if you only need the input part.
+        previous_sl: np.array
+            The previous streamline point including the point the data should be calculated for in RAS*
+        next_dir: Tensor
+            The next direction, provide a null vector [0,0,0] if it is irrelevant.
 
         Returns
         -------
         tuple
             The (input, output) data for the requested item.
         """
-        assert self.options.rotate == False # TODO add rot_matrix as optional parameter
-        dwi, next_dir = RegressionProcessing.calculate_item(data_container, point, next_dir=next_dir)
-        if next_dir is not None:
-            sphere = self.sphere
-            # code adapted from Benou "DeepTract",
-            # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
-            sl_len = len(next_dir)
-            l = len(sphere.theta) + 1
-            classification_output = np.zeros((l))
-            is_direction = torch.sum(next_dir**2) != 0
-            if is_direction: # if is real direction
-                labels_odf = np.exp(-1 * sphere_distance(next_dir[:], np.asarray(
-                    [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
-                classification_output[:-1] = labels_odf / np.sum(labels_odf)
-            classification_output[-1] = 0.0 if is_direction else 1.0
-            return dwi, classification_output
-        return dwi, next_dir
+        dwi, next_dir = RegressionProcessing.calculate_item(data_container, previous_sl, next_dir)
+        sphere = self.sphere
+        # code adapted from Benou "DeepTract",
+        # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
+        sl_len = len(next_dir)
+        l = len(sphere.theta) + 1
+        classification_output = np.zeros((l))
+        is_direction = torch.sum(next_dir**2) != 0
+        if is_direction: # if is real direction
+            labels_odf = np.exp(-1 * sphere_distance(next_dir[:], np.asarray(
+                [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
+            classification_output[:-1] = labels_odf / np.sum(labels_odf)
+        classification_output[-1] = 0.0 if is_direction else 1.0
+        return dwi, classification_output
