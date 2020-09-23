@@ -89,7 +89,7 @@ def resample(directions=None, sh_order=None, smooth=None, mean_centering=None, s
     if smooth is None:
         smooth = config.getfloat("ResamplingOptions", "smooth", fallback="0.006")
     if mean_centering is None:
-        mean_centering = config.getboolean("ResamplingOptions", "mean_centering", fallback="yes")
+        mean_centering = config.getboolean("ResamplingOptions", "meanCentering", fallback="no")
     if sphere is None:
         sphere = config.get("ResamplingOptions", "sphere", fallback="repulsion100")
 
