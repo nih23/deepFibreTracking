@@ -31,6 +31,7 @@ ISMRMDataContainer
 
 import os
 import warnings
+from types import SimpleNamespace
 
 import torch
 from dipy.core.gradients import gradient_table
