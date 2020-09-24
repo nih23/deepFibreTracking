@@ -1,8 +1,8 @@
-logs/
-!data
-!models/
-!train/
-results/
 .ipynb_checkpoints
+.vscode/
 __pycache__/
 *.py[cod]
+/cache/
+/data/
+*.pt
+*.vtk

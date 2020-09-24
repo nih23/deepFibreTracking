@@ -1,84 +1,172 @@
-'Utility function and classes'
-from string import Formatter
+"""Helpful functions required multiple times in different contexts
+
+Methods
+-------
+rotation_from_vectors(rot, vector_orig, vector_fin)
+    Calculates the rotation matrix required to rotate from one vector to another.
+get_reference_orientation()
+    Returns the reference orientation to use with this library. This could change, depending on config!
+get_2D_sphere(no_phis=None, no_thetas=None)
+    Retrieve evenly distributed 2D sphere out of phi and theta count
+get_grid(grid_dimension)
+    Calculates a (unrotated) grid for given dimensions
+random_split(dataset, training_part=0.9)
+    Splits a given dataset into train and validation part
+"""
 import torch
+import numpy as np
+from dipy.core.sphere import Sphere
+from src.config import Config
 
-def info(text):
-    """Print simple Info text.
-    
-    Arguments:
-    text: the text to print
-    """
-    print("[INFO] {}".format(text) + ' ' * 150)
-def progress(percentage, text="", prefix="INFO"):
-    """Simple Progressbar to show progress in terminal.
-    
-    Arguments:
-    percentage: a progress percentage, between 0 and 100
-    text: optional info text describing things being done
-    prefix: prefix, default:  'INFO'
-    """
-    percent = ("{0:.1f}").format(percentage)
-    filledLength = int(percentage)
-    bar = '=' * filledLength + '-' * (100 - filledLength)
-
-    print("\r[%s] %s |%s| %s%% " % (prefix,text,bar, percent), end='\r')
-def radians_loss(input_data, target, mask):
-    """Quick implementation of the radian loss 1- cos(alpha). 
-    
-    Arguments:
-    input_data: the network output
-    target: the supposed output
-    mask: mask for masking out unused padding areas. Essential to prevent division by zero."""
-    cossim = torch.nn.CosineSimilarity(dim=2)
-    output = cossim(input_data, target)**2
-    output = output[mask.squeeze() != 0]
-    return 1 - torch.mean(output)
-
-def strfdelta(tdelta, fmt='{D:02}d {H:02}h {M:02}m {S:02}s', inputtype='timedelta'):
-    """Taken from: https://stackoverflow.com/questions/8906926/formatting-timedelta-objects/17847006#17847006
-    
-    Convert a datetime.timedelta object or a regular number to a custom-
-    formatted string, just like the stftime() method does for datetime.datetime
-    objects.
-
-    The fmt argument allows custom formatting to be specified.  Fields can
-    include seconds, minutes, hours, days, and weeks.  Each field is optional.
-
-    Some examples:
-        '{D:02}d {H:02}h {M:02}m {S:02}s' --> '05d 08h 04m 02s' (default)
-        '{W}w {D}d {H}:{M:02}:{S:02}'     --> '4w 5d 8:04:02'
-        '{D:2}d {H:2}:{M:02}:{S:02}'      --> ' 5d  8:04:02'
-        '{H}h {S}s'                       --> '72h 800s'
-
-    The inputtype argument allows tdelta to be a regular number instead of the
-    default, which is a datetime.timedelta object.  Valid inputtype strings:
-        's', 'seconds',
-        'm', 'minutes',
-        'h', 'hours',
-        'd', 'days',
-        'w', 'weeks'
+def rotation_from_vectors(rot, vector_orig, vector_fin):
+    """Calculate the rotation matrix required to rotate from one vector to another.
+    For the rotation of one vector to another, there are an infinit series of rotation matrices
+    possible.  Due to axially symmetry, the rotation axis can be any vector lying in the symmetry
+    plane between the two vectors.  Hence the axis-angle convention will be used to construct the
+    matrix with the rotation axis defined as the cross product of the two vectors.  The rotation
+    angle is the arccosine of the dot product of the two unit vectors.
+    Given a unit vector parallel to the rotation axis, w = [x, y, z] and the rotation angle a,
+    the rotation matrix R is::
+              |  1 + (1-cos(a))*(x*x-1)   -z*sin(a)+(1-cos(a))*x*y   y*sin(a)+(1-cos(a))*x*z |
+        R  =  |  z*sin(a)+(1-cos(a))*x*y   1 + (1-cos(a))*(y*y-1)   -x*sin(a)+(1-cos(a))*y*z |
+              | -y*sin(a)+(1-cos(a))*x*z   x*sin(a)+(1-cos(a))*y*z   1 + (1-cos(a))*(z*z-1)  |
+    @param rot:           The 3x3 rotation matrix to update.
+    @type rot:            3x3 numpy array
+    @param vector_orig: The unrotated vector defined in the reference frame.
+    @type vector_orig:  numpy array, len 3
+    @param vector_fin:  The rotated vector defined in the reference frame.
+    @type vector_fin:   numpy array, len 3
     """
 
-    # Convert tdelta to integer seconds.
-    if inputtype == 'timedelta':
-        remainder = int(tdelta.total_seconds())
-    elif inputtype in ['s', 'seconds']:
-        remainder = int(tdelta)
-    elif inputtype in ['m', 'minutes']:
-        remainder = int(tdelta)*60
-    elif inputtype in ['h', 'hours']:
-        remainder = int(tdelta)*3600
-    elif inputtype in ['d', 'days']:
-        remainder = int(tdelta)*86400
-    elif inputtype in ['w', 'weeks']:
-        remainder = int(tdelta)*604800
+    # Convert the vectors to unit vectors.
+    vector_orig = vector_orig / np.linalg.norm(vector_orig)
+    vector_fin = vector_fin / np.linalg.norm(vector_fin)
 
-    formatter = Formatter()
-    desired_fields = [field_tuple[1] for field_tuple in formatter.parse(fmt)]
-    possible_fields = ('W', 'D', 'H', 'M', 'S')
-    constants = {'W': 604800, 'D': 86400, 'H': 3600, 'M': 60, 'S': 1}
-    values = {}
-    for field in possible_fields:
-        if field in desired_fields and field in constants:
-            values[field], remainder = divmod(remainder, constants[field])
-    return formatter.format(fmt, **values)
+    # The rotation axis (normalised).
+    axis = np.cross(vector_orig, vector_fin)
+    axis_len = np.linalg.norm(axis)
+    if axis_len != 0.0:
+        axis = axis / axis_len
+
+    # Alias the axis coordinates.
+    x = axis[0]
+    y = axis[1]
+    z = axis[2]
+
+    # The rotation angle.
+    angle = np.arccos(np.dot(vector_orig, vector_fin))
+
+    # Trig functions (only need to do this maths once!).
+    ca = np.cos(angle)
+    sa = np.sin(angle)
+
+    # Calculate the rotation matrix elements.
+    rot[0, 0] = 1.0 + (1.0 - ca)*(x**2 - 1.0)
+    rot[0, 1] = -z*sa + (1.0 - ca)*x*y
+    rot[0, 2] = y*sa + (1.0 - ca)*x*z
+    rot[1, 0] = z*sa+(1.0 - ca)*x*y
+    rot[1, 1] = 1.0 + (1.0 - ca)*(y**2 - 1.0)
+    rot[1, 2] = -x*sa+(1.0 - ca)*y*z
+    rot[2, 0] = -y*sa+(1.0 - ca)*x*z
+    rot[2, 1] = x*sa+(1.0 - ca)*y*z
+    rot[2, 2] = 1.0 + (1.0 - ca)*(z**2 - 1.0)
+
+def get_reference_orientation():
+    """Get current reference rotation
+    
+    Returns
+    -------
+    numpy.ndarray
+        The reference rotation usable for rotations.
+    """
+    config = Config.get_config()
+    orientation = config.get("DatasetOptions", "referenceOrientation", fallback="R+").upper()
+    ref = None
+    if orientation[0] is 'R':
+        ref = np.array([1, 0, 0])
+    elif orientation[0] is 'A':
+        ref = np.array([0, 1, 0])
+    elif orientation[0] is 'S':
+        ref = np.array([0, 1, 0])
+    if orientation[1] is '-':
+        ref = ref * -1
+    return ref
+
+def get_2D_sphere(no_phis=None, no_thetas=None):
+    """Retrieve evenly distributed 2D sphere out of phi and theta count.
+
+
+    Parameters
+    ----------
+    no_phis : int, optional
+        The numbers of phis in the sphere, by default as in config file / 16
+    no_thetas : int, optional
+        The numbers of thetas in the sphere, by default as in config file / 16
+
+    Returns
+    -------
+    Sphere
+        The 2D sphere requested
+    """
+    if no_thetas is None:
+        no_thetas = Config.get_config().getint("2DSphereOptions", "noThetas", fallback="16")
+    if no_phis is None:
+        no_phis = Config.get_config().getint("2DSphereOptions", "noPhis", fallback="16")
+    xi = np.arange(0, np.pi, (np.pi) / no_thetas) # theta
+    yi = np.arange(-np.pi, np.pi, 2 * (np.pi) / no_phis) # phi
+
+    basis = np.array(np.meshgrid(yi, xi))
+
+    sphere = Sphere(theta=basis[0, :], phi=basis[1, :])
+
+    return sphere
+
+def get_grid(grid_dimension):
+    """Calculates grid for given dimension
+
+    Parameters
+    ----------
+    grid_dimension : numpy.ndarray
+        The grid dimensions of the grid to calculate
+
+    Returns
+    -------
+    numpy.ndarray
+        The requested grid
+    """
+    (dx, dy, dz) = (grid_dimension - 1)/2
+    return np.moveaxis(np.mgrid[-dx:dx+1, -dy:dy+1, -dz:dz+1], 0, 3)
+
+def random_split(dataset, training_part=0.9):
+    """Retrieves a dataset from given path and splits them randomly in train and test data.
+
+    Parameters
+    ----------
+    dataset : Dataset
+        The dataset to use
+    training_part : float, optional
+        The training part, by default 0.9 (90%)
+
+    Returns
+    -------
+    tuple
+        A tuple containing (train_dataset, validation_dataset)
+    """
+    train_len = int(training_part*len(dataset))
+    test_len = len(dataset) - train_len
+    (train_split, test_split) = torch.utils.data.random_split(dataset, (train_len, test_len))
+    return train_split, test_split
+
+
+def get_mask_from_lengths(lengths):
+    """Returns a mask for given array of lengths
+    
+    Parameters
+    ----------
+    lenghts: Tensor
+        The lengths to padd
+    Returns
+    -------
+    Tensor
+        The requested mask."""
+    return (torch.arange(torch.max(lengths, device=lengths.device))[None, :] < lengths[:, None])
