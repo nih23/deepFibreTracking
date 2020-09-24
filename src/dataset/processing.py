@@ -201,6 +201,7 @@ class RegressionProcessing(Processing):
         """
         # create artificial next_dirs consisting of last and next dir for rot_mat calculation
         next_dirs = np.concatenate(((previous_sl[1:] - previous_sl[:-1])[-1:], next_dir[np.newaxis, ...])) 
+        # TODO - normalize direction vectors
         next_dirs, rot_matrix = self._apply_rot_matrix(next_dirs)
         
         next_dir = next_dirs[-1]
