@@ -272,10 +272,10 @@ class DWIAlreadyNormalizedError(Error):
         self.data_container = data_container
         Error.__init__(self, msg="The DWI of the DataContainer {id} is already normalized. ".format(id=data_container.id))
 
-class DWINotNormalizedError(Error):
-    """Error thrown if DWI has to be normalized for calling this function.
+class DWINormalizedError(Error):
+    """Error thrown if DWI has to be not normalized for calling this function.
 
-    Call DataContainer.normalize() to normalize.
+    Do not call DataContainer.normalize() ahead.
 
     Attributes
     ----------
@@ -818,8 +818,8 @@ class DataContainer():
         Function
             Fractional anisotropy (FA) calculated from cached eigenvalues.
         """
-        if not self.options.normalized:
-            raise DWINotNormalizedError(self) from None
+        if self.options.normalized:
+            raise DWINormalizedError(self) from None
         if self.data.fa is None:
             dti_model = dti.TensorModel(self.data.gtab, fit_method='LS')
             dti_fit = dti_model.fit(self.data.dwi)
