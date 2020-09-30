@@ -143,7 +143,7 @@ def main():
     model = ModelMLP(hidden_sizes=[512,512,512], activation_function=nn.ReLU(), dropout=0.05, input_size=2700).to(device) # Initialize the model
 
 
-    params = {'batch_size': 2048, 'num_workers': 16, 'shuffle': True}
+    params = {'batch_size': 2048, 'num_workers': 0, 'shuffle': True} # !!!! NUM WORKERS > 0 does not work with caching yet !!!
     training_generator = dataL.DataLoader(training_set, **params) # specify a training and testing generator
     validation_generator = dataL.DataLoader(validation_set, **params)
 
