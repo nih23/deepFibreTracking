@@ -505,8 +505,8 @@ class StreamlineDataset(IterableDataset):
         if self.options.online_caching and self.cache[index] is not None:
             return self.cache[index]
         (inp, output) = self._calculate_item(index)
-        inp = torch.from_numpy(inp).to(self.device)
-        output = torch.from_numpy(output).to(self.device)
+        inp = torch.from_numpy(inp).to(device=self.device, dtype=torch.float32) # TODO work on dtypes
+        output = torch.from_numpy(output).to(device=self.device, dtype=torch.float32)
 
         if self.options.online_caching:
             self.cache[index] = (inp, output)
@@ -859,21 +859,25 @@ class SingleDirectionsDataset(IterableDataset):
             index = index - self.size
         (idx1, idx2) = self.calc_data[index]
         sl = self.streamlines[idx1]
+        s_index = index
         if is_reverse:
             sl = sl[::-1]
-        if not self.options.online_caching:
+        if not self.options.online_caching: # calculate just single item
             previous_sl = sl[:(idx2+1)]
             next_dir = sl[min(idx2+1, len(sl) - 1)] - sl[idx2] # is zero vector if empty
             (inp, output) =  self.options.processing.calculate_item(self.data_container, previous_sl, next_dir)
-            inp = torch.from_numpy(inp).to(self.device)
-            output = torch.from_numpy(output).to(self.device)
+            inp = torch.from_numpy(inp).to(device=self.device, dtype=torch.float32)
+            output = torch.from_numpy(output).to(device=self.device, dtype=torch.float32)
             return (inp, output)
-        else:
+        else: # calculate whole streamline -> more efficient
             (inp, out) = self.options.processing.calculate_streamline(self.data_container, sl)
-            inp = inp[self._START_OFFSET:len(inp)-self._END_OFFSET+1]
-            out = out[self._START_OFFSET:len(inp)-self._END_OFFSET+1]
+            inp = inp[self._START_OFFSET:len(inp)-self._END_OFFSET]
+            out = out[self._START_OFFSET:len(out)-self._END_OFFSET]
             for index, (_in, _out) in enumerate(zip(inp,out)):
-                _in = torch.from_numpy(_in).to(self.device)
-                _out = torch.from_numpy(_out).to(self.device)
+                _in = torch.from_numpy(_in).to(device=self.device, dtype=torch.float32)
+                _out = torch.from_numpy(_out).to(device=self.device, dtype=torch.float32)
                 self.cache[og_index-(idx2-self._START_OFFSET)+index] = (_in, _out)
             return self.cache[og_index]
+
+
+
