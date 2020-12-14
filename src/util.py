@@ -82,13 +82,13 @@ def get_reference_orientation():
     config = Config.get_config()
     orientation = config.get("DatasetOptions", "referenceOrientation", fallback="R+").upper()
     ref = None
-    if orientation[0] is 'R':
+    if orientation[0] == 'R':
         ref = np.array([1, 0, 0])
-    elif orientation[0] is 'A':
+    elif orientation[0] == 'A':
         ref = np.array([0, 1, 0])
-    elif orientation[0] is 'S':
+    elif orientation[0] == 'S':
         ref = np.array([0, 1, 0])
-    if orientation[1] is '-':
+    if orientation[1] == '-':
         ref = ref * -1
     return ref
 
@@ -170,3 +170,20 @@ def get_mask_from_lengths(lengths):
     Tensor
         The requested mask."""
     return (torch.arange(torch.max(lengths, device=lengths.device))[None, :] < lengths[:, None])
+
+def apply_rotation_matrix_to_grid(grid, rot_matrix):
+    """Applies the given list of rotation matrices to given grid
+
+    Parameters
+    ----------
+    grid : numpy.ndarray
+        The grid 
+    rot_matrix : numpy.ndarray
+        The rotation matrix with the dimensions (N, 3, 3)
+
+    Returns
+    -------
+    numpy.ndarray
+        The grid, rotated along the rotation_matrix; Shape: (N, ...grid_dimensions)
+    """
+    return (rot_matrix.repeat(grid.size/3, axis=0) @ grid[None, ].repeat(len(rot_matrix), axis=0).reshape(-1, 3, 1)).reshape((-1, *grid.shape))

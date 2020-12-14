@@ -17,7 +17,7 @@ from dipy.core.sphere import Sphere
 from dipy.data import get_sphere
 
 from src.config import Config
-from src.util import get_reference_orientation, rotation_from_vectors, get_grid
+from src.util import get_reference_orientation, rotation_from_vectors, get_grid, apply_rotation_matrix_to_grid
 
 class Processing():
     """The basic Processing class.
@@ -268,17 +268,10 @@ class RegressionProcessing(Processing):
 
     def _get_grid_points(self, streamline, rot_matrix=None):
         grid = self.grid
-        if rot_matrix is None:
-            applied_grid = grid # grid is static
-            # shape [R x A x S x 3]
-        else:
-            # grid is rotated for each streamline_point
-            applied_grid = ((rot_matrix.repeat(grid.size/3, axis=0) @
-                             grid[None,].repeat(len(streamline), axis=0).reshape(-1, 3, 1))
-                            .reshape((-1, *grid.shape)))
-            # shape [N x R x A x S x 3]
-
-        points = streamline[:, None, None, None, :] + applied_grid
+        if rot_matrix is not None:
+            grid = apply_rotation_matrix_to_grid(grid, rot_matrix)
+            # shape [N x R x A x S x 3] or [R x A x S x 3]
+        points = streamline[:, None, None, None, :] + grid
         return points
 
 
