@@ -17,7 +17,7 @@ from dipy.core.sphere import Sphere
 from dipy.data import get_sphere
 
 from src.config import Config
-from src.util import get_reference_orientation, rotation_from_vectors, get_grid, apply_rotation_matrix_to_grid
+from src.util import get_reference_orientation, rotation_from_vectors, get_grid, apply_rotation_matrix_to_grid, direction_to_classification
 
 class Processing():
     """The basic Processing class.
@@ -350,19 +350,7 @@ class ClassificationProcessing(RegressionProcessing):
 
         """
         dwi, next_dir = RegressionProcessing.calculate_streamline(self, data_container, streamline)
-        sphere = self.sphere
-        # code adapted from Benou "DeepTract",
-        # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
-        sl_len = len(next_dir)
-        l = len(sphere.theta) + 1
-        classification_output = np.zeros((sl_len, l))
-        for i in range(sl_len - 1):
-            labels_odf = np.exp(-1 * sphere_distance(next_dir[i, :], np.asarray(
-                [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
-            classification_output[i][:-1] = labels_odf / np.sum(labels_odf)
-            classification_output[i, -1] = 0.0
-
-        classification_output[-1, -1] = 1 # stop condition
+        classification_output = direction_to_classification(self.sphere, next_dir, include_stop=True, last_is_stop=True)
         return dwi, classification_output
 
     def calculate_item(self, data_container, previous_sl, next_dir):
@@ -383,16 +371,5 @@ class ClassificationProcessing(RegressionProcessing):
             The (input, output) data for the requested item.
         """
         dwi, next_dir = RegressionProcessing.calculate_item(data_container, previous_sl, next_dir)
-        sphere = self.sphere
-        # code adapted from Benou "DeepTract",
-        # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
-        sl_len = len(next_dir)
-        l = len(sphere.theta) + 1
-        classification_output = np.zeros((l))
-        is_direction = torch.sum(next_dir**2) != 0
-        if is_direction: # if is real direction
-            labels_odf = np.exp(-1 * sphere_distance(next_dir[:], np.asarray(
-                [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
-            classification_output[:-1] = labels_odf / np.sum(labels_odf)
-        classification_output[-1] = 0.0 if is_direction else 1.0
+        classification_output = direction_to_classification(self.sphere, next_dir[None, ...], include_stop=True, last_is_stop=True).squeeze(axis=0)
         return dwi, classification_output
