@@ -28,8 +28,8 @@ class Processing():
     -------
     calculate_streamline(data_container, streamline)
         Calculates the (input, output) tuple for a complete streamline
-    calculate_item(data_container, point, next_direction)
-        Calculates the (input, output) tuple for a single streamline point
+    calculate_item(data_container, sl, next_direction)
+        Calculates the (input, output) tuple for a single last streamline point
 
     The methods can work together, but they do not have to. 
     The existence of both must be guaranteed to be able to use every dataset.
