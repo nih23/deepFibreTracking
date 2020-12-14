@@ -192,21 +192,22 @@ def apply_rotation_matrix_to_grid(grid, rot_matrix):
 def direction_to_classification(sphere, next_dir, include_stop=False, last_is_stop=False, stop_values=None):
     # code adapted from Benou "DeepTract",
     # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
+
     sl_len = len(next_dir)
     loop_len = sl_len - 1 if include_stop and last_is_stop else sl_len
     l = len(sphere.theta) + 1 if include_stop else len(sphere.theta)
     classification_output = np.zeros((sl_len, l))
     for i in range(loop_len):
-        labels_odf = np.exp(-1 * sphere_distance(next_dir[i, :], np.asarray(
-            [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
-        if include_stop:
-            classification_output[i][:-1] = labels_odf / np.sum(labels_odf)
-            classification_output[i, -1] = 0.0
-        else:
-            classification_output[i] = labels_odf / np.sum(labels_odf)
+        if not (next_dir[i,0] == 0.0 and next_dir[i, 1] == 0.0 and next_dir[i, 2] == 0.0):
+            labels_odf = np.exp(-1 * sphere_distance(next_dir[i, :], np.asarray(
+                [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
+            if include_stop:
+                classification_output[i][:-1] = labels_odf / np.sum(labels_odf)
+                classification_output[i, -1] = 0.0
+            else:
+                classification_output[i] = labels_odf / np.sum(labels_odf)
     if include_stop and last_is_stop:
         classification_output[-1, -1] = 1 # stop condition or
     if include_stop and stop_values is not None:
         classification_output[:,-1] = stop_values # stop values
-
     return classification_output
