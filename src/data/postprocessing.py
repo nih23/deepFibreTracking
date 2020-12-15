@@ -108,6 +108,7 @@ def resample(directions=None, sh_order=None, smooth=None, mean_centering=None, s
         data_resampled = np.dot(data_sh, real_sh.T)
 
         if mean_centering:
+            assert False # TODO should not be used
             idx = data_resampled.sum(axis=-1).nonzero()
             means = data_resampled[idx].mean(axis=0)
             data_resampled[idx] -= means

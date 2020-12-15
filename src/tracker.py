@@ -128,9 +128,8 @@ class SeedBasedTracker(Tracker):
             raise StreamlinesAlreadyTrackedError(self) from None
         streamlines_generator = LocalTracking(direction_getter, classifier, self.seeds,
                                               self.data.aff, step_size=self.options.step_width)
-        streamlines = Streamlines(streamlines_generator)
-        streamlines = self.filter_streamlines_by_length(streamlines,
-                                                        minimum=self.options.min_length,
+        self.streamlines = Streamlines(streamlines_generator)
+        self.streamlines = self.filtered_streamlines_by_length(minimum=self.options.min_length,
                                                         maximum=self.options.max_length)
         self.streamlines = streamlines
     def track(self):
@@ -151,7 +150,7 @@ class SeedBasedTracker(Tracker):
             raise StreamlinesNotTrackedError(self) from None
         save_vtk_streamlines(self.streamlines, path)
 
-    def filter_streamlines_by_length(self, streamlines,
+    def filtered_streamlines_by_length(self,
                                      minimum=Config.get_config()
                                      .getfloat("tracking", "minimumStreamlineLength",
                                                fallback="20"),
@@ -161,7 +160,7 @@ class SeedBasedTracker(Tracker):
         """
         removes streamlines that are shorter than minimumLength (in mm)
         """
-        return [x for x in streamlines if metrics.length(x) > minimum
+        return [x for x in self.streamlines if metrics.length(x) > minimum
                 and metrics.length(x) < maximum]
 
 class CSDTracker(SeedBasedTracker):

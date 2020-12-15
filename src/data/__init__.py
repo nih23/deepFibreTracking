@@ -818,8 +818,8 @@ class DataContainer():
         Function
             Fractional anisotropy (FA) calculated from cached eigenvalues.
         """
-        if self.options.normalized:
-            raise DWINormalizedError(self) from None
+        #if self.options.normalized and self.data.fa is None:
+        #    raise DWINormalizedError(self) from None
         if self.data.fa is None:
             dti_model = dti.TensorModel(self.data.gtab, fit_method='LS')
             dti_fit = dti_model.fit(self.data.dwi)

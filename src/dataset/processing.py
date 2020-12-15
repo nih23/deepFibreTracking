@@ -17,7 +17,7 @@ from dipy.core.sphere import Sphere
 from dipy.data import get_sphere
 
 from src.config import Config
-from src.util import get_reference_orientation, rotation_from_vectors, get_grid
+from src.util import get_reference_orientation, rotation_from_vectors, get_grid, apply_rotation_matrix_to_grid, direction_to_classification
 
 class Processing():
     """The basic Processing class.
@@ -28,8 +28,8 @@ class Processing():
     -------
     calculate_streamline(data_container, streamline)
         Calculates the (input, output) tuple for a complete streamline
-    calculate_item(data_container, point, next_direction)
-        Calculates the (input, output) tuple for a single streamline point
+    calculate_item(data_container, sl, next_direction)
+        Calculates the (input, output) tuple for a single last streamline point
 
     The methods can work together, but they do not have to. 
     The existence of both must be guaranteed to be able to use every dataset.
@@ -268,17 +268,10 @@ class RegressionProcessing(Processing):
 
     def _get_grid_points(self, streamline, rot_matrix=None):
         grid = self.grid
-        if rot_matrix is None:
-            applied_grid = grid # grid is static
-            # shape [R x A x S x 3]
-        else:
-            # grid is rotated for each streamline_point
-            applied_grid = ((rot_matrix.repeat(grid.size/3, axis=0) @
-                             grid[None,].repeat(len(streamline), axis=0).reshape(-1, 3, 1))
-                            .reshape((-1, *grid.shape)))
-            # shape [N x R x A x S x 3]
-
-        points = streamline[:, None, None, None, :] + applied_grid
+        if rot_matrix is not None:
+            grid = apply_rotation_matrix_to_grid(grid, rot_matrix)
+            # shape [N x R x A x S x 3] or [R x A x S x 3]
+        points = streamline[:, None, None, None, :] + grid
         return points
 
 
@@ -357,19 +350,7 @@ class ClassificationProcessing(RegressionProcessing):
 
         """
         dwi, next_dir = RegressionProcessing.calculate_streamline(self, data_container, streamline)
-        sphere = self.sphere
-        # code adapted from Benou "DeepTract",
-        # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
-        sl_len = len(next_dir)
-        l = len(sphere.theta) + 1
-        classification_output = np.zeros((sl_len, l))
-        for i in range(sl_len - 1):
-            labels_odf = np.exp(-1 * sphere_distance(next_dir[i, :], np.asarray(
-                [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
-            classification_output[i][:-1] = labels_odf / np.sum(labels_odf)
-            classification_output[i, -1] = 0.0
-
-        classification_output[-1, -1] = 1 # stop condition
+        classification_output = direction_to_classification(self.sphere, next_dir, include_stop=True, last_is_stop=True)
         return dwi, classification_output
 
     def calculate_item(self, data_container, previous_sl, next_dir):
@@ -390,16 +371,5 @@ class ClassificationProcessing(RegressionProcessing):
             The (input, output) data for the requested item.
         """
         dwi, next_dir = RegressionProcessing.calculate_item(data_container, previous_sl, next_dir)
-        sphere = self.sphere
-        # code adapted from Benou "DeepTract",
-        # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
-        sl_len = len(next_dir)
-        l = len(sphere.theta) + 1
-        classification_output = np.zeros((l))
-        is_direction = torch.sum(next_dir**2) != 0
-        if is_direction: # if is real direction
-            labels_odf = np.exp(-1 * sphere_distance(next_dir[:], np.asarray(
-                [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
-            classification_output[:-1] = labels_odf / np.sum(labels_odf)
-        classification_output[-1] = 0.0 if is_direction else 1.0
+        classification_output = direction_to_classification(self.sphere, next_dir[None, ...], include_stop=True, last_is_stop=True).squeeze(axis=0)
         return dwi, classification_output

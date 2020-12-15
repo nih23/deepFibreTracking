@@ -505,8 +505,8 @@ class StreamlineDataset(IterableDataset):
         if self.options.online_caching and self.cache[index] is not None:
             return self.cache[index]
         (inp, output) = self._calculate_item(index)
-        inp = torch.from_numpy(inp).float().to(self.device)
-        output = torch.from_numpy(output).float().to(self.device)
+        inp = torch.from_numpy(inp).to(device=self.device, dtype=torch.float32) # TODO work on dtypes
+        output = torch.from_numpy(output).to(device=self.device, dtype=torch.float32)
 
         if self.options.online_caching:
             self.cache[index] = (inp, output)
@@ -789,18 +789,18 @@ class SingleDirectionsDataset(IterableDataset):
 
         self.calc_data = np.zeros((self.size, 2), dtype=np.int)
         idx = 0
-        _START_OFFSET = 0 if append_start else 1
-        _END_OFFSET = 0 if append_end else 1
+        self._START_OFFSET = 0 if append_start else 1
+        self._END_OFFSET = 0 if append_end else 1
         for i, streamline in enumerate(self.streamlines):
-            sl_len = len(streamline) - _START_OFFSET - _END_OFFSET
+            sl_len = len(streamline) - self._START_OFFSET - self._END_OFFSET
             self.calc_data[idx:(idx+sl_len), 0] = i
-            self.calc_data[idx:(idx+sl_len), 1] = np.arange(_START_OFFSET, sl_len + _START_OFFSET)
+            self.calc_data[idx:(idx+sl_len), 1] = np.arange(self._START_OFFSET, sl_len + self._START_OFFSET)
             idx += sl_len
 
         assert idx == self.size
 
         if online_caching:
-            self.cache = [] * len(self)
+            self.cache = [None] * len(self)
         self.feature_shapes = None
 
     def __len__(self):
@@ -831,8 +831,7 @@ class SingleDirectionsDataset(IterableDataset):
         if self.options.online_caching and self.cache[index] is not None:
             return self.cache[index]
         (inp, output) = self._calculate_item(index)
-        inp = torch.from_numpy(inp).float().to(self.device)
-        output = torch.from_numpy(output).float().to(self.device)
+
 
         if self.options.online_caching:
             self.cache[index] = (inp, output)
@@ -854,16 +853,31 @@ class SingleDirectionsDataset(IterableDataset):
             The item calculated.
         """
         is_reverse = False
+        og_index = index
         if index >= self.size:
             is_reverse = True
             index = index - self.size
         (idx1, idx2) = self.calc_data[index]
         sl = self.streamlines[idx1]
-        if not is_reverse:
+        s_index = index
+        if is_reverse:
+            sl = sl[::-1]
+        if not self.options.online_caching: # calculate just single item
             previous_sl = sl[:(idx2+1)]
             next_dir = sl[min(idx2+1, len(sl) - 1)] - sl[idx2] # is zero vector if empty
-        else:
-            previous_sl = sl[idx2:][::-1]
-            next_dir = sl[max(idx2-1, 0)] - sl[idx2] # is zero vector if empty
-        return self.options.processing.calculate_item(self.data_container, previous_sl, next_dir)
+            (inp, output) =  self.options.processing.calculate_item(self.data_container, previous_sl, next_dir)
+            inp = torch.from_numpy(inp).to(device=self.device, dtype=torch.float32)
+            output = torch.from_numpy(output).to(device=self.device, dtype=torch.float32)
+            return (inp, output)
+        else: # calculate whole streamline -> more efficient
+            (inp, out) = self.options.processing.calculate_streamline(self.data_container, sl)
+            inp = inp[self._START_OFFSET:len(inp)-self._END_OFFSET]
+            out = out[self._START_OFFSET:len(out)-self._END_OFFSET]
+            for index, (_in, _out) in enumerate(zip(inp,out)):
+                _in = torch.from_numpy(_in).to(device=self.device, dtype=torch.float32)
+                _out = torch.from_numpy(_out).to(device=self.device, dtype=torch.float32)
+                self.cache[og_index-(idx2-self._START_OFFSET)+index] = (_in, _out)
+            return self.cache[og_index]
+
+
 
