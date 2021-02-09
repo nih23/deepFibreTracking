@@ -17,7 +17,7 @@ from dipy.core.sphere import Sphere
 from dipy.data import get_sphere
 
 from src.config import Config
-from src.util import get_reference_orientation, rotation_from_vectors, get_grid, apply_rotation_matrix_to_grid, direction_to_classification
+from src.util import get_reference_orientation, rotation_from_vectors, get_grid, apply_rotation_matrix_to_grid, direction_to_classification, rotation_from_vectors_p
 
 class Processing():
     """The basic Processing class.
@@ -258,12 +258,13 @@ class RegressionProcessing(Processing):
             return next_dir, None
         reference = get_reference_orientation()
         rot_matrix = np.empty([len(next_dir), 3, 3])
+        # rot_mat (N, 3, 3)
+        # next dir (N, 3)
         rot_matrix[0] = np.eye(3)
-        for i in range(len(next_dir)):
-            if i + 1 < len(next_dir):
-                rotation_from_vectors(rot_matrix[i + 1], reference, next_dir[i])
-            next_dir[i] = rot_matrix[i].T @ next_dir[i]
-        return next_dir, rot_matrix
+        rotation_from_vectors_p(rot_matrix[1:, :, :], reference[None, :], next_dir[:-1])
+
+        rot_next_dir = (rot_matrix.transpose((0,2,1))  @ next_dir[:, :, None]).squeeze(2)
+        return rot_next_dir, rot_matrix
         
 
     def _get_grid_points(self, streamline, rot_matrix=None):
