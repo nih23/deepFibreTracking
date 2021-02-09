@@ -40,7 +40,10 @@ from dipy.denoise.localpca import localpca
 from dipy.denoise.pca_noise_estimate import pca_noise_estimate
 from dipy.align.reslice import reslice
 from dipy.segment.mask import median_otsu
-from dipy.align.imaffine import interpolate_scalar_3d
+from scipy.interpolate import RegularGridInterpolator
+#from dipy.align.imaffine import interpolate_scalar_3d
+
+from dipy.tracking.streamline import interpolate_vector_3d, interpolate_scalar_3d
 import dipy.reconst.dti as dti
 
 import numpy as np
@@ -583,6 +586,12 @@ class DataContainer():
         if self.options.denoised:
             self.id = self.id + "-denoised"
 
+
+        x_range = np.arange(self.data.dwi.shape[0])
+        y_range = np.arange(self.data.dwi.shape[1])
+        z_range = np.arange(self.data.dwi.shape[2])
+        self.interpolator = RegularGridInterpolator((x_range,y_range,z_range), self.data.dwi)
+
     def _retrieve_data(self, file_names, denoise=False, b0_threshold=10):
         """
         Reads data from specific files and returns them as object.
@@ -719,15 +728,32 @@ class DataContainer():
             This will be raised if some points are outside of the DWI image
             and ignore_outside_points isn't set to True.
         """
+
+
         points = self.to_ijk(points)
         shape = points.shape
         new_shape = (*shape[:-1], self.data.dwi.shape[-1])
-        result = np.zeros(new_shape)
-        for i in range(self.data.dwi.shape[-1]):
-            (out, inside) = interpolate_scalar_3d(self.data.dwi[..., i], points.reshape(-1, 3))
-            if np.any(inside == 0) and not ignore_outside_points:
-                raise PointOutsideOfDWIError(self, points, np.sum(inside == 0))
-            result[..., i] = out.reshape((*new_shape[:-1]))
+        #result = np.zeros(new_shape)
+
+        result = self.interpolator(points.reshape(-1, 3))
+        result = result.reshape(new_shape)
+
+        #for i in range(self.data.dwi.shape[-1]):
+        #    (out, inside) = interpolate_scalar_3d(self.data.dwi[..., i], points.reshape(-1, 3))
+        #    if np.any(inside == 0) and not ignore_outside_points:
+        #        raise PointOutsideOfDWIError(self, points, np.sum(inside == 0))
+            #print("COMPARE:")
+            #print(self.interpolator(points.reshape(-1, 3))[0][i])
+            #print(out[0])
+            #assert(np.allclose(out, self.interpolator(points.reshape(-1, 3))[:, i]))
+        #    result[..., i] = out.reshape((*new_shape[:-1]))
+        #assert(np.allclose(result, result2))
+        #for i in range(0, self.data.dwi.shape[-1], 3):
+        #    (out, inside) = interpolate_vector_3d(self.data.dwi[..., i:i+3], points.reshape(-1, 3))
+        #    if np.any(inside == 0) and not ignore_outside_points:
+        #        raise PointOutsideOfDWIError(self, points, np.sum(inside == 0))
+        #    result[..., i:i+3] = out.reshape((*new_shape[:-1] , 3))
+        
         return result
 
     def crop(self, b_value=None, max_deviation=None, ignore_already_cropped=False):
@@ -778,6 +804,11 @@ class DataContainer():
         self.options.crop_b = b_value
         self.options.crop_max_deviation = max_deviation
         self.id = self.id + "-cropped[{b}, {dev}]".format(b=b_value, dev=max_deviation)
+
+        x_range = np.arange(self.data.dwi.shape[0])
+        y_range = np.arange(self.data.dwi.shape[1])
+        z_range = np.arange(self.data.dwi.shape[2])
+        self.interpolator = RegularGridInterpolator((x_range,y_range,z_range), self.data.dwi)
         return self
 
     def normalize(self):
@@ -806,6 +837,10 @@ class DataContainer():
         self.data.dwi = weights
         self.id = self.id + "-normalized"
         self.options.normalized = True
+        x_range = np.arange(self.data.dwi.shape[0])
+        y_range = np.arange(self.data.dwi.shape[1])
+        z_range = np.arange(self.data.dwi.shape[2])
+        self.interpolator = RegularGridInterpolator((x_range,y_range,z_range), self.data.dwi)
         return self
 
     def get_fa(self):
