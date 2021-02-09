@@ -10,7 +10,7 @@ from dipy.tracking.streamline import Streamlines
 from dipy.tracking import metrics
 from dipy.reconst.dti import TensorModel
 from dipy.io.streamline import save_vtk_streamlines, load_vtk_streamlines
-from dipy.reconst.csdeconv import ConstrainedSphericalDeconvModel, auto_response
+from dipy.reconst.csdeconv import ConstrainedSphericalDeconvModel, auto_response_ssst
 from dipy.data import get_sphere, default_sphere
 from dipy.direction import peaks_from_model, DeterministicMaximumDirectionGetter
 import dipy.reconst.dti as dti
@@ -131,7 +131,6 @@ class SeedBasedTracker(Tracker):
         self.streamlines = Streamlines(streamlines_generator)
         self.streamlines = self.filtered_streamlines_by_length(minimum=self.options.min_length,
                                                         maximum=self.options.max_length)
-        self.streamlines = streamlines
     def track(self):
         Tracker.track(self)
         if self.streamlines is None:
@@ -188,7 +187,7 @@ class CSDTracker(SeedBasedTracker):
                                            fallback="10")
         fa_thr = Config.get_config().getfloat("CSDTracking", "autoResponseFaThreshold",
                                               fallback="0.7")
-        response, _ = auto_response(self.data.gtab, self.data.dwi, roi_radius=roi_r, fa_thr=fa_thr)
+        response, _ = auto_response_ssst(self.data.gtab, self.data.dwi, roi_radii=roi_r, fa_thr=fa_thr)
         csd_model = ConstrainedSphericalDeconvModel(self.data.gtab, response)
         relative_peak_thr = Config.get_config().getfloat("CSDTracking", "relativePeakTreshold",
                                                          fallback="0.5")
