@@ -252,7 +252,6 @@ class DataContainer():
     The data itself is accessable in the `self.data` attribute,
     which is of the type `RawData`
 
-
     Attributes
     ----------
     options: SimpleNamespace
@@ -270,7 +269,9 @@ class DataContainer():
 
     `_retrieve_data(self, file_names, denoise=False, b0_threshold=None)`
         This reads the properties of the given path based on the filenames and denoises the image, if applicable.
+        Then it returns a RawData object.
 
+    which is automatically called in the constructor.
     For correct inheritance, call the constructor with the correct filenames and
     pass denoise and threshold values. Example for HCP:
 
@@ -345,7 +346,7 @@ class DataContainer():
         Raises
         ------
         DataContainerNotLoadableError
-            This error is thrown if one or multiple files cannot be foud.
+            This error is thrown if one or multiple files cannot be found.
         """
         data = RawData()
         try:
@@ -430,9 +431,9 @@ class DataContainer():
         Returns interpolated dwi for given RAS+ points.
 
         The shape of the input points will be retained for the return array,
-        only the last dimension will be changed from 3 to the DWI-size accordingly.
-        If `ignore_outside_points` is set to `True`,
-        no error will be thrown for points outside of the image.
+        only the last dimension will be changed from 3 to the (interpolated) DWI-size accordingly.
+        
+        If you provide a postprocessing method, the interpolated data is then fed through this postprocessing option.
 
         Parameters
         ----------
@@ -448,7 +449,6 @@ class DataContainer():
             The DWI-Values interpolated for the given points.
             The input shape is matched aside of the last dimension.
         """
-
 
         points = self.to_ijk(points)
         shape = points.shape
