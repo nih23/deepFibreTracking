@@ -1,32 +1,10 @@
-# pylint: disable=attribute-defined-outside-init
 """
-The data module is handling any kind of DWI-Data.
+The data module is handling all kinds of DWI-data.
 
-Available subpackages
----------------------
-postprocessing
-    Provides multiple postprocessing options for raw dwi data.
-
-Classes
--------
-Error
-    Base class for Data exceptions.
-DeviceNotRetrievableError
-    Exception thrown if get_device is called on non-CUDA tensor.
-DataContainerNotLoadableError
-    Exception thrown if DataContainer is unable to load specified files.
-PointOutsideOfDWIError
-    Error thrown if given points are outside of the DWI-Image.
-DWIAlreadyCroppedError
-    Error thrown if the DWI data should be cropped multiple times.
-MovableData
-    Class can be used to make classes handling multiple tensors more easily movable.
-DataContainer
-    DataContainer is representing a single DWI Image.
-HCPDataContainer
-    DataContainer representing a HCP Image
-ISMRMDataContainer
-    DataContainer representing ISMRM Image.
+Use this as a starting point to represent your loaded DWI-scan.
+This module provides methods helping you to implement datasets, 
+environments and all other kinds of modules with the requirement
+to work directly with the data.  
 """
 
 import os
@@ -34,6 +12,7 @@ import warnings
 from types import SimpleNamespace
 
 import torch
+
 from dipy.core.gradients import gradient_table
 from dipy.io import read_bvals_bvecs
 from dipy.denoise.localpca import localpca
@@ -41,7 +20,6 @@ from dipy.denoise.pca_noise_estimate import pca_noise_estimate
 from dipy.align.reslice import reslice
 from dipy.segment.mask import median_otsu
 from scipy.interpolate import RegularGridInterpolator
-#from dipy.align.imaffine import interpolate_scalar_3d
 
 from dipy.tracking.streamline import interpolate_vector_3d, interpolate_scalar_3d
 import dipy.reconst.dti as dti
@@ -51,6 +29,7 @@ import nibabel as nb
 from nibabel.affines import apply_affine
 
 from src.config import Config
+
 class Error(Exception):
     """
     Base class for Data exceptions.
@@ -59,30 +38,15 @@ class Error(Exception):
     The single parameter `msg` represents the error representing message.
 
     This class can be used to filter the exceptions for data exceptions.
-
-    Attributes
-    ----------
-    message: str, optional
-        The message given is stored here.
-
-    Examples
-    --------
-
-    >>> e = Error(msg='Just a sample message')
-    >>> raise e from None
-    Traceback (most recent call last):
-    File "<stdin>", line 1, in <module>
-    src.data.Error: Just a sample message
     """
 
-    def __init__(self, msg=''):
+    def __init__(self, msg):
         """
         Parameters
         ----------
         msg : str
-            The message which accompanying the error, by default ''.
+            The message describing the error
         """
-        self.message = msg
         Exception.__init__(self, msg)
 
     def __repr__(self):
@@ -699,7 +663,7 @@ class DataContainer():
         aff = self.data.aff
         return apply_affine(aff, points)
 
-    def get_interpolated_dwi(self, points, ignore_outside_points=False):
+    def get_interpolated_dwi(self, points, ignore_outside_points=False, postprocessing=None):
         """
         Returns interpolated dwi for given RAS+ points.
 
@@ -733,27 +697,14 @@ class DataContainer():
         points = self.to_ijk(points)
         shape = points.shape
         new_shape = (*shape[:-1], self.data.dwi.shape[-1])
-        #result = np.zeros(new_shape)
 
         result = self.interpolator(points.reshape(-1, 3))
         result = result.reshape(new_shape)
 
-        #for i in range(self.data.dwi.shape[-1]):
-        #    (out, inside) = interpolate_scalar_3d(self.data.dwi[..., i], points.reshape(-1, 3))
-        #    if np.any(inside == 0) and not ignore_outside_points:
-        #        raise PointOutsideOfDWIError(self, points, np.sum(inside == 0))
-            #print("COMPARE:")
-            #print(self.interpolator(points.reshape(-1, 3))[0][i])
-            #print(out[0])
-            #assert(np.allclose(out, self.interpolator(points.reshape(-1, 3))[:, i]))
-        #    result[..., i] = out.reshape((*new_shape[:-1]))
-        #assert(np.allclose(result, result2))
-        #for i in range(0, self.data.dwi.shape[-1], 3):
-        #    (out, inside) = interpolate_vector_3d(self.data.dwi[..., i:i+3], points.reshape(-1, 3))
-        #    if np.any(inside == 0) and not ignore_outside_points:
-        #        raise PointOutsideOfDWIError(self, points, np.sum(inside == 0))
-        #    result[..., i:i+3] = out.reshape((*new_shape[:-1] , 3))
-        
+        if postprocessing is not None:
+            result = postprocessing(result, self.data.b0, 
+                                 self.data.bvecs, 
+                                 self.data.bvals)
         return result
 
     def crop(self, b_value=None, max_deviation=None, ignore_already_cropped=False):
@@ -821,6 +772,8 @@ class DataContainer():
         DataContainer
             self after applying the normalization.
         """
+        if self.options.cropped:
+            raise DWIAlreadyCroppedError(self, self.options.crop_b, self.options.crop_max_deviation)
         if self.options.normalized:
             raise DWIAlreadyNormalizedError(self) from None
         b0 = self.data.b0[..., None]
@@ -837,12 +790,26 @@ class DataContainer():
         self.data.dwi = weights
         self.id = self.id + "-normalized"
         self.options.normalized = True
+
         x_range = np.arange(self.data.dwi.shape[0])
         y_range = np.arange(self.data.dwi.shape[1])
         z_range = np.arange(self.data.dwi.shape[2])
         self.interpolator = RegularGridInterpolator((x_range,y_range,z_range), self.data.dwi)
         return self
 
+    def generate_fa(self):
+        """Generates the FA Values for DataContainer.
+
+        Normalization is required. It is advised to call the routine ahead of cropping!
+
+        Returns
+        -------
+        Function
+            Fractional anisotropy (FA) calculated from cached eigenvalues.
+        """
+        dti_model = dti.TensorModel(self.data.gtab, fit_method='LS')
+        dti_fit = dti_model.fit(self.data.dwi)
+        self.data.fa = dti_fit.fa
     def get_fa(self):
         """Generates the FA Values for DataContainer.
 
@@ -855,10 +822,6 @@ class DataContainer():
         """
         #if self.options.normalized and self.data.fa is None:
         #    raise DWINormalizedError(self) from None
-        if self.data.fa is None:
-            dti_model = dti.TensorModel(self.data.gtab, fit_method='LS')
-            dti_fit = dti_model.fit(self.data.dwi)
-            self.data.fa = dti_fit.fa
         return self.data.fa
 
 class HCPDataContainer(DataContainer):

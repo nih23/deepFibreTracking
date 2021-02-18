@@ -234,7 +234,7 @@ class RegressionProcessing(Processing):
         """
         next_dir = self._get_next_direction(streamline)
         next_dir, rot_matrix = self._apply_rot_matrix(next_dir)
-        dwi, _ = self._get_dwi(data_container, streamline, rot_matrix=rot_matrix)
+        dwi, _ = self._get_dwi(data_container, streamline, rot_matrix=rot_matrix, postprocessing=self.options.postprocessing)
         if self.options.postprocessing is not None:
             dwi = self.options.postprocessing(dwi, data_container.data.b0,
                                               data_container.data.bvecs,
@@ -243,9 +243,10 @@ class RegressionProcessing(Processing):
             next_dir = (next_dir - self.options.normalize_mean)/self.options.normalize_std
         return (dwi, next_dir)
 
-    def _get_dwi(self, data_container, streamline, rot_matrix=None):
+    def _get_dwi(self, data_container, streamline, rot_matrix=None, postprocessing=None):
         points = self._get_grid_points(streamline, rot_matrix=rot_matrix)
-        return data_container.get_interpolated_dwi(points), points
+        dwi = data_container.get_interpolated_dwi(points, postprocessing=postprocessing) 
+        return dwi , points
 
     def _get_next_direction(self, streamline):
         next_dir = streamline[1:] - streamline[:-1]
