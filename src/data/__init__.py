@@ -29,6 +29,7 @@ import nibabel as nb
 from nibabel.affines import apply_affine
 
 from src.config import Config
+from src.data.exceptions import PointOutsideOfDWIError
 import src.data.exceptions 
 
 class RawData(SimpleNamespace):
@@ -426,7 +427,7 @@ class DataContainer():
         aff = self.data.aff
         return apply_affine(aff, points)
 
-    def get_interpolated_dwi(self, points, postprocessing=None):
+    def get_interpolated_dwi(self, points, postprocessing=None, ignore_outside_points=False):
         """
         Returns interpolated dwi for given RAS+ points.
 
@@ -452,15 +453,28 @@ class DataContainer():
 
         points = self.to_ijk(points)
         shape = points.shape
-        new_shape = (*shape[:-1], self.data.dwi.shape[-1])
+        new_shape = (*shape[:-1], -1)
+        points = points.reshape(-1, 3)
+        
+        condition = ((points[:, 0] < 0) + (points[:, 0] >= self.data.dwi.shape[0]) + # OR 
+                    (points[:, 1] < 0) + (points[:, 1] >= self.data.dwi.shape[1]) + 
+                    (points[:, 2] < 0) + (points[:, 2] >= self.data.dwi.shape[2])) 
+        
+        a, = np.nonzero(condition) # np.nonzero returns tuple (a)
+        if len(a) > 0 and not ignore_outside_points:
+            raise PointOutsideOfDWIError(self, self.to_ras(points), self.to_ras(points[a]))
+        
+        points[a] = np.zeros(3) # set the points being outside to inside points
 
-        result = self.interpolator(points.reshape(-1, 3))
-        result = result.reshape(new_shape)
+        result = self.interpolator(points[not a])
 
         if postprocessing is not None:
             result = postprocessing(result, self.data.b0, 
                                  self.data.bvecs, 
                                  self.data.bvals)
+        result[a, :] = 0  # overwrite their interpolated value
+
+        result = result.reshape(new_shape)
         return result
 
     def crop(self, b_value=None, max_deviation=None, ignore_already_cropped=False):

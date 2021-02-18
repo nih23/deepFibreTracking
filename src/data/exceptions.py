@@ -17,10 +17,6 @@ class Error(Exception):
         """
         Exception.__init__(self, msg)
 
-    def __repr__(self):
-        return self.message
-
-    __str__ = __repr__ # simplify stringify behaviour
 
 class DeviceNotRetrievableError(Error):
     """
@@ -133,3 +129,38 @@ class DWIAlreadyNormalizedError(Error):
 
         self.data_container = data_container
         Error.__init__(self, msg="The DWI of the DataContainer {id} is already normalized. ".format(id=data_container.id))
+
+class PointOutsideOfDWIError(Error):
+    """
+    Error thrown if given points are outside of the DWI-Image.
+    This can be bypassed by passing `ignore_outside_points = True`
+    to the raising function. However, it should be noted that this
+    is not recommendable behaviour.
+    Attributes
+    ----------
+    data_container : DataContainer
+        The `DataContainer` whose DWI-Image is too small to cover the points.
+    points: ndarray
+        The point array which is responsible for raising the error.
+    affected_points: ndarray
+        The affected points beingn outside of the DWI-image.
+    """
+
+    def __init__(self, data_container, points, affected_points):
+        """
+        Parameters
+        ----------
+        data_container : DataContainer
+            The `DataContainer` whose DWI-Image is too small to cover the points.
+        points: ndarray
+            The point array which is responsible for raising the error.
+        affected_points: ndarray
+            The affected points beingn outside of the DWI-image.
+        """
+        self.data_container = data_container
+        self.points = points
+        self.affected_points = affected_points
+        Error.__init__(self, msg=("While parsing {no_points} points for further processing, "
+                                  "it became apparent that {aff} of the points "
+                                  "doesn't lay inside of DataContainer '{id}'.")
+                       .format(no_points=len(points), id=data_container.id, aff=affected_points))
