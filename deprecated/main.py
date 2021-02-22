@@ -10,7 +10,8 @@ import torch.nn.functional as F
 if __name__ == "__main__":
     env = gym.make("RL_env-0")
 
-    num_episodes = 1000
+    # set parameters
+    num_episodes = 100
     eps_start = 1
     eps_end = 0.01
     eps_decay = 0.001
@@ -30,7 +31,7 @@ if __name__ == "__main__":
     env = RLenv(device)
     # set stratagy to be an instance of the EpsilonGreedyStrategy class
     stratagy = EpsilonGreedyStrategy(eps_start, eps_end, eps_decay)
-    agent = Agent(stratagy, num_actions, device)
+    agent = Agent(stratagy, num_actions, device, state)
     memory = ReplayMemory(memory_size)
     # creating policy_net and target_net by creating 2 instances of DQN class
     # and pass in the input_state we get from env
@@ -51,7 +52,6 @@ if __name__ == "__main__":
     # traning loop, iterate each episode
     for episode in range(num_episodes):
         env.reset()
-        state = np.random.rand(0,3,size=3)
 
         # nested for loop that will iterate each time step in each episode
         for timestep in count():
@@ -90,7 +90,7 @@ if __name__ == "__main__":
                 break
 
         # check if we should update the weights of target network before starting the new episode
-        if episode % target_update == 0:
+        if episode % target_update = 0:
             target_net.load_state_dict(policy_net.state_dict())
 
     # the wole process end once it reach the number of episode
