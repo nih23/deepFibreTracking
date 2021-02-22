@@ -4,19 +4,6 @@ of postprocessing the DWI data. Those can be passed to datasets for further use.
 
 Each postprocessing function returns a function to pass to the Dataset.
 For unique identification, each of those functions contains an attribute `id`.
-
-Methods
--------
-raw()
-    A raw data representation. Equal to no postprocessing
-spherical_harmonics(sh_order=None, smooth=None)
-    A data representation based on spherical harmonics
-resample(directions=None, sphere=None, sh_order=None, smooth=None, mean_centering=None)
-    Resampled data along given sphere.
-res100()
-    Shortcut for repulsion100 sphere resampling
-resample2D(sh_order=None, smooth=None, mean_centering=None, no_thetas=None, no_phis=None)
-    2D sphere resampling, usable for CNN for example.
 """
 import warnings
 
@@ -29,7 +16,7 @@ from src.config import Config
 from src.util import get_2D_sphere
 
 def raw():
-    """This is just a raw data representation, equals `None`.
+    """Does no resampling.
 
     Returns
     -------
@@ -43,7 +30,7 @@ def raw():
 
 
 def spherical_harmonics(sh_order=None, smooth=None):
-    """This is a spherical Harmonics data representation.
+    """Resamples the data using spherical harmonics
 
     The data is calculated out of the real DWI Sphere.
 

@@ -19,6 +19,35 @@ from dipy.core.sphere import Sphere
 from dipy.core.geometry import sphere_distance
 from src.config import Config
 
+def rotation_from_vectors_p(rot, vectors_orig, vectors_fin):
+    vectors_orig = vectors_orig / np.linalg.norm(vectors_orig, axis=1)[:, None]
+    vectors_fin = vectors_fin / np.linalg.norm(vectors_fin, axis=1)[:, None]
+    axes = np.cross(vectors_orig, vectors_fin)
+    axes_lens = np.linalg.norm(axes, axis=1)
+    
+    axes_lens[axes_lens == 0] = 1
+
+    axes = axes/axes_lens[:,None]
+
+    x = axes[:,0]
+    y = axes[:,1]
+    z = axes[:,2]
+
+
+    angles = np.arccos(np.sum(vectors_orig * vectors_fin, axis=1))
+    sa = np.sin(angles)
+    ca = np.cos(angles) # cos
+    rot[:,0, 0] = 1.0 + (1.0 - ca)*(x**2 - 1.0)
+    rot[:,0, 1] = -z*sa + (1.0 - ca)*x*y
+    rot[:,0, 2] = y*sa + (1.0 - ca)*x*z
+    rot[:,1, 0] = z*sa+(1.0 - ca)*x*y
+    rot[:,1, 1] = 1.0 + (1.0 - ca)*(y**2 - 1.0)
+    rot[:,1, 2] = -x*sa+(1.0 - ca)*y*z
+    rot[:,2, 0] = -y*sa+(1.0 - ca)*x*z
+    rot[:,2, 1] = x*sa+(1.0 - ca)*y*z
+    rot[:,2, 2] = 1.0 + (1.0 - ca)*(z**2 - 1.0)
+
+
 def rotation_from_vectors(rot, vector_orig, vector_fin):
     """Calculate the rotation matrix required to rotate from one vector to another.
     For the rotation of one vector to another, there are an infinit series of rotation matrices
@@ -164,7 +193,7 @@ def get_mask_from_lengths(lengths):
     
     Parameters
     ----------
-    lenghts: Tensor
+    lengths: Tensor
         The lengths to padd
     Returns
     -------

@@ -24,6 +24,8 @@ StreamlineDataset
     A Dataset consisting of streamlines and their DWI-Data.
 """
 import torch
+import json
+import os
 import numpy as np
 
 from dipy.core.geometry import sphere_distance
@@ -187,48 +189,7 @@ class BaseDataset(MovableData):
 
 
 class IterableDataset(BaseDataset, torch.utils.data.Dataset):
-    """The IterableDataset is the parent class of all maptype datasets.
-
-    This class also implements torch.util.data.Dataset!
-    Look up its attributes and methods too.
-
-    It's childs should implement __len__ and __getitem__.
-    Use this to check wether you are able to iterate over an unknown dataset.
-
-    Attributes
-    ----------
-    device: torch.device, optional
-        The device the movable data currently is located on.
-    data_container: DataContainer
-        The DataContainer the dataset is based on
-    id: str
-        An ID representing this Dataset. This is not unique to any instance, but it consists of parameters and used dataset. 
-
-    Methods
-    -------
-    cuda(device=None, non_blocking=False, memory_format=torch.preserve_format)
-        Moves the MovableData to specified or default CUDA device.
-    cpu(memory_format=torch.preserve_format)
-        Moves the MovableData to cpu.
-    to(*args, **kwargs)
-        Moves the MovableData to specified device.
-        See `torch.Tensor.to(...)` for more details on usage.
-    get_device()
-        Returns the CUDA device number if possible. Raises `DeviceNotRetrievableError` otherwise.
-
-    Inheritance
-    -----------
-    See `MovableData` for details.
-    """
     def __init__(self, data_container, device=None):
-        """
-        Parameters
-        ----------
-        data_container: DataContainer
-            The DataContainer the dataset uses
-        device : torch.device, optional
-            The device which the `MovableData` should be moved to on load, by default cpu.
-        """
         BaseDataset.__init__(self, data_container, device=device)
         torch.utils.data.Dataset.__init__(self)
 
@@ -241,55 +202,80 @@ class IterableDataset(BaseDataset, torch.utils.data.Dataset):
             raise NotImplementedError() from None
 
 
-class ConcatenatedDataset(IterableDataset):
-    """A ConcatenatedDataset is an IterableDataset which is able to pack multiple IterableDatasets into a single one.
+class SaveableDataset(IterableDataset):
+    def __init__(self, data_container, device=None):
+        IterableDataset.__init__(self,data_container, device=device)
     
-    This is pratical for combining the data of multiple DataContainers into a single dataset for training.
-    It is advised to use the same type of data, but is not not necessary for using it. 
+    def _get_variable_elements_data(self):
+        lengths = np.zeros(len(self), dtype=int)
+        for i, (inp, out) in enumerate(self):
+            assert len(inp) == len(out)
+            lengths[i] = len(inp)
+        return lengths, inp.shape[1:], out.shape[1:]
+
+    def saveToPath(self, path):
+
+        os.makedirs(path, exist_ok=True)
+        lengths, in_shape, out_shape = self._get_variable_elements_data()
+        print(lengths)
+        data_length = int(np.sum(lengths))
+
+        in_shape=tuple([data_length] + list(in_shape))
+        out_shape=tuple([data_length] + list(out_shape))
+
+        inp_memmap = np.memmap(os.path.join(path, 'input.npy'), dtype='float32', shape=in_shape, mode='w+')
+        out_memmap = np.memmap(os.path.join(path, 'output.npy'), dtype='float32', shape=out_shape, mode='w+')
+        
+        idx = 0
+        assert (len(self) == len(lengths))
+        for i in range(len(self)):
+            inp,out = self[i]
+            print(i, ": ", inp.shape, " l " ,lengths[i],  " - ",lengths.shape)
+            assert(len(inp) == lengths[i])
+            inp_memmap[idx:(idx + lengths[i])] = inp.numpy()
+            out_memmap[idx:(idx + lengths[i])] = out.numpy()
+            idx = idx +  lengths[i] 
+            print("{}/{}".format(i, len(lengths)), end="\r")
+        np.save(os.path.join(path, 'lengths.npy'), lengths)
+        with open(os.path.join(path, 'info.json'), 'w') as infofile:
+            json.dump({"id": self.id, "input_shape":in_shape, "output_shape":out_shape}, infofile)
+
+
+class LoadedDataset(IterableDataset):
+    def __init__(self, path, device=None, passSingleElements=False):
+        IterableDataset.__init__(self, None, device=device)
+        self.path = path
+
+        with open(os.path.join(self.path, 'info.json')) as infofile:
+            info_data = json.load(infofile)
+        self.id = info_data["id"] + "-loaded"
+
+        inp_shape = tuple(info_data["input_shape"])
+        out_shape = tuple(info_data["output_shape"])
+        self.feature_shapes = np.prod(info_data["input_shape"][1:]), np.prod(info_data["output_shape"][1:])
+        #self.id = "LoadedDataset-{}".format(path.replace(os.path.sep,"-"))
+        if not passSingleElements:
+            self.sl_lengths = np.load(os.path.join(self.path, 'lengths.npy'))
+        else:
+            self.sl_lengths = np.ones((inp_shape[0]))
+        self.sl_start_indices = np.append(0, np.cumsum(self.sl_lengths))
+
+        self.inp_memmap = np.memmap(os.path.join(self.path, 'input.npy'), dtype='float32', shape=inp_shape, mode='r')
+        self.out_memmap = np.memmap(os.path.join(self.path, 'output.npy'), dtype='float32', shape=out_shape, mode='r')
     
-    Attributes
-    ----------
-    device: torch.device, optional
-        The device the movable data currently is located on.
-    datasets: list
-        A list of the datasets in this ConcatenatedDataset
-    id: str
-        An ID representing this Dataset. This is not unique to any instance, but it consists of parameters and used dataset.
-    options: SimpleNamespace
-        An Namespace holding all configuration options of this dataset.
+    def __len__(self):
+        return len(self.sl_lengths)
 
-    Methods
-    -------
-    cuda(device=None, non_blocking=False, memory_format=torch.preserve_format)
-        Moves the MovableData to specified or default CUDA device.
-    cpu(memory_format=torch.preserve_format)
-        Moves the MovableData to cpu.
-    to(*args, **kwargs)
-        Moves the MovableData to specified device.
-        See `torch.Tensor.to(...)` for more details on usage.
-    get_device()
-        Returns the CUDA device number if possible. Raises `DeviceNotRetrievableError` otherwise.
-    get_feature_shapes()
-        Returns the feature shape of the given dataset. Useful for initializing NNs.
+    def __getitem__(self, index):
+        inp = torch.from_numpy(self.inp_memmap[self.sl_start_indices[index]:self.sl_start_indices[index+1]]).to(self.device)
+        out = torch.from_numpy(self.out_memmap[self.sl_start_indices[index]:self.sl_start_indices[index+1]]).to(self.device)
+        return (inp, out)
 
-    Inheritance
-    -----------
-    See `MovableData` for details.
-    """
+    def get_feature_shapes(self):
+        return self.feature_shapes
+
+class ConcatenatedDataset(SaveableDataset):
     def __init__(self, datasets, device=None):
-        """
-        Parameters
-        ----------
-        datasets: list
-            A list of Datasets to use
-        device : torch.device, optional
-            The device which the `MovableData` should be moved to on load, by default cpu.
-
-        Raises
-        ------
-        WrongDatasetTypePassedError:
-            Not all Datasets are iterable.
-        """
         IterableDataset.__init__(self, None, device=device)
         self.id = self.id + "["
         self.__lens = [0]
@@ -319,13 +305,6 @@ class ConcatenatedDataset(IterableDataset):
         return self.datasets[i][index - self.__lens[i]]
 
     def get_feature_shapes(self):
-        """Returns the feature shapes as tuples (in, out).
-        
-        Raises
-        ------
-        FeatureShapesNotEqualError:
-            Raised if this function is called on datasets with varying shapes.
-        """
         # assert that each dataset has same dataset shape
         (inp, out) = self.datasets[0].get_feature_shapes()
         for i in range(1, len(self.datasets)):
@@ -336,27 +315,6 @@ class ConcatenatedDataset(IterableDataset):
         return (inp, out)
 
     def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
-        """
-        Returns this object in CUDA memory.
-
-        If this object is already in CUDA memory and on the correct device,
-        then no movement is performed and the original object is returned.
-
-        Parameters
-        ----------
-        device : `torch.device`, optional
-            The destination GPU device. Defaults to the current CUDA device.
-        non_blocking : `bool`, optional
-             If `True` and the source is in pinned memory, the copy will be asynchronous with
-             respect to the host. Otherwise, the argument has no effect, by default `False`.
-        memory_format : `torch.memory_format`, optional
-            the desired memory format of returned Tensor, by default `torch.preserve_format`.
-
-        Returns
-        -------
-        ConcatenatedDataset
-            The object moved to specified device
-        """
         for dataset in self.datasets:
             dataset.cuda(device=device, non_blocking=non_blocking,
                          memory_format=memory_format)
@@ -364,120 +322,21 @@ class ConcatenatedDataset(IterableDataset):
         return self
 
     def cpu(self, memory_format=torch.preserve_format):
-        """
-        Returns a copy of this object in CPU memory.
-
-        If this object is already in CPU memory and on the correct device,
-        then no copy is performed and the original object is returned.
-
-        Parameters
-        ----------
-        memory_format : `torch.memory_format`, optional
-            the desired memory format of returned Tensor, by default `torch.preserve_format`.
-
-        Returns
-        -------
-        ConcatenatedDataset
-            The object moved to specified device
-        """
         for dataset in self.datasets:
             dataset.cpu(memory_format=memory_format)
             self.device = dataset.device
         return self
 
     def to(self, *args, **kwargs):
-        """
-        Performs Tensor dtype and/or device conversion.
-        A `torch.dtype` and `torch.device` are inferred from the arguments of
-        `self.to(*args, **kwargs)`.
-
-        Here are the ways to call `to`:
-
-        to(dtype, non_blocking=False, copy=False, memory_format=torch.preserve_format) -> Tensor
-            Returns MovableData with specified `dtype`
-
-        to(device=None, dtype=None, non_blocking=False, copy=False,
-        memory_format=torch.preserve_format) -> Tensor
-            Returns MovableData on specified `device`
-
-        to(other, non_blocking=False, copy=False) → Tensor
-            Returns MovableData with same `dtype` and `device` as `other`
-        Returns
-        -------
-        ConcatenatedDataset
-            The object moved to specified device
-        """
         for dataset in self.datasets:
             dataset.to(*args, **kwargs)
             self.device = dataset.device
         return self
 
-class StreamlineDataset(IterableDataset):
-    """Represents a dataset of streamlines. 
-    
-    Every item of the dataset is a tuple (input, output) with the dimensions 
-    Streamline-Length x gridX x grid Y x gridZ x DWI-Data-Length for the input.
+class StreamlineDataset(SaveableDataset):
 
-    You can pass this dataset to a dataloader. If `append_reverse` is True, 
-    the inverse streamlines will be part of the dataset too. 
-
-    The data will be generated and interpolated in runtime, 
-    however this dataset is capable of caching the generated streamlines.
-    Use this option only if you have enough (V)RAM. 
-
-    Attributes
-    ----------
-    device: torch.device, optional
-        The device the movable data currently is located on.
-    data_container: DataContainer
-        The DataContainer the dataset is based on
-    streamlines: list
-        A list containing all the streamlines in RAS+
-    options: SimpleNamespace
-        A namespace containing all specified options.
-    cache: list, optional
-        If online caching is active, the cache.
-    id: str
-        An ID representing this Dataset. This is not unique to any instance, but it consists of parameters and used dataset. 
-
-    Methods
-    -------
-    cuda(device=None, non_blocking=False, memory_format=torch.preserve_format)
-        Moves the MovableData to specified or default CUDA device.
-    cpu(memory_format=torch.preserve_format)
-        Moves the MovableData to cpu.
-    to(*args, **kwargs)
-        Moves the MovableData to specified device.
-        See `torch.Tensor.to(...)` for more details on usage.
-    get_device()
-        Returns the CUDA device number if possible. Raises `DeviceNotRetrievableError` otherwise.
-
-    Inheritance
-    -----------
-    See `MovableData` for details regarding the Tensor device allocation. These functions are overwritten here.
-
-    Also `_calculate_item(index)` generates an item and `_get_streamline(index)` retrieves the streamline in RAS+.
-
-    """
     def __init__(self, tracker, data_container, processing,
                  device=None, append_reverse=None, online_caching=None):
-        """
-        Parameters
-        ----------
-        tracker: Tracker
-            The tracker which retrieved the streamlines.
-        data_container: DataContainer
-            The DataContainer matching the streamlines.
-        processing: Processing
-            A processing method to use with the data container
-        device : torch.device, optional
-            The device which the `MovableData` should be moved to on load, by default cpu.
-        append_reverse: boolean, optional
-            A boolean indicating wether the reversed streamlines should be appended to the Dataset.
-        online_caching : boolean, optional
-            A boolean indicating wether the object should cache all generated streamlines.
-
-        """
         IterableDataset.__init__(self, data_container, device=device)
         self.streamlines = tracker.get_streamlines()
         self.id = self.id + "-{}-(".format(processing.id) + tracker.id + ")"
@@ -495,6 +354,16 @@ class StreamlineDataset(IterableDataset):
         if online_caching:
             self.cache = [None] * len(self)
         self.feature_shapes = None
+    
+    def _get_variable_elements_data(self):
+        lengths = np.zeros(len(self) , dtype=int)
+        for i, sl in enumerate(self.streamlines):
+            lengths[i] = len(sl)
+        if self.options.append_reverse:
+            lengths[len(self.streamlines):] = lengths[:len(self.streamlines)]
+        (inp, out) = self[0]
+        return lengths, inp.shape[1:], out.shape[1:]
+
 
     def __len__(self):
         if self.options.append_reverse:
@@ -515,36 +384,10 @@ class StreamlineDataset(IterableDataset):
             return (inp, output)
 
     def _calculate_item(self, index):
-        """Calculates the input and output for given streamline identified by the index.
-
-        Parameters
-        ----------
-        index, int:
-            The index of the streamline.
-
-        Returns
-        -------
-        object:
-            The item calculated.
-        """
         streamline = self._get_streamline(index)
         return self.options.processing.calculate_streamline(self.data_container, streamline)
 
     def _get_streamline(self, index):
-        """Returns the requested streamline. 
-
-        ! Use this function instead of the self.streamlines direct access because of the reversed streamlines.
-
-        Parameters
-        ----------
-        index, int:
-            The index of the streamline.
-
-        Returns
-        -------
-        object:
-            The streamline.
-        """
         reverse = False
         if self.options.append_reverse and index >= len(self.streamlines):
             reverse = True
@@ -557,13 +400,6 @@ class StreamlineDataset(IterableDataset):
 
 
     def get_feature_shapes(self):
-        """Returns the feature shapes as tuples (in, out).
-        
-        Raises
-        ------
-        FeatureShapesNotEqualError:
-            Raised if this function is called on datasets with varying shapes.
-        """
         if self.feature_shapes is None:
             dwi, next_dir = self[0]
             # assert that every type of data processing maintains same shape
@@ -577,27 +413,6 @@ class StreamlineDataset(IterableDataset):
         return self.feature_shapes
 
     def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
-        """
-        Returns this object in CUDA memory.
-
-        If this object is already in CUDA memory and on the correct device,
-        then no movement is performed and the original object is returned.
-
-        Parameters
-        ----------
-        device : `torch.device`, optional
-            The destination GPU device. Defaults to the current CUDA device.
-        non_blocking : `bool`, optional
-             If `True` and the source is in pinned memory, the copy will be asynchronous with
-             respect to the host. Otherwise, the argument has no effect, by default `False`.
-        memory_format : `torch.memory_format`, optional
-            the desired memory format of returned Tensor, by default `torch.preserve_format`.
-
-        Returns
-        -------
-        StreamlineDataset
-            The object moved to specified device
-        """
         if not self.options.online_caching:
             return
         for index, el in enumerate(self.cache):
@@ -615,22 +430,6 @@ class StreamlineDataset(IterableDataset):
         return self
 
     def cpu(self, memory_format=torch.preserve_format):
-        """
-        Returns a copy of this object in CPU memory.
-
-        If this object is already in CPU memory and on the correct device,
-        then no copy is performed and the original object is returned.
-
-        Parameters
-        ----------
-        memory_format : `torch.memory_format`, optional
-            the desired memory format of returned Tensor, by default `torch.preserve_format`.
-
-        Returns
-        -------
-        StreamlineDataset
-            The object moved to specified device
-        """
         if not self.options.online_caching:
             return
         for index, el in enumerate(self.cache):
@@ -646,27 +445,6 @@ class StreamlineDataset(IterableDataset):
         return self
 
     def to(self, *args, **kwargs):
-        """
-        Performs Tensor dtype and/or device conversion.
-        A `torch.dtype` and `torch.device` are inferred from the arguments of
-        `self.to(*args, **kwargs)`.
-
-        Here are the ways to call `to`:
-
-        to(dtype, non_blocking=False, copy=False, memory_format=torch.preserve_format) -> Tensor
-            Returns MovableData with specified `dtype`
-
-        to(device=None, dtype=None, non_blocking=False, copy=False,
-        memory_format=torch.preserve_format) -> Tensor
-            Returns MovableData on specified `device`
-
-        to(other, non_blocking=False, copy=False) → Tensor
-            Returns MovableData with same `dtype` and `device` as `other`
-        Returns
-        -------
-        ConcatenatedDataset
-            The object moved to specified device
-        """
         if not self.options.online_caching:
             return
         for index, el in enumerate(self.cache):
@@ -680,204 +458,3 @@ class StreamlineDataset(IterableDataset):
                 return
         self.device = dwi.device
         return self
-
-class SingleDirectionsDataset(IterableDataset):
-    """This Dataset is equivalent to StreamlineDataset, but more applicable for non-recurrent networks. 
-
-    ! This element only support unrotated data !
-
-    Every item just consists of single DWI (grid) values instead of a whole streamline, therefore
-    one is able to work with constant batch sizes. The streamlines are sometimes split up over multiple 
-    batches, if you combine it with an DataLoader.
-
-    Every item of the dataset is a tuple (input, output) with the dimensions 
-    gridX x grid Y x gridZ x DWI-Data-Length for the input.
-
-    The data will be generated and interpolated in runtime, 
-    however this dataset is capable of caching the generated streamlines.
-    Use this option only if you have enough (V)RAM. 
-
-    Attributes
-    ----------
-    device: torch.device, optional
-        The device the movable data currently is located on.
-    data_container: DataContainer
-        The DataContainer the dataset is based on
-    streamlines: list
-        A list containing all the streamlines in RAS+
-    size: int,
-        The size of the Dataset
-    calc_data: Tensor
-        Preprocessed Data for generating the single elements live.
-    options: SimpleNamespace
-        A namespace containing all specified options.
-    cache: list, optional
-        If online caching is active, the cache.
-    id: str
-        An ID representing this Dataset. This is not unique to any instance, but it consists of parameters and used dataset. 
-
-    Methods
-    -------
-    cuda(device=None, non_blocking=False, memory_format=torch.preserve_format)
-        Moves the MovableData to specified or default CUDA device.
-    cpu(memory_format=torch.preserve_format)
-        Moves the MovableData to cpu.
-    to(*args, **kwargs)
-        Moves the MovableData to specified device.
-        See `torch.Tensor.to(...)` for more details on usage.
-    get_device()
-        Returns the CUDA device number if possible. Raises `DeviceNotRetrievableError` otherwise.
-
-    Inheritance
-    -----------
-    See `MovableData` for details regarding the Tensor device allocation. These functions are overwritten here.
-
-    Also `_calculate_item(index)` generates an item and `_get_streamline(index)` retrieves the streamline in RAS+.
-    """
-    def __init__(self, tracker, data_container, processing,
-                 device=None, append_reverse=None, online_caching=None):
-        """
-
-        ! Only unrotated data !
-        Parameters
-        ----------
-        tracker: Tracker
-            The tracker which retrieved the streamlines.
-        data_container: DataContainer
-            The DataContainer matching the streamlines.
-        processing: Processing
-            A processing method to use with the data container
-        device : torch.device, optional
-            The device which the `MovableData` should be moved to on load, by default cpu.
-        append_reverse: boolean, optional
-            A boolean indicating wether the reversed streamlines should be appended to the Dataset.
-        online_caching : boolean, optional
-            A boolean indicating wether the object should cache all generated streamlines.
-        """
-        IterableDataset.__init__(self, data_container, device=device)
-
-        #!! TODO Discuss ->  asserting every streamline is len 3 or longer
-        append_end = False
-        append_start = not processing.options.rotate
-        #!!
-
-        self.streamlines = tracker.get_streamlines()
-
-        self.size = 0
-        for streamline in self.streamlines:
-            assert len(streamline) > 2
-            self.size += len(streamline)
-
-        if not append_end:
-            self.size -= len(self.streamlines)
-        if not append_start:
-            self.size -= len(self.streamlines)
-
-
-        self.id = self.id + "-{}-(".format(processing.id) + tracker.id + ")"
-        config = Config.get_config()
-        if append_reverse is None:
-            append_reverse = config.getboolean("DatasetOptions", "appendReverseStreamlines",
-                                               fallback="yes")
-        if online_caching is None:
-            online_caching = config.getboolean("DatasetOptions", "onlineCaching",
-                                               fallback="yes")
-        self.options = SimpleNamespace()
-        self.options.append_reverse = append_reverse
-        self.options.online_caching = online_caching
-        self.options.processing = processing
-
-        self.calc_data = np.zeros((self.size, 2), dtype=np.int)
-        idx = 0
-        self._START_OFFSET = 0 if append_start else 1
-        self._END_OFFSET = 0 if append_end else 1
-        for i, streamline in enumerate(self.streamlines):
-            sl_len = len(streamline) - self._START_OFFSET - self._END_OFFSET
-            self.calc_data[idx:(idx+sl_len), 0] = i
-            self.calc_data[idx:(idx+sl_len), 1] = np.arange(self._START_OFFSET, sl_len + self._START_OFFSET)
-            idx += sl_len
-
-        assert idx == self.size
-
-        if online_caching:
-            self.cache = [None] * len(self)
-        self.feature_shapes = None
-
-    def __len__(self):
-        if self.options.append_reverse:
-            return 2*self.size
-        return self.size
-
-    def get_feature_shapes(self):
-        """Returns the feature shapes as tuples (in, out).
-        
-        Raises
-        ------
-        FeatureShapesNotEqualError:
-            Raised if this function is called on datasets with varying shapes.
-        """
-        if self.feature_shapes is None:
-            dwi, next_dir = self[0]
-            # assert that every type of data processing maintains same shape
-            # and that every element has same shape
-            input_shape = torch.tensor(dwi.shape)
-            #input_shape[0] = 1
-
-            output_shape = torch.tensor(next_dir.shape)
-            #output_shape[0] = 1
-            self.feature_shapes = (torch.prod(input_shape).item(), torch.prod(output_shape).item())
-        return self.feature_shapes
-    def __getitem__(self, index):
-        if self.options.online_caching and self.cache[index] is not None:
-            return self.cache[index]
-        (inp, output) = self._calculate_item(index)
-
-
-        if self.options.online_caching:
-            self.cache[index] = (inp, output)
-            return self.cache[index]
-        else:
-            return (inp, output)
-
-    def _calculate_item(self, index):
-        """Calculates the input and output for given streamline identified by the index.
-
-        Parameters
-        ----------
-        index, int:
-            The index of the streamline.
-
-        Returns
-        -------
-        object:
-            The item calculated.
-        """
-        is_reverse = False
-        og_index = index
-        if index >= self.size:
-            is_reverse = True
-            index = index - self.size
-        (idx1, idx2) = self.calc_data[index]
-        sl = self.streamlines[idx1]
-        s_index = index
-        if is_reverse:
-            sl = sl[::-1]
-        if not self.options.online_caching: # calculate just single item
-            previous_sl = sl[:(idx2+1)]
-            next_dir = sl[min(idx2+1, len(sl) - 1)] - sl[idx2] # is zero vector if empty
-            (inp, output) =  self.options.processing.calculate_item(self.data_container, previous_sl, next_dir)
-            inp = torch.from_numpy(inp).to(device=self.device, dtype=torch.float32)
-            output = torch.from_numpy(output).to(device=self.device, dtype=torch.float32)
-            return (inp, output)
-        else: # calculate whole streamline -> more efficient
-            (inp, out) = self.options.processing.calculate_streamline(self.data_container, sl)
-            inp = inp[self._START_OFFSET:len(inp)-self._END_OFFSET]
-            out = out[self._START_OFFSET:len(out)-self._END_OFFSET]
-            for index, (_in, _out) in enumerate(zip(inp,out)):
-                _in = torch.from_numpy(_in).to(device=self.device, dtype=torch.float32)
-                _out = torch.from_numpy(_out).to(device=self.device, dtype=torch.float32)
-                self.cache[og_index-(idx2-self._START_OFFSET)+index] = (_in, _out)
-            return self.cache[og_index]
-
-
-
