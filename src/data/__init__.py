@@ -29,8 +29,7 @@ import nibabel as nb
 from nibabel.affines import apply_affine
 
 from src.config import Config
-from src.data.exceptions import PointOutsideOfDWIError
-import src.data.exceptions 
+from src.data.exceptions import * 
 
 class RawData(SimpleNamespace):
     """
