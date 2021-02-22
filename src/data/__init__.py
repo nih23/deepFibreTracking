@@ -301,7 +301,7 @@ class DataContainer():
             denoise = Config.get_config().getboolean("data", "denoise", fallback="no")
         if b0_threshold is None:
             b0_threshold = Config.get_config().getfloat("data", "b0-threshold", fallback="10")
-        self.options = RawData()
+        self.options = SimpleNamespace()
         self.options.denoised = denoise
         self.options.cropped = False
         self.options.normalized = False
