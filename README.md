@@ -1,5 +1,5 @@
 # Reinforcement Learning environment
-There are a few classes and methods which could help you building your reinforcement learning environment.
+There are a few classes and methods which could help you building your reinforcement learning environment for tractography.
 
 ## DWI Data representation
 Firstly, you can use `DataContainer` objects to store and retrieve DWI data:
