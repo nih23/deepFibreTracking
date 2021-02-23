@@ -18,47 +18,8 @@ import dipy.reconst.dti as dti
 from types import SimpleNamespace
 from src.config import Config
 from src.cache import Cache
+from src.tracker.exceptions import StreamlinesAlreadyTrackedError, ISMRMStreamlinesNotCorrectError, StreamlinesNotTrackedError
 
-class Error(Exception):
-    """Base class for Tracker exceptions."""
-
-    def __init__(self, msg=''):
-        self.message = msg
-        Exception.__init__(self, msg)
-
-    def __repr__(self):
-        return self.message
-
-    __str__ = __repr__
-
-class StreamlinesAlreadyTrackedError(Error):
-    """Error thrown if streamlines are already tracked."""
-
-    def __init__(self, tracker):
-        self.tracker = tracker
-        self.data_container = tracker.data_container
-        Error.__init__(self, msg=("There are already {sl} streamlines tracked out of dataset {id}. "
-                                  "Create a new Tracker object to change parameters.")
-                       .format(sl=len(tracker.streamlines), id=self.data_container.id))
-
-class ISMRMStreamlinesNotCorrectError(Error):
-    """Error thrown if streamlines are already tracked."""
-
-    def __init__(self, tracker, path):
-        self.tracker = tracker
-        self.path = path
-        Error.__init__(self, msg=("The streamlines located in {path} do not match the "
-                                  "ISMRM 2015 Ground Truth Streamlines.").format(path=path))
-
-class StreamlinesNotTrackedError(Error):
-    """Error thrown if streamlines weren't tracked yet."""
-
-    def __init__(self, tracker):
-        self.tracker = tracker
-        self.data_container = tracker.data_container
-        Error.__init__(self, msg=("The streamlines weren't tracked yet from Dataset {id}. "
-                                  "Call Tracker.track() to track the streamlines.")
-                       .format(id=self.data_container.id))
 class Tracker():
     """Universal Tracker class"""
     def __init__(self, data_container):
@@ -89,7 +50,7 @@ class SeedBasedTracker(Tracker):
                  step_width=None,
                  min_length=None,
                  max_length=None):
-        Tracker.__init__(self, data_container)
+        super().__init__(data_container)
         self.options = SimpleNamespace()
         if seeds_count is not None and random_seeds is None:
             random_seeds = True

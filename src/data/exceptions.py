@@ -1,24 +1,4 @@
-class Error(Exception):
-    """
-    Base class for Data exceptions.
-
-    Every Error happening from code of this class will inherit this one.
-    The single parameter `msg` represents the error representing message.
-
-    This class can be used to filter the exceptions for data exceptions.
-    """
-
-    def __init__(self, msg):
-        """
-        Parameters
-        ----------
-        msg : str
-            The message describing the error
-        """
-        Exception.__init__(self, msg)
-
-
-class DeviceNotRetrievableError(Error):
+class DeviceNotRetrievableError(Exception):
     """
     Exception thrown if get_device is called on non-CUDA tensor.
 
@@ -27,8 +7,6 @@ class DeviceNotRetrievableError(Error):
 
     Attributes
     ----------
-    message: str
-        The error message is stored here.
     device:
         The device currently active.
     """
@@ -41,10 +19,10 @@ class DeviceNotRetrievableError(Error):
             The current device on which the error occured.
         """
         self.device = device
-        Error.__init__(self, msg=("get_device() can't be called on non-CUDA Tensors. "
-                                  "Current device: {}".format(device)))
+        super().__init__(("get_device() can't be called on non-CUDA Tensors. "
+                          "Current device: {}".format(device)))
 
-class DataContainerNotLoadableError(Error):
+class DataContainerNotLoadableError(Exception):
     """
     Exception thrown if DataContainer is unable to load specified files.
 
@@ -70,11 +48,11 @@ class DataContainerNotLoadableError(Error):
         """
         self.path = path
         self.file = file
-        Error.__init__(self, msg=("The File '{file}' "
-                                  "can't be retrieved from folder '{path}' for the dataset.")
-                       .format(file=file, path=path))
+        super().__init__(("The File '{file}' "
+                          "can't be retrieved from folder '{path}' for the dataset.")
+                          .format(file=file, path=path))
 
-class DWIAlreadyCroppedError(Error):
+class DWIAlreadyCroppedError(Exception):
     """
     Error thrown if the DWI data is cropped multiple times.
 
@@ -106,11 +84,11 @@ class DWIAlreadyCroppedError(Error):
         self.data_container = data_container
         self.bval = bval
         self.max_deviation = dev
-        Error.__init__(self, msg=("The dataset {id} is already cropped with b_value "
-                                  "{bval} and deviation {dev}.")
-                       .format(id=data_container.id, bval=bval, dev=dev))
+        super().__init__(("The dataset {id} is already cropped with b_value "
+                            "{bval} and deviation {dev}.")
+                            .format(id=data_container.id, bval=bval, dev=dev))
 
-class DWIAlreadyNormalizedError(Error):
+class DWIAlreadyNormalizedError(Exception):
     """Error thrown if DWI normalize function is getting called multiple times.
 
     You have to create a new DataContainer if you want to change the normalization
@@ -128,9 +106,9 @@ class DWIAlreadyNormalizedError(Error):
         """
 
         self.data_container = data_container
-        Error.__init__(self, msg="The DWI of the DataContainer {id} is already normalized. ".format(id=data_container.id))
+        super().__init__("The DWI of the DataContainer {id} is already normalized. ".format(id=data_container.id))
 
-class PointOutsideOfDWIError(Error):
+class PointOutsideOfDWIError(Exception):
     """
     Error thrown if given points are outside of the DWI-Image.
     This can be bypassed by passing `ignore_outside_points = True`
@@ -160,7 +138,7 @@ class PointOutsideOfDWIError(Error):
         self.data_container = data_container
         self.points = points
         self.affected_points = affected_points
-        Error.__init__(self, msg=("While parsing {no_points} points for further processing, "
-                                  "it became apparent that {aff} of the points "
-                                  "doesn't lay inside of DataContainer '{id}'.")
-                       .format(no_points=len(points), id=data_container.id, aff=affected_points))
+        super().__init__(("While parsing {no_points} points for further processing, "
+                          "it became apparent that {aff} of the points "
+                          "doesn't lay inside of DataContainer '{id}'.")
+                          .format(no_points=len(points), id=data_container.id, aff=affected_points))
