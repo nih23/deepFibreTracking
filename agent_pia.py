@@ -65,7 +65,7 @@ class ReplayMemory(object):
             raise ValueError("The replay memory is empty!")
         if index < self.agent_history_length - 1:
             raise ValueError("Index must be min 3")
-        return self.states[index-self.agent_history_length+1:index+1, ...]
+        return self.states[index-self.agent_history_length+1:index+1]
         
     def _get_valid_indices(self):
         for i in range(self.batch_size):
@@ -87,18 +87,17 @@ class ReplayMemory(object):
         if self.count < self.agent_history_length:
             raise ValueError('Not enough memories to get a minibatch')
         
+        states = [None]*self.batch_size
+        new_states = [None]*self.batch_size
         self._get_valid_indices()
             
         for i, idx in enumerate(self.indices):
-            self.states_return[i] = self._get_state(idx - 1)
-            self.new_states[i] = self._get_state(idx)
+            states[i] = self._get_state(idx - 1)
+            new_states[i] = self._get_state(idx)
         
-        return np.transpose(self.states_return), self.actions[self.indices], \
-        self.rewards[self.indices], np.transpose(self.new_states), \
-        self.terminal_flags[self.indices]
+        return states, self.actions[self.indices], self.rewards[self.indices], new_states, self.terminal_flags[self.indices]
 
  
-
 class DQN(nn.Module):
     """
     Main modell class. First 4 layers are convolutional layers, after that the model is split into the
@@ -135,7 +134,7 @@ class DQN(nn.Module):
         nn.init.kaiming_uniform_(self.conv3.weight, nonlinearity='relu')
 
 
-        out = self.conv3(self.conv2(self.conv1(torch.zeros(1,100,3,3,3))))
+        out = self.conv3(self.conv2(self.conv1(torch.zeros(1,self.in_channels,3,3,3))))
         out = out.view(out.size(0), -1)
         self.split_size = int(out.size(1)/2)
 
@@ -219,7 +218,7 @@ class Agent():
         self.target_dqn.eval()
 
         
-        self.replay_memory = ReplayMemory(size=self.memory_size, agent_history_length=self.agent_history_length, batch_size=self.batch_size, frame_height=210, frame_width=160)
+        self.replay_memory = ReplayMemory(size=self.memory_size, agent_history_length=self.agent_history_length, batch_size=self.batch_size)
         self.optimizer = torch.optim.Adam(self.main_dqn.parameters(), self.lr)
 
     def optimize(self):
@@ -237,16 +236,21 @@ class Agent():
         # new_states: (32, 4, 210, 160)
         # terminal_flags: (32)
         #
-
-        states_interpol = []
-        next_states_interpol = []
-        for i in range(self.batch_size):
-            states_interpol.append(states[i].getValue())
-            next_states_interpol.append(new_states[i].getValue())
+        
+        # To Do: sometimes point is still outside of DWI
+        try:
+            states_interpol = []
+            next_states_interpol = []
+            for i in range(self.batch_size):
+                # To Do: replay memory returns nested list of state objects
+                    states_interpol.append(states[i][0].getValue())
+                    next_states_interpol.append(new_states[i][0].getValue())
+        except:
+            return 0
 
         states_interpol = torch.stack(states_interpol).to(self.device)
         next_states_interpol = torch.stack(next_states_interpol).to(self.device)
-        
+
         # states = torch.FloatTensor(states/255.).to(self.device)
         actions = torch.LongTensor(actions).to(self.device)
         rewards = torch.IntTensor(rewards).to(self.device)
@@ -254,20 +258,22 @@ class Agent():
         terminal_flags = torch.BoolTensor(terminal_flags).to(self.device)
 
         # predict the best actions for all the next states, shape: (32)
-        arg_q_max = self.main_dqn.predict_q(new_states).max(1)[1]
+        arg_q_max = self.main_dqn.predict_q(next_states_interpol).max(1)[1]
 
         # predict the Q values for all the next states,
         # get the Q value of the target model for the predicted actions arg_q_max, shape: (32)
-        double_q = self.target_dqn.predict_q(new_states).gather(1, arg_q_max.unsqueeze(-1)).squeeze(1).detach()
+        double_q = self.target_dqn.predict_q(next_states_interpol).gather(1, arg_q_max.unsqueeze(-1)).squeeze(1).detach()
 
         # Belman equation. Make sure that if episode is over, target_q = rewards, shape: (32)
         target_q = rewards + (self.gamma * double_q * ~terminal_flags)
 
         # predict the q values for the current states,
         # select Q value of the best action that was performed for the current state, shape: (32)
-        predict_Q = self.main_dqn.predict_q(states).gather(1, actions.unsqueeze(-1)).squeeze(-1)
+        predict_Q = self.main_dqn.predict_q(states_interpol).gather(1, actions.unsqueeze(-1)).squeeze(-1)
 
         loss = F.smooth_l1_loss(input=predict_Q, target=target_q, reduction='mean')
+           
+          
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
