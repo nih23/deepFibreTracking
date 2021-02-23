@@ -475,6 +475,7 @@ class StreamlineDataset(SaveableDataset):
     def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
         if not self.options.online_caching:
             return
+        dwi = None
         for index, el in enumerate(self.cache):
             if el is None:
                 continue
@@ -493,6 +494,7 @@ class StreamlineDataset(SaveableDataset):
     def cpu(self, memory_format=torch.preserve_format):
         if not self.options.online_caching:
             return
+        dwi = None
         for index, el in enumerate(self.cache):
             if el is None:
                 continue
@@ -509,6 +511,7 @@ class StreamlineDataset(SaveableDataset):
     def to(self, *args, **kwargs):
         if not self.options.online_caching:
             return
+        dwi = None
         for index, el in enumerate(self.cache):
             if el is None:
                 continue
