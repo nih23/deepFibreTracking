@@ -3,15 +3,6 @@ The cache module covers all basic cache function necessary.
 
 This can shorten computation times and therefore reduce stress and
 increase the debuggability of the code.
-
-Classes
--------
-Error
-    The base exception class for cache errors.
-KeyNotCachedError
-    Error thrown if key isn't cached.
-Cache
-    The cache class managing it.
 """
 import os
 import json
@@ -22,69 +13,9 @@ import atexit
 import torch
 import numpy as np
 from dipy.io.streamline import save_vtk_streamlines, load_vtk_streamlines
+
 from src.config import Config
-
-class Error(Exception):
-    """
-    Base class for Cache exceptions.
-
-    Every Error happening from code of this class will inherit this one.
-    The single parameter `msg` represents the error representing message.
-
-    This class can be used to filter the exceptions for data exceptions.
-
-    Attributes
-    ----------
-    message: str
-        The message given is stored here.
-
-    Examples
-    --------
-
-    >>> e = Error(msg='Just a sample message')
-    >>> raise e from None
-    Traceback (most recent call last):
-    File "<stdin>", line 1, in <module>
-    src.data.Error: Just a sample message
-    """
-
-    def __init__(self, msg=''):
-        """
-        Parameters
-        ----------
-        msg : str
-            The message which accompanying the error, by default ''.
-        """
-        self.message = msg
-        Exception.__init__(self, msg)
-
-    def __repr__(self):
-        return self.message
-
-    __str__ = __repr__
-
-class KeyNotCachedError(Error):
-    """
-    This error is thrown if the given key cannot be mapped to a data record.
-
-    Attributes
-    ----------
-    message: str
-        The error message.
-    key: str
-        The key the cache was unable to retrieve.
-    """
-
-    def __init__(self, key):
-        """
-        Parameters
-        ----------
-        key: str
-            The key the cache was unable to retrieve.
-        """
-        self.key = key
-        Error.__init__(self, msg="""The key {} isn't cached (anymore).
-                                Check if key is cached with in_cache(key).""")
+from src.cache.exceptions import KeyNotCachedError
 
 class Cache():
     """
@@ -115,23 +46,6 @@ class Cache():
         The data itself is only loaded on request.
     current_size: int
         The current real cache size.
-
-    Methods
-    -------
-    Cache.get_cache()
-        Returns the currently used cache instance.
-    set(key, tensor)
-        Adds the tensor with key to the cache
-    get(key)
-        Retrieve tensor with key.
-    in_cache(key)
-        Returns wether key is currently in cache.
-    remove(key)
-        Removes key from cache.
-    clear()
-        Empties the cache
-    save_configuration()
-        Saves the current cache to file. Is automatically called on exit.
     """
     cache = None
 
