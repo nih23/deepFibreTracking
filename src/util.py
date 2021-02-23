@@ -1,17 +1,4 @@
 """Helpful functions required multiple times in different contexts
-
-Methods
--------
-rotation_from_vectors(rot, vector_orig, vector_fin)
-    Calculates the rotation matrix required to rotate from one vector to another.
-get_reference_orientation()
-    Returns the reference orientation to use with this library. This could change, depending on config!
-get_2D_sphere(no_phis=None, no_thetas=None)
-    Retrieve evenly distributed 2D sphere out of phi and theta count
-get_grid(grid_dimension)
-    Calculates a (unrotated) grid for given dimensions
-random_split(dataset, training_part=0.9)
-    Splits a given dataset into train and validation part
 """
 import torch
 import numpy as np
@@ -219,7 +206,7 @@ def apply_rotation_matrix_to_grid(grid, rot_matrix):
     return (rot_matrix.repeat(grid.size/3, axis=0) @ grid[None, ].repeat(len(rot_matrix), axis=0).reshape(-1, 3, 1)).reshape((-1, *grid.shape))
 
 def direction_to_classification(sphere, next_dir, include_stop=False, last_is_stop=False, stop_values=None):
-    # code adapted from Benou "DeepTract",
+    # code adapted from Benou "DeepTract",exi
     # https://github.com/itaybenou/DeepTract/blob/master/utils/train_utils.py
 
     sl_len = len(next_dir)
