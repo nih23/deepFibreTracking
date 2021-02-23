@@ -1,145 +1,205 @@
 """
 The dataset module is handling the datasets usable for training and testing.
-
-Available subpackages
----------------------
-processing
-    Provides processing options for datasets.
-
-Classes
--------
-Error
-    The base error class of all datasets.
-WrongDatasetTypePassedError
-    Error thrown if the passed Dataset has a wrong type.
-FeatureShapesNotEqualError
-    Error thrown if get_feature_shape is called on Dataset with multiple shapes
-BaseDataset
-    The base dataset every single dataset is based on. Inherits MovableData
-IterableDataset
-    Represents a dataset with fixed length and items.
-ConcatenatedDataset
-    A datasetclass used to concatenate multiple IterableDatasets
-StreamlineDataset
-    A Dataset consisting of streamlines and their DWI-Data.
 """
-import torch
 import json
 import os
-import numpy as np
+from types import SimpleNamespace
 
+import torch
+import numpy as np
 from dipy.core.geometry import sphere_distance
 from dipy.core.sphere import Sphere
 from dipy.data import get_sphere
 
-from src.data import MovableData
-from types import SimpleNamespace
+
 from src.config import Config
 from src.util import get_reference_orientation, rotation_from_vectors, get_grid
+from src.dataset.exceptions import WrongDatasetTypePassedError, FeatureShapesNotEqualError
 
-class Error(Exception):
+
+class MovableData():
     """
-    Base class for Dataset exceptions.
+    This class can be used to make classes handling multiple tensors more easily movable.
 
-    Every Error happening from code of this class will inherit this one.
-    The single parameter `msg` represents the error representing message.
-
-    This class can be used to filter the exceptions for data exceptions.
+    With simple inheritance, all of those must be instances of `torch.Tensor` or `MovableData`.
+    Also, they have to be direct attributes of the object and are not allowed to be nested.
 
     Attributes
     ----------
-    message: str
-        The message given is stored here.
+    device: torch.device, optional
+        The device the movable data currently is located on.
 
-    Examples
-    --------
+    Inheritance
+    -----------
+    To modify and inherit the `MovableData` class, overwrite the following functions:
 
-    >>> e = Error(msg='Just a sample message')
-    >>> raise e from None
-    Traceback (most recent call last):
-    File "<stdin>", line 1, in <module>
-    src.data.Error: Just a sample message
+    `_get_tensors()`
+        This should return all `torch.Tensor` and `MovableData` instances of your class,
+        in a key value pair `dict`.
+
+    `_set_tensor(key, tensor)`
+        This should replace the reference to the tensor with given key with the new, moved tensor.
+
+    If those two methods are properly inherited, the visible functions should work as normal.
+    If you plan on add other class types to the `_get_tensors` method, make sure that they implement
+    the cuda, cpu, to and get_device methods in the same manner as `torch.Tensor` instances.
     """
-
-    def __init__(self, msg=''):
+    def __init__(self, device=None):
         """
         Parameters
         ----------
-        msg : str
-            The message which accompanying the error, by default ''.
+        device : torch.device, optional
+            The device which the `MovableData` should be moved to on load, by default cpu.
         """
-        self.message = msg
-        Exception.__init__(self, msg)
+        if device is None:
+            device = torch.device("cpu")
+        self.device = device
 
-    def __repr__(self):
-        return self.message
-
-    __str__ = __repr__
-
-class WrongDatasetTypePassedError(Error):
-    """Error thrown if `ConcatenatedDataset` retrieves wrong datasets.
-
-    This means that the datasets you passed aren't exclusively IterableDatasets
-
-    Attributes
-    ----------
-    caller: ConcatenatedDataset
-        The ConcatenatedDataset raising the error.
-    dataset: BaseDataset
-        The dataset causig the error.
-    msg: str
-        The error message.
-    """
-
-    def __init__(self, concat, dataset, message):
+    def _get_tensors(self):
         """
+        Returns a dict containing all `torch.Tensor` and `MovableData` instances
+        and their assigned keys.
+
+        The default implementation searches for those on the attribute level.
+        If your child class contains tensors at other positions, it is recommendable to
+        overwrite this function and the `_set_tensor` function.
+
+        Returns
+        -------
+        dict
+            The dict containing every `torch.Tensor` and `MovableData` with their assigned keys.
+
+        See Also
+        --------
+        _set_tensor: implementations depend on each other
+        """
+        tensors = {}
+        for key, value in vars(self).items():
+            if isinstance(value, torch.Tensor) or isinstance(value, MovableData):
+                tensors[key] = value
+        return tensors
+
+    def _set_tensor(self, key, tensor):
+        """
+        Sets the tensor with the assigned key to his value.
+
+        In the default implementation, this works analogously to `_get_tensors`:
+        It sets the attribute with the name key to the given object/tensor.
+        If your child class contains tensors at other positions, it is recommendable to
+        overwrite this function and the `_get_tensors` function.
+
         Parameters
         ----------
-        concat : ConcatenatedDataset
-            The dataset raising the error.
-        dataset : BaseDataset
-            The dataset responsible for the error.
-        message : str
-            Your specific error message.
+        key : str
+            The key of the original tensor.
+        tensor : object
+            The new tensor which should replace the original one.
+
+        See Also
+        --------
+        _get_tensors: implementations depend on each other
         """
-        self.caller = concat
-        self.dataset = dataset
-        Error.__init__(self, msg=message)
+        setattr(self, key, tensor)
 
-class FeatureShapesNotEqualError(Error):
-    """Error thrown if FeatureShapes of `ConcatenatedDataset` are not equal, but requested.
-
-    This error only occurs, if `ConcatenatedDataset().get_feature_shape` is called,
-    and the Datasets in the ConcatenatedDataset doesn't have equal feature shapes.
-
-    Attributes
-    ----------
-    index: int
-        The index of the BaseDataset responsible for the error.
-    shape1: tuple
-        The shape of the reference dataset.
-    shape2: tuple
-        The shape of the different dataset.
-    msg: str
-        The error message.
-    """
-    def __init__(self, index, s1, s2):
+    def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
         """
+        Returns this object in CUDA memory.
+
+        If this object is already in CUDA memory and on the correct device,
+        then no movement is performed and the original object is returned.
+
         Parameters
         ----------
-        index : int
-            The index of the BaseDataset responsible for the error.
-        s1 : tuple
-            The shape of the reference dataset.
-        s2 : tuple
-            The shape of the dataset causing the error.
+        device : `torch.device`, optional
+            The destination GPU device. Defaults to the current CUDA device.
+        non_blocking : `bool`, optional
+             If `True` and the source is in pinned memory, the copy will be asynchronous with
+             respect to the host. Otherwise, the argument has no effect, by default `False`.
+        memory_format : `torch.memory_format`, optional
+            the desired memory format of returned Tensor, by default `torch.preserve_format`.
+
+        Returns
+        -------
+        MovableData
+            The object moved to specified device
         """
-        self.shape1 = s1
-        self.shape2 = s2
-        self.index = index
-        Error.__init__(self, msg=("The shape of the dataset {idx} ({s2}) "
-                                  "is not equal to the base shape of the reference dataset 0 ({s1})"
-                                  ).format(idx=index, s2=s2, s1=s1))
+        for attribute, tensor in self._get_tensors().items():
+            cuda_tensor = tensor.cuda(device=device, non_blocking=non_blocking,
+                                      memory_format=memory_format)
+            self._set_tensor(attribute, cuda_tensor)
+            self.device = cuda_tensor.device
+        return self
+
+    def cpu(self, memory_format=torch.preserve_format):
+        """
+        Returns a copy of this object in CPU memory.
+
+        If this object is already in CPU memory and on the correct device,
+        then no copy is performed and the original object is returned.
+
+        Parameters
+        ----------
+        memory_format : `torch.memory_format`, optional
+            the desired memory format of returned Tensor, by default `torch.preserve_format`.
+
+        Returns
+        -------
+        MovableData
+            The object moved to specified device
+        """
+        for attribute, tensor in self._get_tensors().items():
+            cpu_tensor = tensor.cpu(memory_format=memory_format)
+            self._set_tensor(attribute, cpu_tensor)
+        self.device = torch.device('cpu')
+        return self
+
+    def to(self, *args, **kwargs):
+        """
+        Performs Tensor dtype and/or device conversion.
+        A `torch.dtype` and `torch.device` are inferred from the arguments of
+        `self.to(*args, **kwargs)`.
+
+        Here are the ways to call `to`:
+
+        `to(dtype, non_blocking=False, copy=False, memory_format=torch.preserve_format)` -> Tensor
+            Returns MovableData with specified `dtype`
+
+        `to(device=None, dtype=None, non_blocking=False, copy=False,
+        memory_format=torch.preserve_format)` -> Tensor
+            Returns MovableData on specified `device`
+
+        `to(other, non_blocking=False, copy=False)` -> Tensor
+            Returns MovableData with same `dtype` and `device` as `other`
+        Returns
+        -------
+        MovableData
+            The object moved to specified device
+        """
+        for attribute, tensor in self._get_tensors().items():
+            tensor = tensor.to(*args, **kwargs)
+            self._set_tensor(attribute, tensor)
+            self.device = tensor.device
+        return self
+
+    def get_device(self):
+        """
+        For CUDA tensors, this function returns the device ordinal of the GPU on which the tensor
+        resides. For CPU tensors, an error is thrown.
+
+        Returns
+        -------
+        int
+            The device ordinal
+
+        Raises
+        ------
+        DeviceNotRetrievableError
+            This description is thrown if the tensor is currently on the cpu,
+            therefore, no device ordinal exists.
+        """
+        if self.device.type == "cpu":
+            raise DeviceNotRetrievableError(self.device)
+        return self.device.index
 
 class BaseDataset(MovableData):
     """The base class for Datasets in this library.
@@ -253,7 +313,7 @@ class LoadedDataset(IterableDataset):
         inp_shape = tuple(info_data["input_shape"])
         out_shape = tuple(info_data["output_shape"])
         self.feature_shapes = np.prod(info_data["input_shape"][1:]), np.prod(info_data["output_shape"][1:])
-        #self.id = "LoadedDataset-{}".format(path.replace(os.path.sep,"-"))
+
         if not passSingleElements:
             self.sl_lengths = np.load(os.path.join(self.path, 'lengths.npy'))
         else:
@@ -426,7 +486,8 @@ class StreamlineDataset(SaveableDataset):
             self.cache[index] = (dwi, next_dir)
             if self.device == dwi.device:  # move is unnecessary
                 return
-        self.device = dwi.device
+        if dwi is not None:
+            self.device = dwi.device
         return self
 
     def cpu(self, memory_format=torch.preserve_format):
@@ -441,7 +502,8 @@ class StreamlineDataset(SaveableDataset):
             self.cache[index] = (dwi, next_dir)
             if self.device == dwi.device:  # move is unnecessary
                 return
-        self.device = dwi.device
+        if dwi is not None:
+            self.device = dwi.device
         return self
 
     def to(self, *args, **kwargs):
@@ -456,5 +518,6 @@ class StreamlineDataset(SaveableDataset):
             self.cache[index] = (dwi, next_dir)
             if self.device == dwi.device: # move is unnecessary
                 return
-        self.device = dwi.device
+        if dwi is not None:
+            self.device = dwi.device
         return self
