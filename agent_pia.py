@@ -253,7 +253,7 @@ class Agent():
 
         # states = torch.FloatTensor(states/255.).to(self.device)
         actions = torch.LongTensor(actions).to(self.device)
-        rewards = torch.IntTensor(rewards).to(self.device)
+        rewards = torch.FloatTensor(rewards).to(self.device)
         #new_states = torch.FloatTensor(new_states/255.).to(self.device)
         terminal_flags = torch.BoolTensor(terminal_flags).to(self.device)
 
