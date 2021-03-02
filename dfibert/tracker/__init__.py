@@ -16,9 +16,9 @@ from dipy.direction import peaks_from_model, DeterministicMaximumDirectionGetter
 import dipy.reconst.dti as dti
 
 from types import SimpleNamespace
-from src.config import Config
-from src.cache import Cache
-from src.tracker.exceptions import StreamlinesAlreadyTrackedError, ISMRMStreamlinesNotCorrectError, StreamlinesNotTrackedError
+from dfibert.config import Config
+from dfibert.cache import Cache
+from .exceptions import StreamlinesAlreadyTrackedError, ISMRMStreamlinesNotCorrectError, StreamlinesNotTrackedError
 
 class Tracker():
     """Universal Tracker class"""
@@ -208,7 +208,7 @@ class StreamlinesFromFileTracker(Tracker):
 
     def track(self):
         Tracker.track(self)
-        self.streamlines = load_vtk_streamlines(self.path)
+        self.streamlines = load_vtk_streamlines(self.path) # TODO catch exception if path does not exist
 
 class ISMRMReferenceStreamlinesTracker(Tracker):
     """Class representing the ISMRM 2015 Ground Truth fiber tracks."""

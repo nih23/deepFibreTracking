@@ -12,9 +12,10 @@ from dipy.core.sphere import Sphere
 from dipy.data import get_sphere
 
 
-from src.config import Config
-from src.util import get_reference_orientation, rotation_from_vectors, get_grid
-from src.dataset.exceptions import WrongDatasetTypePassedError, FeatureShapesNotEqualError
+from dfibert.config import Config
+from dfibert.util import get_reference_orientation, rotation_from_vectors, get_grid
+
+from .exceptions import WrongDatasetTypePassedError, FeatureShapesNotEqualError
 
 
 class MovableData():

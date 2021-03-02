@@ -16,8 +16,8 @@ from dipy.core.geometry import sphere_distance
 from dipy.core.sphere import Sphere
 from dipy.data import get_sphere
 
-from src.config import Config
-from src.util import get_reference_orientation, rotation_from_vectors, get_grid, apply_rotation_matrix_to_grid, direction_to_classification, rotation_from_vectors_p
+from dfibert.config import Config
+from dfibert.util import get_reference_orientation, rotation_from_vectors, get_grid, apply_rotation_matrix_to_grid, direction_to_classification, rotation_from_vectors_p
 
 class Processing():
     """The basic Processing class.

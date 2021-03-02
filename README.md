@@ -7,7 +7,7 @@ Firstly, you can use `DataContainer` objects to store and retrieve DWI data:
 ### Initialization
 
 ```python
-from src.data import HCPDataContainer, ISMRMDataContainer
+from dfibert.data import HCPDataContainer, ISMRMDataContainer
 hcp_data = HCPDataContainer(100307)
 ismrm_data = ISMRMDataContainer()
 ```

@@ -12,8 +12,8 @@ from dipy.core.sphere import Sphere
 from dipy.reconst.shm import real_sym_sh_mrtrix, smooth_pinv
 from dipy.data import get_sphere
 
-from src.config import Config
-from src.util import get_2D_sphere
+from dfibert.config import Config
+from dfibert.util import get_2D_sphere
 
 def raw():
     """Does no resampling.
@@ -129,7 +129,7 @@ def resample2D(sh_order=None, smooth=None, mean_centering=None, no_thetas=None, 
     See Also
     --------
     resample: the function this is based on.
-    src.util.get_2D_sphere: the function the 2D sphere is generated with.
+    dfibert.util.get_2D_sphere: the function the 2D sphere is generated with.
 
     Returns
     -------

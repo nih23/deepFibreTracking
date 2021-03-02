@@ -14,8 +14,8 @@ import torch
 import numpy as np
 from dipy.io.streamline import save_vtk_streamlines, load_vtk_streamlines
 
-from src.config import Config
-from src.cache.exceptions import KeyNotCachedError
+from dfibert.config import Config
+from .exceptions import KeyNotCachedError
 
 class Cache():
     """

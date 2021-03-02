@@ -4,7 +4,7 @@ The config module covers all functions handling the configuration file.
 
 import configparser
 import atexit
-from src.config.exceptions import PathAlreadySetError
+from .exceptions import PathAlreadySetError
 
 
 class Config():
