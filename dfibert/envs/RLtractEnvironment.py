@@ -4,15 +4,17 @@ import gym
 from gym import spaces
 from gym.spaces import Discrete, Box
 import numpy as np
-from src.data.postprocessing import res100, resample
-from src.data import HCPDataContainer, ISMRMDataContainer, PointOutsideOfDWIError
-from src.tracker import StreamlinesFromFileTracker
 
-
-from src.util import get_grid
-from state import TractographyState
 from dipy.data import get_sphere
 import torch
+
+
+from dfibert.data.postprocessing import res100, resample
+from dfibert.data import HCPDataContainer, ISMRMDataContainer, PointOutsideOfDWIError
+from dfibert.tracker import StreamlinesFromFileTracker
+from dfibert.util import get_grid
+
+from ._state import TractographyState
 
 
 

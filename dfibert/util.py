@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from dipy.core.sphere import Sphere
 from dipy.core.geometry import sphere_distance
-from src.config import Config
+from .config import Config
 
 def rotation_from_vectors_p(rot, vectors_orig, vectors_fin):
     vectors_orig = vectors_orig / np.linalg.norm(vectors_orig, axis=1)[:, None]

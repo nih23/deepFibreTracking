@@ -28,8 +28,8 @@ import numpy as np
 import nibabel as nb
 from nibabel.affines import apply_affine
 
-from src.config import Config
-from src.data.exceptions import (DeviceNotRetrievableError, DataContainerNotLoadableError, DWIAlreadyCroppedError,
+from dfibert.config import Config
+from dfibert.data.exceptions import (DeviceNotRetrievableError, DataContainerNotLoadableError, DWIAlreadyCroppedError,
                                  DWIAlreadyNormalizedError, PointOutsideOfDWIError)
 
 class RawData(SimpleNamespace):
@@ -513,7 +513,7 @@ class ISMRMDataContainer(DataContainer):
 
     See Also
     --------
-    src.tracker.ISMRMReferenceStreamlinesTracker: The streamlines matching this dataset.
+    dfibert.tracker.ISMRMReferenceStreamlinesTracker: The streamlines matching this dataset.
     """
     def __init__(self, denoise=None, b0_threshold=None):
         """

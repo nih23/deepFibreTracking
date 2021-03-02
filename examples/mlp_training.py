@@ -4,12 +4,12 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils import data as dataL
 
-from src.data import HCPDataContainer
-from src.data.postprocessing import res100
-from src.dataset.processing import RegressionProcessing
-from src.dataset import SingleDirectionsDataset
-from src.tracker import CSDTracker
-from src.util import random_split
+from dfibert.data import HCPDataContainer
+from dfibert.data.postprocessing import res100
+from dfibert.dataset.processing import RegressionProcessing
+from dfibert.dataset import SingleDirectionsDataset # TODO update example
+from dfibert.tracker import CSDTracker
+from dfibert.util import random_split
 
 # This is a simple MLP training to show example usage for the provided library
 

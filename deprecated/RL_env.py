@@ -3,8 +3,8 @@ import gym
 from gym import spaces
 from gym.spaces import Discrete, Box
 import numpy as np
-from gym_FiberTracking.envs.RLFiberTracking import agent
-from src.data import HCPDataContainer, ISMRMDataContainer
+from dfibert.tracker.nn. import rl
+from dfibert.data import HCPDataContainer, ISMRMDataContainer
 hcp_data = HCPDataContainer(100307)
 ismrm_data = ISMRMDataContainer()
 

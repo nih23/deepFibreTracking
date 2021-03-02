@@ -1,9 +1,9 @@
 """Just example code as explanation. Usable for testing."""
-from src.data import HCPDataContainer, ISMRMDataContainer
-from src.data.postprocessing import res100, spherical_harmonics
-from src.dataset import StreamlineDataset, ConcatenatedDataset
-from src.tracker import CSDTracker, ISMRMReferenceStreamlinesTracker
-from src.dataset.processing import RegressionProcessing, ClassificationProcessing
+from dfibert.data import HCPDataContainer, ISMRMDataContainer
+from dfibert.data.postprocessing import res100, spherical_harmonics
+from dfibert.dataset import StreamlineDataset, ConcatenatedDataset
+from dfibert.tracker import CSDTracker, ISMRMReferenceStreamlinesTracker
+from dfibert.dataset.processing import RegressionProcessing, ClassificationProcessing
 def main():
     """Main method"""
     hcp_data = HCPDataContainer(100307)
