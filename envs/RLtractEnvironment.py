@@ -15,6 +15,7 @@ from dipy.data import get_sphere
 import torch
 
 
+
 class RLtractEnvironment(gym.Env):
     def __init__(self, device, stepWidth = 1, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_terminalState = 0.1, pReferenceStreamlines = "data/HCP307200_DTI_smallSet.vtk"):
         #data/HCP307200_DTI_min40.vtk => 5k streamlines
@@ -28,7 +29,7 @@ class RLtractEnvironment(gym.Env):
         sphere = get_sphere("repulsion100")
         self.directions = sphere.vertices
         noActions, _ = self.directions.shape
-        self.action_space = spaces.Discrete(noActions+1)
+        self.action_space = spaces.Discrete(noActions)#spaces.Discrete(noActions+1)
         self.dwi_postprocessor = resample(sphere=sphere)
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
@@ -38,9 +39,9 @@ class RLtractEnvironment(gym.Env):
         self.state = self.reset()
             
         
-    def interpolateDWIatState(self, state):       
+    def interpolateDWIatState(self, stateCoordinates):       
         #TODO: maybe stay in RAS all the time then no need to transfer to IJK
-        ras_points = self.dataset.to_ras(self.state.getCoordinate()) # Transform state to World RAS+ coordinate system
+        ras_points = self.dataset.to_ras(stateCoordinates) # Transform state to World RAS+ coordinate system
         
         ras_points = self.grid + ras_points
         
@@ -51,11 +52,11 @@ class RLtractEnvironment(gym.Env):
   
     
     def step(self, action):  
-        if(action == (self.action_space.n - 1)):
-            #print("Entering terminal state")
-            done = True
-            reward = self.rewardForTerminalState(self.state)
-            return self.state, reward, done
+        #if(action == (self.action_space.n - 1)):
+        #    print("Entering terminal state")
+        #    done = True
+        #    reward = self.rewardForTerminalState(self.state)
+        #    return self.state, reward, done
             
         ## convert discrete action into tangent vector
         action_vector = self.directions[action]
@@ -63,7 +64,7 @@ class RLtractEnvironment(gym.Env):
         ## apply step by step length and update state accordingly
         positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
         nextState = TractographyState(positionNextState, self.interpolateDWIatState)
-        self.state = nextState
+        #self.state = nextState
         
         ## compute reward for new state
         rewardNextState = self.rewardForState(nextState)
@@ -78,7 +79,12 @@ class RLtractEnvironment(gym.Env):
         except PointOutsideOfDWIError:
             done = True
             #print("Agent left brain mask :(")
-
+            return self.state, -100, done
+            #rewardNextState = -100
+            #nextState = self.state
+            #return self.state, -100, done
+        
+        self.state = TractographyState(positionNextState, self.interpolateDWIatState)
         # return step information
         return nextState, rewardNextState, done
     
@@ -90,7 +96,7 @@ class RLtractEnvironment(gym.Env):
         # to the LeakyReLU is gonna result in positive rewards, too
         #
         # We will be normalising the distance wrt. to LeakyRelu activation function. 
-        qry_pt = torch.FloatTensor(self.state.getCoordinate()).view(-1,3)
+        qry_pt = torch.FloatTensor(state.getCoordinate()).view(-1,3)
         distance = torch.min(torch.sum( (self.referenceStreamline_ijk - qry_pt)**2, dim =1 ))
         reward = torch.nn.functional.leaky_relu(-1 * distance)
         return reward
@@ -115,6 +121,7 @@ class RLtractEnvironment(gym.Env):
         initialPosition_ijk = referenceStreamline_ijk[0]
         
         self.state = TractographyState(initialPosition_ijk, self.interpolateDWIatState)
+        #self.state = initialPosition_ijk
         self.done = False
         self.referenceStreamline_ijk = self.dtype(referenceStreamline_ijk).to(self.device)
         

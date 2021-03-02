@@ -6,96 +6,124 @@ from collections import deque, namedtuple
 import random
 import numpy as np
 
+
 class ReplayMemory(object):
-    """Replay Memory that stores the last size=1,000,000 transitions"""
-    def __init__(self, size=1000000, frame_height=210, frame_width=160, 
-                 agent_history_length=4, batch_size=32):
-        """
-        Args:
-            size: Integer, Number of stored transitions
-            frame_height: Integer, Height of a frame of an Atari game
-            frame_width: Integer, Width of a frame of an Atari game
-            agent_history_length: Integer, Number of frames stacked together to create a state
-            batch_size: Integer, Number if transitions returned in a minibatch
-        """
+    def __init__(self, size=1000000, batch_size=32):
         self.size = size
-        #self.frame_height = frame_height
-        #self.frame_width = frame_width
-        self.agent_history_length = agent_history_length
         self.batch_size = batch_size
-        self.count = 0
-        self.current = 0
+
+        #self.states = deque(maxlen=self.size)
+        #self.actions = deque(maxlen=self.size)
+        #self.rewards = deque(maxlen=self.size)
+        #self.new_states = deque(maxlen=self.size)
+        #self.terminal_flags = deque(maxlen=self.size)
+        self.memory = deque(maxlen=self.size)
+
+    def add_experience(self, action, state, reward, new_state, terminal):
         
-        # Pre-allocate memory
-        self.actions = np.empty(self.size, dtype=np.int32)
-        self.rewards = np.empty(self.size, dtype=np.float32)
-        #self.frames = np.empty((self.size, self.frame_height, self.frame_width), dtype=np.uint8)
-        self.states = [None]*self.size
-        self.terminal_flags = np.empty(self.size, dtype=np.bool)
-        
-        # Pre-allocate memory for the states and new_states in a minibatch
-        #self.states = np.empty((self.batch_size, self.agent_history_length, 
-        #                        self.frame_height, self.frame_width), dtype=np.uint8)
-        #self.new_states = np.empty((self.batch_size, self.agent_history_length, 
-        #                            self.frame_height, self.frame_width), dtype=np.uint8)
-        self.indices = np.empty(self.batch_size, dtype=np.int32)
-        
-    def add_experience(self, action, state, reward, terminal):
-        """
-        Args:
-            action: An integer between 0 and env.action_space.n - 1 
-                determining the action the agent perfomed
-            frame: A (210, 160) frame of an Atari game in grayscale
-            reward: A float determining the reward the agend received for performing an action
-            terminal: A bool stating whether the episode terminated
-        """
-        #if frame.shape != (self.frame_height, self.frame_width):
-        #    raise ValueError('Dimension of frame is wrong!')
-        #print("Add frame at position: ", self.current)
-        self.actions[self.current] = action
-        self.states[self.current] = state
-        self.rewards[self.current] = reward
-        self.terminal_flags[self.current] = terminal
-        self.count = max(self.count, self.current+1)
-        self.current = (self.current + 1) % self.size
-        #print("New current: ", self.current)
-             
-    def _get_state(self, index):
-        if self.count == 0:
-            raise ValueError("The replay memory is empty!")
-        if index < self.agent_history_length - 1:
-            raise ValueError("Index must be min 3")
-        return self.states[index-self.agent_history_length+1:index+1]
-        
-    def _get_valid_indices(self):
-        for i in range(self.batch_size):
-            while True:
-                index = random.randint(self.agent_history_length, self.count - 1)
-                if index < self.agent_history_length:
-                    continue
-                if index >= self.current and index - self.agent_history_length <= self.current:
-                    continue
-                if self.terminal_flags[index - self.agent_history_length:index].any():
-                    continue
-                break
-            self.indices[i] = index
-            
+        random.shuffle(self.memory)
+        self.memory.append([state, action, reward, new_state, terminal])
+
     def get_minibatch(self):
-        """
-        Returns a minibatch of self.batch_size = 32 transitions
-        """
-        if self.count < self.agent_history_length:
-            raise ValueError('Not enough memories to get a minibatch')
+        batch = random.sample(self.memory, self.batch_size)
+        states = [x[0] for x in batch]
+        actions = [x[1] for x in batch]
+        rewards = [x[2] for x in batch]
+        new_states = [x[3] for x in batch]
+        terminal_flags = [x[4] for x in batch]
+        return states, actions, rewards, new_states, terminal_flags
+
+
+# class ReplayMemory(object):
+#     """Replay Memory that stores the last size=1,000,000 transitions"""
+#     def __init__(self, size=1000000, frame_height=210, frame_width=160, 
+#                  agent_history_length=4, batch_size=32):
+#         """
+#         Args:
+#             size: Integer, Number of stored transitions
+#             frame_height: Integer, Height of a frame of an Atari game
+#             frame_width: Integer, Width of a frame of an Atari game
+#             agent_history_length: Integer, Number of frames stacked together to create a state
+#             batch_size: Integer, Number if transitions returned in a minibatch
+#         """
+#         self.size = size
+#         #self.frame_height = frame_height
+#         #self.frame_width = frame_width
+#         self.agent_history_length = agent_history_length
+#         self.batch_size = batch_size
+#         self.count = 0
+#         self.current = 0
         
-        states = [None]*self.batch_size
-        new_states = [None]*self.batch_size
-        self._get_valid_indices()
+#         # Pre-allocate memory
+#         self.actions = np.empty(self.size, dtype=np.int32)
+#         self.rewards = np.empty(self.size, dtype=np.float32)
+#         #self.frames = np.empty((self.size, self.frame_height, self.frame_width), dtype=np.uint8)
+#         self.states = [None]*self.size
+#         self.terminal_flags = np.empty(self.size, dtype=np.bool)
+        
+#         # Pre-allocate memory for the states and new_states in a minibatch
+#         #self.states = np.empty((self.batch_size, self.agent_history_length, 
+#         #                        self.frame_height, self.frame_width), dtype=np.uint8)
+#         #self.new_states = np.empty((self.batch_size, self.agent_history_length, 
+#         #                            self.frame_height, self.frame_width), dtype=np.uint8)
+#         self.indices = np.empty(self.batch_size, dtype=np.int32)
+        
+#     def add_experience(self, action, state, reward, terminal):
+#         """
+#         Args:
+#             action: An integer between 0 and env.action_space.n - 1 
+#                 determining the action the agent perfomed
+#             frame: A (210, 160) frame of an Atari game in grayscale
+#             reward: A float determining the reward the agend received for performing an action
+#             terminal: A bool stating whether the episode terminated
+#         """
+#         #if frame.shape != (self.frame_height, self.frame_width):
+#         #    raise ValueError('Dimension of frame is wrong!')
+#         #print("Add frame at position: ", self.current)
+#         self.actions[self.current] = action
+#         self.states[self.current] = state
+#         self.rewards[self.current] = reward
+#         self.terminal_flags[self.current] = terminal
+#         self.count = max(self.count, self.current+1)
+#         self.current = (self.current + 1) % self.size
+#         #print("New current: ", self.current)
+             
+#     def _get_state(self, index):
+#         if self.count == 0:
+#             raise ValueError("The replay memory is empty!")
+#         if index < self.agent_history_length - 1:
+#             raise ValueError("Index must be min 3")
+#         return self.states[index-self.agent_history_length+1:index+1]
+        
+#     def _get_valid_indices(self):
+#         for i in range(self.batch_size):
+#             while True:
+#                 index = random.randint(self.agent_history_length, self.count - 1)
+#                 if index < self.agent_history_length:
+#                     continue
+#                 if index >= self.current and index - self.agent_history_length <= self.current:
+#                     continue
+#                 if self.terminal_flags[index - self.agent_history_length:index].any():
+#                     continue
+#                 break
+#             self.indices[i] = index
             
-        for i, idx in enumerate(self.indices):
-            states[i] = self._get_state(idx - 1)
-            new_states[i] = self._get_state(idx)
+#     def get_minibatch(self):
+#         """
+#         Returns a minibatch of self.batch_size = 32 transitions
+#         """
+#         if self.count < self.agent_history_length:
+#             raise ValueError('Not enough memories to get a minibatch')
         
-        return states, self.actions[self.indices], self.rewards[self.indices], new_states, self.terminal_flags[self.indices]
+#         states = [None]*self.batch_size
+#         new_states = [None]*self.batch_size
+#         self._get_valid_indices()
+            
+#         for i, idx in enumerate(self.indices):
+#             states[i] = self._get_state(idx - 1)
+#             new_states[i] = self._get_state(idx)
+        
+#         return states, self.actions[self.indices], self.rewards[self.indices], new_states, self.terminal_flags[self.indices]
 
  
 class DQN(nn.Module):
@@ -161,18 +189,21 @@ class DQN(nn.Module):
         
         self.advantage = self.advantage_l(self.advantagestream)
         self.value = self.value_l(self.valuestream)
+        self.q_values = self.value + (self.advantage - self.advantage.mean(dim=1, keepdim=True))
 
-        return self.advantage, self.value
-
-    def predict_q(self, x):
-        advantage, V_of_s = self(x)
-
-        self.q_values = V_of_s + (advantage - advantage.mean(dim=1, keepdim=True))
+        #return self.advantage, self.value
         return self.q_values
+
+#    def predict_q(self, x):
+#        advantage, V_of_s = self(x)
+#
+#        self.q_values = V_of_s + (advantage - advantage.mean(dim=1, keepdim=True))
+#        return self.q_values
 
 
     def predict_action(self, x):
-        q_values = self.predict_q(x)
+        #q_values = self.predict_q(x)
+        q_values = self(x)
         self.best_action = torch.argmax(q_values, 1)
         return self.best_action
 
@@ -218,7 +249,8 @@ class Agent():
         self.target_dqn.eval()
 
         
-        self.replay_memory = ReplayMemory(size=self.memory_size, agent_history_length=self.agent_history_length, batch_size=self.batch_size)
+        #self.replay_memory = ReplayMemory(size=self.memory_size, agent_history_length=self.agent_history_length, batch_size=self.batch_size)
+        self.replay_memory = ReplayMemory(size=self.memory_size, batch_size=self.batch_size)
         self.optimizer = torch.optim.Adam(self.main_dqn.parameters(), self.lr)
 
     def optimize(self):
@@ -238,15 +270,13 @@ class Agent():
         #
         
         # To Do: sometimes point is still outside of DWI
-        try:
-            states_interpol = []
-            next_states_interpol = []
-            for i in range(self.batch_size):
-                # To Do: replay memory returns nested list of state objects
-                    states_interpol.append(states[i][0].getValue())
-                    next_states_interpol.append(new_states[i][0].getValue())
-        except:
-            return 0
+        states_interpol = []
+        next_states_interpol = []
+        for i in range(self.batch_size):
+            # To Do: replay memory returns nested list of state objects
+                states_interpol.append(states[i].getValue())
+                next_states_interpol.append(new_states[i].getValue())
+
 
         states_interpol = torch.stack(states_interpol).to(self.device)
         next_states_interpol = torch.stack(next_states_interpol).to(self.device)
@@ -257,19 +287,20 @@ class Agent():
         #new_states = torch.FloatTensor(new_states/255.).to(self.device)
         terminal_flags = torch.BoolTensor(terminal_flags).to(self.device)
 
+
         # predict the best actions for all the next states, shape: (32)
-        arg_q_max = self.main_dqn.predict_q(next_states_interpol).max(1)[1]
+        arg_q_max = self.main_dqn(next_states_interpol).max(1)[1]
 
         # predict the Q values for all the next states,
         # get the Q value of the target model for the predicted actions arg_q_max, shape: (32)
-        double_q = self.target_dqn.predict_q(next_states_interpol).gather(1, arg_q_max.unsqueeze(-1)).squeeze(1).detach()
+        double_q = self.target_dqn(next_states_interpol).gather(1, arg_q_max.unsqueeze(-1)).squeeze(1).detach()
 
         # Belman equation. Make sure that if episode is over, target_q = rewards, shape: (32)
         target_q = rewards + (self.gamma * double_q * ~terminal_flags)
 
         # predict the q values for the current states,
         # select Q value of the best action that was performed for the current state, shape: (32)
-        predict_Q = self.main_dqn.predict_q(states_interpol).gather(1, actions.unsqueeze(-1)).squeeze(-1)
+        predict_Q = self.main_dqn(states_interpol).gather(1, actions.unsqueeze(-1)).squeeze(-1)
 
         loss = F.smooth_l1_loss(input=predict_Q, target=target_q, reduction='mean')
            
