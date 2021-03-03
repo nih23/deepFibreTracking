@@ -32,7 +32,7 @@ class ReplayMemory(object):
         self.new_states = np.empty((self.size, *self.shape), dtype=np.float32)
         self.terminal_flags = np.empty(self.size, dtype=np.bool)
 
-        self.indices = np.empty(self.batch_size, dtype=np.int32)
+        self._indices = np.empty(self.batch_size, dtype=np.int32)
         
     def add_experience(self, action, state, reward, new_state, terminal):
         """
@@ -62,10 +62,10 @@ class ReplayMemory(object):
         if self.count < self.batch_size:
             raise ValueError('Not enough memories to get a minibatch')
         
-        self.indices = np.random.randint(self.size, size=self.batch_size)    
+        self._indices = np.random.randint(self.size, size=self.batch_size)    
 
         
-        return self.states[self.indices], self.actions[self.indices], self.rewards[self.indices], self.new_states[self.indices], self.terminal_flags[self.indices]
+        return self.states[self._indices], self.actions[self._indices], self.rewards[self._indices], self.new_states[self._indices], self.terminal_flags[self._indices]
 
  
 class DQN(nn.Module):

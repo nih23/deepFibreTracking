@@ -31,7 +31,7 @@ class RLtractEnvironment(gym.Env):
         sphere = get_sphere("repulsion100")
         self.directions = sphere.vertices
         noActions, _ = self.directions.shape
-        self.action_space = spaces.Discrete(noActions)#spaces.Discrete(noActions+1)
+        self.action_space = spaces.Discrete(noActions+1)#spaces.Discrete(noActions)
         self.dwi_postprocessor = resample(sphere=sphere)
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
@@ -54,11 +54,11 @@ class RLtractEnvironment(gym.Env):
   
     
     def step(self, action):  
-        #if(action == (self.action_space.n - 1)):
-        #    print("Entering terminal state")
-        #    done = True
-        #    reward = self.rewardForTerminalState(self.state)
-        #    return self.state, reward, done
+        if(action == (self.action_space.n - 1)):
+            #print("Entering terminal state")
+            done = True
+            reward = self.rewardForTerminalState(self.state)
+            return self.state, reward, done
             
         ## convert discrete action into tangent vector
         action_vector = self.directions[action]
@@ -81,12 +81,12 @@ class RLtractEnvironment(gym.Env):
         except PointOutsideOfDWIError:
             done = True
             #print("Agent left brain mask :(")
-            return self.state.getValue(), -100, done
+            return self.state, -100, done
 
         
         self.state = TractographyState(positionNextState, self.interpolateDWIatState)
         # return step information
-        return nextState.getValue(), rewardNextState, done
+        return nextState, rewardNextState, done
     
     
     def rewardForState(self, state):
@@ -103,7 +103,7 @@ class RLtractEnvironment(gym.Env):
  
 
     def rewardForTerminalState(self, state):
-        qry_pt = torch.FloatTensor(self.state.getCoordinate()).view(3)
+        qry_pt = torch.FloatTensor(state.getCoordinate()).view(3)
         distance = torch.sum( (self.referenceStreamline_ijk[-1,:] - qry_pt)**2 )
         return torch.where(distance < self.maxL2dist_to_terminalState, 1, 0 )
 
@@ -125,7 +125,7 @@ class RLtractEnvironment(gym.Env):
         self.done = False
         self.referenceStreamline_ijk = self.dtype(referenceStreamline_ijk).to(self.device)
         
-        return self.state.getValue()
+        return self.state
 
 
     def render(self, mode="human"):
