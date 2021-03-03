@@ -1,5 +1,5 @@
 import os, sys
-sys.path.append('ext/deepFibreTracking/')
+
 import gym
 from gym import spaces
 from gym.spaces import Discrete, Box
@@ -49,7 +49,7 @@ class RLtractEnvironment(gym.Env):
         
         interpolated_dwi = self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor)
         interpolated_dwi = np.rollaxis(interpolated_dwi,3) #CxWxHxD
-        interpolated_dwi = self.dtype(interpolated_dwi).to(self.device)
+        #interpolated_dwi = self.dtype(interpolated_dwi).to(self.device)
         return interpolated_dwi
   
     
@@ -81,14 +81,12 @@ class RLtractEnvironment(gym.Env):
         except PointOutsideOfDWIError:
             done = True
             #print("Agent left brain mask :(")
-            return self.state, -100, done
-            #rewardNextState = -100
-            #nextState = self.state
-            #return self.state, -100, done
+            return self.state.getValue(), -100, done
+
         
         self.state = TractographyState(positionNextState, self.interpolateDWIatState)
         # return step information
-        return nextState, rewardNextState, done
+        return nextState.getValue(), rewardNextState, done
     
     
     def rewardForState(self, state):
@@ -127,7 +125,7 @@ class RLtractEnvironment(gym.Env):
         self.done = False
         self.referenceStreamline_ijk = self.dtype(referenceStreamline_ijk).to(self.device)
         
-        return self.state
+        return self.state.getValue()
 
 
     def render(self, mode="human"):

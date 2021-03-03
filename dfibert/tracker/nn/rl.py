@@ -1,129 +1,71 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from collections import deque, namedtuple
-#from functions import frame_to_tensor
 import random
 import numpy as np
 
 
+
 class ReplayMemory(object):
-    def __init__(self, size=1000000, batch_size=32):
+    """Replay Memory that stores the last size=1,000,000 transitions"""
+    def __init__(self, size=1000000, shape=(100,3,3,3), 
+                 agent_history_length=1, batch_size=32):
+        """
+        Args:
+            size: Integer, Number of stored transitions
+            frame_height: Integer, Height of a frame of an Atari game
+            frame_width: Integer, Width of a frame of an Atari game
+            agent_history_length: Integer, Number of frames stacked together to create a state
+            batch_size: Integer, Number if transitions returned in a minibatch
+        """
         self.size = size
+        self.agent_history_length = agent_history_length
         self.batch_size = batch_size
+        self.count = 0
+        self.current = 0
+        self.shape = shape
+        
+        # Pre-allocate memory
+        self.actions = np.empty(self.size, dtype=np.int32)
+        self.rewards = np.empty(self.size, dtype=np.float32)
+        self.states = np.empty((self.size, *self.shape), dtype=np.float32)
+        self.new_states = np.empty((self.size, *self.shape), dtype=np.float32)
+        self.terminal_flags = np.empty(self.size, dtype=np.bool)
 
-        #self.states = deque(maxlen=self.size)
-        #self.actions = deque(maxlen=self.size)
-        #self.rewards = deque(maxlen=self.size)
-        #self.new_states = deque(maxlen=self.size)
-        #self.terminal_flags = deque(maxlen=self.size)
-        self.memory = deque(maxlen=self.size)
-
+        self.indices = np.empty(self.batch_size, dtype=np.int32)
+        
     def add_experience(self, action, state, reward, new_state, terminal):
-        
-        random.shuffle(self.memory)
-        self.memory.append([state, action, reward, new_state, terminal])
+        """
+        Args:
+            action: An integer between 0 and env.action_space.n - 1 
+                determining the action the agent perfomed
+            state: A (100, 3, 3, 3) matrix of interpolated DWI data
+            reward: A float determining the reward the agend received for performing an action
+            new_state: A (100, 3, 3, 3) matrix of interpolated DWI data
+            terminal: A bool stating whether the episode terminated
+        """
 
-    def get_minibatch(self):
-        batch = random.sample(self.memory, self.batch_size)
-        states = [x[0] for x in batch]
-        actions = [x[1] for x in batch]
-        rewards = [x[2] for x in batch]
-        new_states = [x[3] for x in batch]
-        terminal_flags = [x[4] for x in batch]
-        return states, actions, rewards, new_states, terminal_flags
-
-
-# class ReplayMemory(object):
-#     """Replay Memory that stores the last size=1,000,000 transitions"""
-#     def __init__(self, size=1000000, frame_height=210, frame_width=160, 
-#                  agent_history_length=4, batch_size=32):
-#         """
-#         Args:
-#             size: Integer, Number of stored transitions
-#             frame_height: Integer, Height of a frame of an Atari game
-#             frame_width: Integer, Width of a frame of an Atari game
-#             agent_history_length: Integer, Number of frames stacked together to create a state
-#             batch_size: Integer, Number if transitions returned in a minibatch
-#         """
-#         self.size = size
-#         #self.frame_height = frame_height
-#         #self.frame_width = frame_width
-#         self.agent_history_length = agent_history_length
-#         self.batch_size = batch_size
-#         self.count = 0
-#         self.current = 0
-        
-#         # Pre-allocate memory
-#         self.actions = np.empty(self.size, dtype=np.int32)
-#         self.rewards = np.empty(self.size, dtype=np.float32)
-#         #self.frames = np.empty((self.size, self.frame_height, self.frame_width), dtype=np.uint8)
-#         self.states = [None]*self.size
-#         self.terminal_flags = np.empty(self.size, dtype=np.bool)
-        
-#         # Pre-allocate memory for the states and new_states in a minibatch
-#         #self.states = np.empty((self.batch_size, self.agent_history_length, 
-#         #                        self.frame_height, self.frame_width), dtype=np.uint8)
-#         #self.new_states = np.empty((self.batch_size, self.agent_history_length, 
-#         #                            self.frame_height, self.frame_width), dtype=np.uint8)
-#         self.indices = np.empty(self.batch_size, dtype=np.int32)
-        
-#     def add_experience(self, action, state, reward, terminal):
-#         """
-#         Args:
-#             action: An integer between 0 and env.action_space.n - 1 
-#                 determining the action the agent perfomed
-#             frame: A (210, 160) frame of an Atari game in grayscale
-#             reward: A float determining the reward the agend received for performing an action
-#             terminal: A bool stating whether the episode terminated
-#         """
-#         #if frame.shape != (self.frame_height, self.frame_width):
-#         #    raise ValueError('Dimension of frame is wrong!')
-#         #print("Add frame at position: ", self.current)
-#         self.actions[self.current] = action
-#         self.states[self.current] = state
-#         self.rewards[self.current] = reward
-#         self.terminal_flags[self.current] = terminal
-#         self.count = max(self.count, self.current+1)
-#         self.current = (self.current + 1) % self.size
-#         #print("New current: ", self.current)
+        self.actions[self.current] = action
+        self.states[self.current] = state
+        self.rewards[self.current] = reward
+        self.new_states[self.current] = new_state
+        self.terminal_flags[self.current] = terminal
+        self.count = max(self.count, self.current+1)
+        self.current = (self.current + 1) % self.size
              
-#     def _get_state(self, index):
-#         if self.count == 0:
-#             raise ValueError("The replay memory is empty!")
-#         if index < self.agent_history_length - 1:
-#             raise ValueError("Index must be min 3")
-#         return self.states[index-self.agent_history_length+1:index+1]
+  
+         
+    def get_minibatch(self):
+        """
+        Returns a minibatch of self.batch_size = 32 transitions
+        """
+        if self.count < self.batch_size:
+            raise ValueError('Not enough memories to get a minibatch')
         
-#     def _get_valid_indices(self):
-#         for i in range(self.batch_size):
-#             while True:
-#                 index = random.randint(self.agent_history_length, self.count - 1)
-#                 if index < self.agent_history_length:
-#                     continue
-#                 if index >= self.current and index - self.agent_history_length <= self.current:
-#                     continue
-#                 if self.terminal_flags[index - self.agent_history_length:index].any():
-#                     continue
-#                 break
-#             self.indices[i] = index
-            
-#     def get_minibatch(self):
-#         """
-#         Returns a minibatch of self.batch_size = 32 transitions
-#         """
-#         if self.count < self.agent_history_length:
-#             raise ValueError('Not enough memories to get a minibatch')
+        self.indices = np.random.randint(self.size, size=self.batch_size)    
+
         
-#         states = [None]*self.batch_size
-#         new_states = [None]*self.batch_size
-#         self._get_valid_indices()
-            
-#         for i, idx in enumerate(self.indices):
-#             states[i] = self._get_state(idx - 1)
-#             new_states[i] = self._get_state(idx)
-        
-#         return states, self.actions[self.indices], self.rewards[self.indices], new_states, self.terminal_flags[self.indices]
+        return self.states[self.indices], self.actions[self.indices], self.rewards[self.indices], self.new_states[self.indices], self.terminal_flags[self.indices]
 
  
 class DQN(nn.Module):
@@ -131,7 +73,7 @@ class DQN(nn.Module):
     Main modell class. First 4 layers are convolutional layers, after that the model is split into the
     advantage and value stream. See the documentation. The convolutional layers are initialized with Kaiming He initialization.
     """
-    def __init__(self, n_actions, in_channels, hidden=128):
+    def __init__(self, n_actions, in_shape, hidden=128):
         """
         Args:
             n_actions: Integer, amount of possible actions of the specific environment
@@ -141,40 +83,32 @@ class DQN(nn.Module):
         
         self.n_actions = n_actions
         self.hidden = hidden
-        self.in_channels = in_channels
-        # Output of the 4th conv layer is 20480, if hidden is 128
+        self.in_shape = in_shape
 
-        # Conv layers, initialize weights with Kaiming He initialization
-        #self.conv1 = nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4, bias=False)
-        #nn.init.kaiming_uniform_(self.conv1.weight, nonlinearity='relu')
-        #self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2, bias=False)
-        #nn.init.kaiming_uniform_(self.conv2.weight, nonlinearity='relu')
-        #self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1, bias=False)
-        #nn.init.kaiming_uniform_(self.conv3.weight, nonlinearity='relu')
-        #self.conv4 = nn.Conv2d(64, self.hidden, kernel_size=7, stride=1, bias=False)
-        #nn.init.kaiming_uniform_(self.conv4.weight, nonlinearity='relu')
-
-        self.conv1 = nn.Conv3d(in_channels=self.in_channels, out_channels=32, kernel_size=2, stride=4)
+        self.conv1 = nn.Conv3d(in_channels=self.in_shape[0], out_channels=32, kernel_size=2, stride=4)
         nn.init.kaiming_uniform_(self.conv1.weight, nonlinearity='relu')
         self.conv2 = nn.Conv3d(32, 64, kernel_size=1, stride=2)
         nn.init.kaiming_uniform_(self.conv2.weight, nonlinearity='relu')
-        self.conv3 = nn.Conv3d(64, self.hidden, kernel_size=1, stride=1)
+        self.conv3 = nn.Conv3d(64, self.hidden*2, kernel_size=1, stride=1)
         nn.init.kaiming_uniform_(self.conv3.weight, nonlinearity='relu')
 
 
-        out = self.conv3(self.conv2(self.conv1(torch.zeros(1,self.in_channels,3,3,3))))
-        out = out.view(out.size(0), -1)
-        self.split_size = int(out.size(1)/2)
+        self.fc_1 = nn.Linear(self.hidden*2, self.hidden)
+        nn.init.kaiming_uniform_(self.fc_1.weight, nonlinearity='relu')
+        self.fc_2 = nn.Linear(self.hidden, self.n_actions)
+        nn.init.kaiming_uniform_(self.fc_2.weight, nonlinearity='relu')
 
+        # out_size = self.conv3(self.conv2(self.conv1(torch.zeros(1, *self.in_shape))))
+        # out_size = out_size.view(out_size.size(0), -1)
 
         #Advantage and Value layer output
-        self.advantage_l = torch.nn.Linear(self.split_size, self.n_actions)
-        nn.init.kaiming_uniform_(self.advantage_l.weight, nonlinearity='relu')
-        self.advantage_l.bias.data.zero_()
+        # self.advantage_l = torch.nn.Linear(out_size, self.n_actions)
+        # nn.init.kaiming_uniform_(self.advantage_l.weight, nonlinearity='relu')
+        # self.advantage_l.bias.data.zero_()
 
-        self.value_l = torch.nn.Linear(self.split_size, 1)
-        nn.init.kaiming_uniform_(self.value_l.weight, nonlinearity='relu')
-        self.value_l.bias.data.zero_()
+        # self.value_l = torch.nn.Linear(out_size, 1)
+        # nn.init.kaiming_uniform_(self.value_l.weight, nonlinearity='relu')
+        # self.value_l.bias.data.zero_()
 
 
 
@@ -182,31 +116,23 @@ class DQN(nn.Module):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
-        #x = F.relu(self.conv4(x))
         x = x.view(x.size(0), -1)
+        x = F.relu(self.fc_1(x))
+        self.q_values = F.relu(self.fc_2(x))
 
-        self.valuestream, self.advantagestream = torch.split(x, self.split_size, dim=1)
-        
-        self.advantage = self.advantage_l(self.advantagestream)
-        self.value = self.value_l(self.valuestream)
-        self.q_values = self.value + (self.advantage - self.advantage.mean(dim=1, keepdim=True))
+        #self.valuestream, self.advantagestream = torch.split(x, self.split_size, dim=1)
+        #self.advantage = self.advantage_l(x)
+        #self.value = self.value_l(x)
+
+        #self.q_values = self.value + (self.advantage - self.advantage.mean(dim=1, keepdim=True))
 
         #return self.advantage, self.value
         return self.q_values
 
-#    def predict_q(self, x):
-#        advantage, V_of_s = self(x)
-#
-#        self.q_values = V_of_s + (advantage - advantage.mean(dim=1, keepdim=True))
-#        return self.q_values
-
-
     def predict_action(self, x):
-        #q_values = self.predict_q(x)
         q_values = self(x)
         self.best_action = torch.argmax(q_values, 1)
         return self.best_action
-
 
 
 class Agent():
@@ -249,8 +175,8 @@ class Agent():
         self.target_dqn.eval()
 
         
-        #self.replay_memory = ReplayMemory(size=self.memory_size, agent_history_length=self.agent_history_length, batch_size=self.batch_size)
-        self.replay_memory = ReplayMemory(size=self.memory_size, batch_size=self.batch_size)
+        self.replay_memory = ReplayMemory(size=self.memory_size, shape=self.inp_size ,agent_history_length=self.agent_history_length, batch_size=self.batch_size)
+        #self.replay_memory = ReplayMemory(size=self.memory_size, batch_size=self.batch_size)
         self.optimizer = torch.optim.Adam(self.main_dqn.parameters(), self.lr)
 
     def optimize(self):
@@ -261,46 +187,27 @@ class Agent():
         """
         # get a minibatch of transitions
         states, actions, rewards, new_states, terminal_flags = self.replay_memory.get_minibatch()
-        #
-        # states: (32, 4, 210, 160)
-        # actions: (32, 9)
-        # rewards: (32)
-        # new_states: (32, 4, 210, 160)
-        # terminal_flags: (32)
-        #
-        
-        # To Do: sometimes point is still outside of DWI
-        states_interpol = []
-        next_states_interpol = []
-        for i in range(self.batch_size):
-            # To Do: replay memory returns nested list of state objects
-                states_interpol.append(states[i].getValue())
-                next_states_interpol.append(new_states[i].getValue())
 
-
-        states_interpol = torch.stack(states_interpol).to(self.device)
-        next_states_interpol = torch.stack(next_states_interpol).to(self.device)
-
-        # states = torch.FloatTensor(states/255.).to(self.device)
+        states = torch.FloatTensor(states).to(self.device)
+        next_states = torch.FloatTensor(new_states).to(self.device)
         actions = torch.LongTensor(actions).to(self.device)
         rewards = torch.FloatTensor(rewards).to(self.device)
-        #new_states = torch.FloatTensor(new_states/255.).to(self.device)
         terminal_flags = torch.BoolTensor(terminal_flags).to(self.device)
 
-
-        # predict the best actions for all the next states, shape: (32)
-        arg_q_max = self.main_dqn(next_states_interpol).max(1)[1]
+        # predict the best actions for all the next states
+        arg_q_max = self.main_dqn(next_states).max(1)[1]
 
         # predict the Q values for all the next states,
-        # get the Q value of the target model for the predicted actions arg_q_max, shape: (32)
-        double_q = self.target_dqn(next_states_interpol).gather(1, arg_q_max.unsqueeze(-1)).squeeze(1).detach()
+        # get the Q value of the target model for the predicted actions arg_q_max
+        double_q = self.target_dqn(next_states).gather(1, arg_q_max.unsqueeze(-1)).squeeze(1).detach()
+        double_q[terminal_flags] = 0.0
 
-        # Belman equation. Make sure that if episode is over, target_q = rewards, shape: (32)
-        target_q = rewards + (self.gamma * double_q * ~terminal_flags)
+        # Belman equation. Make sure that if episode is over, target_q = rewards
+        target_q = self.gamma * double_q + rewards
 
         # predict the q values for the current states,
-        # select Q value of the best action that was performed for the current state, shape: (32)
-        predict_Q = self.main_dqn(states_interpol).gather(1, actions.unsqueeze(-1)).squeeze(-1)
+        # select Q value of the best action that was performed for the current state
+        predict_Q = self.main_dqn(states).gather(1, actions.unsqueeze(-1)).squeeze(-1)
 
         loss = F.smooth_l1_loss(input=predict_Q, target=target_q, reduction='mean')
            
@@ -308,12 +215,7 @@ class Agent():
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        
-        # delete all variables to ensure low memory usage
-        del double_q
-        del target_q
-        del predict_Q
-        
+               
         return loss
 
 class Action_Scheduler():
@@ -367,4 +269,4 @@ class Action_Scheduler():
         if len(state) < 4:
             return np.random.randint(0, self.num_actions)
         else:
-            return self.model.predict_action(state).item()
+            return torch.argmax(self.model(state)).item()
