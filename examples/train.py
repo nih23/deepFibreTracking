@@ -47,14 +47,14 @@ def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps
                         
                 next_state, reward, terminal = env.step(action)
 
-                if reward >= 1:
-                    reward = 10
-                elif reward > -0.05:
-                    reward = 1
+                #if reward >= 1:
+                #    reward = 100
+                #elif reward > -0.05:
+                #    reward = 10
                 
                 if episode_counter == max_episode_length-1:
-                    if reward < 10:
-                        reward = -100
+                    if reward < 0.:
+                        reward = -10
                     terminal = True
                 # increase counter
                 step_counter += 1
@@ -77,11 +77,13 @@ def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps
 
                 ####### optimization is happening here
                 if step_counter > replay_memory_size:
+                    #print("entering optimize")
                     loss = agent.optimize()
 
 
                 ####### target network update
                 if step_counter > replay_memory_size and step_counter % network_update_every == 0:
+                    #print("updating target net")
                     agent.target_dqn.load_state_dict(agent.main_dqn.state_dict())
                 
                 # if episode ended before maximum step
@@ -95,7 +97,7 @@ def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps
             if len(eps_rewards) % 10 == 0:
                 with open(path+'/logs/rewards.dat', 'a') as reward_file:
                     print("[{}] {}, {}".format(len(eps_rewards), step_counter, np.mean(eps_rewards[-100:])), file=reward_file)
-                print("[{}] {}, {}".format(len(eps_rewards), step_counter, np.mean(eps_rewards[-100:])) )
+                print("[{}] {}, {}, current eps {}".format(len(eps_rewards), step_counter, np.mean(eps_rewards[-100:]), action_scheduler.eps_current) )
         torch.save(agent.main_dqn.state_dict(), path+'/checkpoints/fibre_agent_{}_reward_{:.2f}.pth'.format(step_counter, np.mean(eps_rewards[-100:])))
     ########## evaluation starting here
         eval_rewards = []
@@ -103,6 +105,7 @@ def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps
             eval_steps = 0
             state = env.reset()
             eval_episode_reward = 0
+            episode_final = 0
             while eval_steps < max_episode_length:
                 action = action_scheduler.get_action(step_counter, torch.FloatTensor(state.getValue()).to(device).unsqueeze(0), evaluation=True)
 
@@ -114,16 +117,19 @@ def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps
 
                 if terminal:
                     terminal = False
+                    if reward == 10:
+                        episode_final += 1
                     break
 
             eval_rewards.append(eval_episode_reward)
         
         print("Evaluation score:", np.mean(eval_rewards))
+        print("{} of {} episodes ended close to / at the final state.".format(episode_final, eval_runs))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--max_steps", default=3000000, type=int, help="Choose maximum amount of training steps")
-    parser.add_argument("--replay_memory_size", default=200000, type=int, help="Set amount of past expiriences stored in the replay memory")
+    parser.add_argument("--replay_memory_size", default=10000, type=int, help="Set amount of past expiriences stored in the replay memory")
     parser.add_argument("--eps_annealing_steps", default=100000, type=int, help="Set amount of steps after which epsilon is decreased more slowly until max_steps")
     parser.add_argument("--agent_history_length", default=1, type=int, help="Choose how many past states are included in each input to update the agent")
     parser.add_argument("--evaluate_every", default=20000, type=int, help="Set evaluation interval")

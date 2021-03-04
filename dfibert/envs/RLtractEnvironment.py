@@ -58,6 +58,11 @@ class RLtractEnvironment(gym.Env):
             #print("Entering terminal state")
             done = True
             reward = self.rewardForTerminalState(self.state)
+            if reward < 0:
+                reward = -10
+            else:
+                reward = 10
+                #print("Terminal state was close to destined end point")
             return self.state, reward, done
             
         ## convert discrete action into tangent vector
@@ -70,6 +75,12 @@ class RLtractEnvironment(gym.Env):
         
         ## compute reward for new state
         rewardNextState = self.rewardForState(nextState)
+        if rewardNextState > -0.2:
+            rewardNextState = 1
+        elif rewardNextState == 0.:
+            rewardNextState = 2
+        elif rewardNextState > 0.:
+            rewardNextState = 5
         
         ### check if we already left brain map
         # => RLenv.dataset.data.binarymask.shape
@@ -81,7 +92,7 @@ class RLtractEnvironment(gym.Env):
         except PointOutsideOfDWIError:
             done = True
             #print("Agent left brain mask :(")
-            return self.state, -100, done
+            return self.state, -10, done
 
         
         self.state = TractographyState(positionNextState, self.interpolateDWIatState)
@@ -97,7 +108,7 @@ class RLtractEnvironment(gym.Env):
         #
         # We will be normalising the distance wrt. to LeakyRelu activation function. 
         qry_pt = torch.FloatTensor(state.getCoordinate()).view(-1,3)
-        distance = torch.min(torch.sum( (self.referenceStreamline_ijk - qry_pt)**2, dim =1 ))
+        distance = torch.min(torch.sum( (self.referenceStreamline_ijk - qry_pt)**2  , dim =1 ))
         reward = torch.nn.functional.leaky_relu(-1 * distance)
         return reward
  
@@ -114,7 +125,7 @@ class RLtractEnvironment(gym.Env):
         file_sl.track()
         
         tracked_streamlines = file_sl.get_streamlines()
-        streamline_index = np.random.randint(len(tracked_streamlines))
+        streamline_index = 0#np.random.randint(len(tracked_streamlines))
         #print("Reset to streamline %d/%d" % (streamline_index+1, len(tracked_streamlines)))
         referenceStreamline_ras = tracked_streamlines[streamline_index]
         referenceStreamline_ijk = self.dataset.to_ijk(referenceStreamline_ras)
