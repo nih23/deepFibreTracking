@@ -52,9 +52,7 @@ class ReplayMemory(object):
         self.terminal_flags[self.current] = terminal
         self.count = max(self.count, self.current+1)
         self.current = (self.current + 1) % self.size
-             
-  
-         
+    
     def get_minibatch(self):
         """
         Returns a minibatch of self.batch_size = 32 transitions
@@ -64,7 +62,6 @@ class ReplayMemory(object):
         
         self._indices = np.random.randint(self.size, size=self.batch_size)    
 
-        
         return self.states[self._indices], self.actions[self._indices], self.rewards[self._indices], self.new_states[self._indices], self.terminal_flags[self._indices]
 
  
@@ -85,51 +82,17 @@ class DQN(nn.Module):
         self.hidden = hidden
         self.in_shape = in_shape
 
-        #self.conv1 = nn.Conv3d(in_channels=self.in_shape[0], out_channels=32, kernel_size=2, stride=4)
-        #nn.init.kaiming_uniform_(self.conv1.weight, nonlinearity='relu')
-        #self.conv2 = nn.Conv3d(32, 64, kernel_size=1, stride=2)
-        #nn.init.kaiming_uniform_(self.conv2.weight, nonlinearity='relu')
-        #self.conv3 = nn.Conv3d(64, self.hidden*2, kernel_size=1, stride=1)
-        #nn.init.kaiming_uniform_(self.conv3.weight, nonlinearity='relu')
-
         self.fc_1 = nn.Linear(self.in_shape, self.hidden)
-        self.fc_2 = nn.Linear(self.hidden, self.hidden*2)
-        self.fc_3 = nn.Linear(self.hidden*2, self.hidden)
-        #nn.init.kaiming_uniform_(self.fc_1.weight, nonlinearity='relu')
+        self.fc_2 = nn.Linear(self.hidden, self.hidden)
+        self.fc_3 = nn.Linear(self.hidden, self.hidden)
         self.fc_4 = nn.Linear(self.hidden, self.n_actions)
-        #nn.init.kaiming_uniform_(self.fc_2.weight, nonlinearity='relu')
-
-        # out_size = self.conv3(self.conv2(self.conv1(torch.zeros(1, *self.in_shape))))
-        # out_size = out_size.view(out_size.size(0), -1)
-
-        #Advantage and Value layer output
-        # self.advantage_l = torch.nn.Linear(out_size, self.n_actions)
-        # nn.init.kaiming_uniform_(self.advantage_l.weight, nonlinearity='relu')
-        # self.advantage_l.bias.data.zero_()
-
-        # self.value_l = torch.nn.Linear(out_size, 1)
-        # nn.init.kaiming_uniform_(self.value_l.weight, nonlinearity='relu')
-        # self.value_l.bias.data.zero_()
-
-
 
     def forward(self, x):
-        #x = F.relu(self.conv1(x))
-        #x = F.relu(self.conv2(x))
-        #x = F.relu(self.conv3(x))
         x = x.reshape(x.size(0), -1)
         x = F.relu(self.fc_1(x))
         x = F.relu(self.fc_2(x))
         x = F.relu(self.fc_3(x))
         self.q_values = self.fc_4(x)
-
-        #self.valuestream, self.advantagestream = torch.split(x, self.split_size, dim=1)
-        #self.advantage = self.advantage_l(x)
-        #self.value = self.value_l(x)
-
-        #self.q_values = self.value + (self.advantage - self.advantage.mean(dim=1, keepdim=True))
-
-        #return self.advantage, self.value
         return self.q_values
 
     def predict_action(self, x):
@@ -166,8 +129,8 @@ class Agent():
         self.memory_size = memory_size
   
         # Create 2 models
-        self.main_dqn = DQN(self.n_actions, 2700, self.hidden)
-        self.target_dqn = DQN(self.n_actions, 2700, self.hidden)
+        self.main_dqn = DQN(self.n_actions, np.prod(np.array(self.inp_size)), self.hidden)
+        self.target_dqn = DQN(self.n_actions, np.prod(np.array(self.inp_size)), self.hidden)
         # and send them to the device
         self.main_dqn = self.main_dqn.to(self.device)
         self.target_dqn = self.target_dqn.to(self.device)
@@ -179,7 +142,6 @@ class Agent():
 
         
         self.replay_memory = ReplayMemory(size=self.memory_size, shape=self.inp_size ,agent_history_length=self.agent_history_length, batch_size=self.batch_size)
-        #self.replay_memory = ReplayMemory(size=self.memory_size, batch_size=self.batch_size)
         self.optimizer = torch.optim.Adam(self.main_dqn.parameters(), self.lr)
 
     def optimize(self):
@@ -198,32 +160,13 @@ class Agent():
         terminal_flags = torch.BoolTensor(terminal_flags).to(self.device)
 
         state_action_values = self.main_dqn(states).gather(1, actions.unsqueeze(-1)).squeeze(-1)
-        #print("state_action_values: ", state_action_values)
 
         next_state_actions = self.main_dqn(next_states).max(1)[1]
         next_state_values = self.target_dqn(next_states).gather(1, next_state_actions.unsqueeze(-1)).squeeze(-1)
         next_state_values[terminal_flags] = 0.0
-        #print("next_state_values: ", next_state_values)
 
         expected_state_action_values = next_state_values.detach() * self.gamma + rewards
-        #print("expected_state_action_values: ", expected_state_action_values)
 
-        # predict the best actions for all the next states
-        #arg_q_max = self.main_dqn(next_states).max(1)[1]
-
-        # predict the Q values for all the next states,
-        # get the Q value of the target model for the predicted actions arg_q_max
-        #double_q = self.target_dqn(next_states).gather(1, arg_q_max.unsqueeze(-1)).squeeze(1).detach()
-        #double_q[terminal_flags] = 0.0
-
-        # Belman equation. Make sure that if episode is over, target_q = rewards
-        #target_q = self.gamma * double_q + rewards
-
-        # predict the q values for the current states,
-        # select Q value of the best action that was performed for the current state
-        #predict_Q = self.main_dqn(states).gather(1, actions.unsqueeze(-1)).squeeze(-1)
-
-        #loss = F.smooth_l1_loss(input=predict_Q, target=target_q, reduction='mean')
         loss = nn.MSELoss()(state_action_values, expected_state_action_values)
           
         self.optimizer.zero_grad()
@@ -280,8 +223,5 @@ class Action_Scheduler():
 
         if np.random.rand(1) < self.eps_current:
             return np.random.randint(0, self.num_actions)
-
-        #if len(state) < 4:
-        #    return np.random.randint(0, self.num_actions)
         else:
             return torch.argmax(self.model(state)).item()

@@ -40,6 +40,8 @@ class RLtractEnvironment(gym.Env):
         
         self.state = self.reset()
             
+        self.stepCounter = 0
+        self.maxSteps = 200
         
     def interpolateDWIatState(self, stateCoordinates):       
         #TODO: maybe stay in RAS all the time then no need to transfer to IJK
@@ -47,22 +49,24 @@ class RLtractEnvironment(gym.Env):
         
         ras_points = self.grid + ras_points
         
-        interpolated_dwi = self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor)
+        try:
+            interpolated_dwi = self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor)
+        except:
+            return None
         interpolated_dwi = np.rollaxis(interpolated_dwi,3) #CxWxHxD
         #interpolated_dwi = self.dtype(interpolated_dwi).to(self.device)
         return interpolated_dwi
   
     
-    def step(self, action):  
-        if(action == (self.action_space.n - 1)):
+    def step(self, action):
+        if(action == (self.action_space.n - 1)) or (self.stepCounter > self.maxSteps):
             #print("Entering terminal state")
             done = True
             reward = self.rewardForTerminalState(self.state)
-            if reward < 0:
-                reward = -10
+            if reward > 0.95:
+                reward += (1/self.stepCounter)
             else:
-                reward = 10
-                #print("Terminal state was close to destined end point")
+                reward -= self.stepCounter / (self.maxSteps / 10.)
             return self.state, reward, done
             
         ## convert discrete action into tangent vector
@@ -71,22 +75,17 @@ class RLtractEnvironment(gym.Env):
         ## apply step by step length and update state accordingly
         positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
         nextState = TractographyState(positionNextState, self.interpolateDWIatState)
-        #self.state = nextState
+        if nextState.getValue() is None:
+            return self.state, -10, True
         
         ## compute reward for new state
         rewardNextState = self.rewardForState(nextState)
-        if rewardNextState > -0.2:
-            rewardNextState = 1
-        elif rewardNextState == 0.:
-            rewardNextState = 2
-        elif rewardNextState > 0.:
-            rewardNextState = 5
         
         ### check if we already left brain map
         # => RLenv.dataset.data.binarymask.shape
         # set done = True if coordinate of nextState is outside of binarymask
-        #done = is_done()
         done = False
+        self.stepCounter += 1
         try:
             nextState.getValue()
         except PointOutsideOfDWIError:
@@ -108,15 +107,15 @@ class RLtractEnvironment(gym.Env):
         #
         # We will be normalising the distance wrt. to LeakyRelu activation function. 
         qry_pt = torch.FloatTensor(state.getCoordinate()).view(-1,3)
-        distance = torch.min(torch.sum( (self.referenceStreamline_ijk - qry_pt)**2  , dim =1 ))
-        reward = torch.nn.functional.leaky_relu(-1 * distance)
-        return reward
+        distance = torch.min(torch.sum( (self.referenceStreamline_ijk - qry_pt)**2, dim =1 ) + torch.sum( (self.referenceStreamline_ijk[-1,:] - qry_pt)**4 ))
+        return torch.tanh(-distance+5.3) + self.rewardForTerminalState(state) / 2
  
 
     def rewardForTerminalState(self, state):
         qry_pt = torch.FloatTensor(state.getCoordinate()).view(3)
         distance = torch.sum( (self.referenceStreamline_ijk[-1,:] - qry_pt)**2 )
-        return torch.where(distance < self.maxL2dist_to_terminalState, 1, 0 )
+        #return torch.where(distance < self.maxL2dist_to_terminalState, 1, 0 )
+        return torch.tanh(-distance+5.3)
 
 
     # reset the game and returns the observed data from the last episode
@@ -125,16 +124,17 @@ class RLtractEnvironment(gym.Env):
         file_sl.track()
         
         tracked_streamlines = file_sl.get_streamlines()
-        streamline_index = 0#np.random.randint(len(tracked_streamlines))
+        streamline_index = np.random.randint(len(tracked_streamlines))
         #print("Reset to streamline %d/%d" % (streamline_index+1, len(tracked_streamlines)))
         referenceStreamline_ras = tracked_streamlines[streamline_index]
         referenceStreamline_ijk = self.dataset.to_ijk(referenceStreamline_ras)
         initialPosition_ijk = referenceStreamline_ijk[0]
         
         self.state = TractographyState(initialPosition_ijk, self.interpolateDWIatState)
-        #self.state = initialPosition_ijk
         self.done = False
         self.referenceStreamline_ijk = self.dtype(referenceStreamline_ijk).to(self.device)
+
+        self.stepCounter = 0
         
         return self.state
 
