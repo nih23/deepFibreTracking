@@ -40,7 +40,7 @@ class RLtractEnvironment(gym.Env):
         
         self.state = self.reset()
             
-        self.stepCounter = 0
+        self.stepCounter = 1
         self.maxSteps = 200
         
     def interpolateDWIatState(self, stateCoordinates):       
@@ -62,11 +62,12 @@ class RLtractEnvironment(gym.Env):
         if(action == (self.action_space.n - 1)) or (self.stepCounter > self.maxSteps):
             #print("Entering terminal state")
             done = True
-            reward = self.rewardForTerminalState(self.state)
-            if reward > 0.95:
-                reward += (1/self.stepCounter)
-            else:
-                reward -= self.stepCounter / (self.maxSteps / 10.)
+            reward = self.rewardForState(self.state)
+            #reward += (self.maxSteps / self.stepCounter) * reward.sign() 
+            if reward > 1.9:
+                reward += 10 + ((1/self.stepCounter)*10)
+            #else:
+            #    reward += 1/(self.stepCounter + 1 * 10.)#self.stepCounter/self.maxSteps#self.stepCounter / (self.maxSteps * 10.)
             return self.state, reward, done
             
         ## convert discrete action into tangent vector
@@ -108,7 +109,13 @@ class RLtractEnvironment(gym.Env):
         # We will be normalising the distance wrt. to LeakyRelu activation function. 
         qry_pt = torch.FloatTensor(state.getCoordinate()).view(-1,3)
         distance = torch.min(torch.sum( (self.referenceStreamline_ijk - qry_pt)**2, dim =1 ) + torch.sum( (self.referenceStreamline_ijk[-1,:] - qry_pt)**4 ))
-        return torch.tanh(-distance+5.3) + self.rewardForTerminalState(state) / 2
+        reward = (torch.tanh(-distance+5.3) + self.rewardForTerminalState(state)) / 2
+        if (reward <= -1.):
+            return -1.
+        elif (reward > -1.): #and (reward <= 0.):
+            return reward + 1
+        #elif (reward > 0.):
+        #    return reward + 1
  
 
     def rewardForTerminalState(self, state):
@@ -134,7 +141,7 @@ class RLtractEnvironment(gym.Env):
         self.done = False
         self.referenceStreamline_ijk = self.dtype(referenceStreamline_ijk).to(self.device)
 
-        self.stepCounter = 0
+        self.stepCounter = 1
         
         return self.state
 

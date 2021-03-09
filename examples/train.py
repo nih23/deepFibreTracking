@@ -107,7 +107,7 @@ def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps
 
                 if terminal:
                     terminal = False
-                    if reward > 2.4:
+                    if reward > 0.9:
                         episode_final += 1
                     break
 
