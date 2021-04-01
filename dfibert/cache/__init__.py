@@ -195,8 +195,7 @@ class Cache():
         """
         Clears the whole cache.
         """
-        keys = [key for key in self.objects]
-        for key in keys:
+        for key in self.objects:
             self.remove(key)
 
     def save_configuration(self):

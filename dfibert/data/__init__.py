@@ -2,9 +2,9 @@
 The data module is handling all kinds of DWI-data.
 
 Use this as a starting point to represent your loaded DWI-scan.
-This module provides methods helping you to implement datasets, 
+This module provides methods helping you to implement datasets,
 environments and all other kinds of modules with the requirement
-to work directly with the data.  
+to work directly with the data.
 """
 
 import os
@@ -13,29 +13,31 @@ from types import SimpleNamespace
 
 import torch
 
+import dipy.reconst.dti as dti
 from dipy.core.gradients import gradient_table
 from dipy.io import read_bvals_bvecs
 from dipy.denoise.localpca import localpca
 from dipy.denoise.pca_noise_estimate import pca_noise_estimate
 from dipy.align.reslice import reslice
 from dipy.segment.mask import median_otsu
+from dipy.tracking.streamline import interpolate_vector_3d, interpolate_scalar_3d
+
 from scipy.interpolate import RegularGridInterpolator
 
-from dipy.tracking.streamline import interpolate_vector_3d, interpolate_scalar_3d
-import dipy.reconst.dti as dti
-
 import numpy as np
+
 import nibabel as nb
 from nibabel.affines import apply_affine
 
 from dfibert.config import Config
-from dfibert.data.exceptions import (DeviceNotRetrievableError, DataContainerNotLoadableError, DWIAlreadyCroppedError,
-                                 DWIAlreadyNormalizedError, PointOutsideOfDWIError)
+from dfibert.data.exceptions import (DeviceNotRetrievableError, DataContainerNotLoadableError,
+                                     DWIAlreadyCroppedError, DWIAlreadyNormalizedError,
+                                     PointOutsideOfDWIError)
 
 class RawData(SimpleNamespace):
     """
     This class represents the raw loaded data, providing attributes to access it.
-    
+
     You should mainly see it as part of an DataContainer, which provides helpful methods
     to manipulate it or access (interpolated, processed) values
 
@@ -60,6 +62,11 @@ class RawData(SimpleNamespace):
     b0: ndarray
         The b0 image usable for normalization etc.
     """
+    def __init__(self):
+        self.bvals, self.bvecs, self.img = None, None, None
+        self.t1, self.gtab, self.dwi = None, None, None
+        self.aff, self.binarymask, self.b0 = None, None, None
+        self.fa = None
 
 class DataContainer():
     """
@@ -85,7 +92,8 @@ class DataContainer():
     To inherit the `DataContainer` class, you are advised to use the following function:
 
     `_retrieve_data(self, file_names, denoise=False, b0_threshold=None)`
-        This reads the properties of the given path based on the filenames and denoises the image, if applicable.
+        This reads the properties of the given path based on the filenames and
+        denoises the image, if applicable.
         Then it returns a RawData object.
 
     which is automatically called in the constructor.
@@ -249,8 +257,9 @@ class DataContainer():
 
         The shape of the input points will be retained for the return array,
         only the last dimension will be changed from 3 to the (interpolated) DWI-size accordingly.
-        
-        If you provide a postprocessing method, the interpolated data is then fed through this postprocessing option.
+
+        If you provide a postprocessing method, the interpolated data is then fed through this
+        postprocessing option.
 
         Parameters
         ----------
@@ -271,24 +280,25 @@ class DataContainer():
         shape = points.shape
         new_shape = (*shape[:-1], -1)
         points = points.reshape(-1, 3)
-        
-        condition = ((points[:, 0] < 0) + (points[:, 0] >= self.data.dwi.shape[0]) + # OR 
-                    (points[:, 1] < 0) + (points[:, 1] >= self.data.dwi.shape[1]) + 
-                    (points[:, 2] < 0) + (points[:, 2] >= self.data.dwi.shape[2])) 
-        
-        a, = np.nonzero(condition) # np.nonzero returns tuple (a)
-        if len(a) > 0 and not ignore_outside_points:
-            raise PointOutsideOfDWIError(self, self.to_ras(points), self.to_ras(points[a]))
-        
-        points[a] = np.zeros(3) # set the points being outside to inside points
 
-        result = self.interpolator(points[not a])
+        condition = ((points[:, 0] < 0) + (points[:, 0] >= self.data.dwi.shape[0]) + # OR
+                    (points[:, 1] < 0) + (points[:, 1] >= self.data.dwi.shape[1]) +
+                    (points[:, 2] < 0) + (points[:, 2] >= self.data.dwi.shape[2]))
+
+        affected_indices, = np.nonzero(condition) # np.nonzero returns tuple (a)
+        if len(affected_indices) > 0 and not ignore_outside_points:
+            raise PointOutsideOfDWIError(self, self.to_ras(points),
+                                         self.to_ras(points[affected_indices]))
+
+        points[affected_indices] = np.zeros(3) # set the points being outside to inside points
+
+        result = self.interpolator(points[not affected_indices])
 
         if postprocessing is not None:
-            result = postprocessing(result, self.data.b0, 
-                                 self.data.bvecs, 
+            result = postprocessing(result, self.data.b0,
+                                 self.data.bvecs,
                                  self.data.bvals)
-        result[a, :] = 0  # overwrite their interpolated value
+        result[affected_indices, :] = 0  # overwrite their interpolated value
 
         result = result.reshape(new_shape)
         return result
@@ -297,8 +307,8 @@ class DataContainer():
         """Crops the dataset based on B-value.
 
         This function crops the DWI-Image based on B-Value.
-        Pay attention to the fact that every value deviating more than `max_deviation` from the specified `b_value`
-        will be irretrievably removed in the object.
+        Pay attention to the fact that every value deviating more than `max_deviation`
+        from the specified `b_value` will be irretrievably removed in the object.
 
         Parameters
         ----------
@@ -358,7 +368,7 @@ class DataContainer():
         Raises
         ------
         DWIAlreadyCroppedError
-            If the DWI is already cropped, normalization doesn't make much sense anymore. 
+            If the DWI is already cropped, normalization doesn't make much sense anymore.
             Thus this is prevented.
 
         Returns
@@ -397,7 +407,7 @@ class DataContainer():
     def generate_fa(self):
         """Generates the FA Values for DataContainer.
 
-        Normalization is required. 
+        Normalization is required.
         It is recommended to call the routine ahead of cropping,
         such that the FA values make sense, but it is not prohibited
 
@@ -407,7 +417,7 @@ class DataContainer():
             Fractional anisotropy (FA) calculated from cached eigenvalues.
         """
         if self.options.cropped:
-            warnings.warn("""You are generating the fa values from already cropped DWI. 
+            warnings.warn("""You are generating the fa values from already cropped DWI.
             You typically want to generate_fa() before you crop the data.""")
         dti_model = dti.TensorModel(self.data.gtab, fit_method='LS')
         dti_fit = dti_model.fit(self.data.dwi)
@@ -420,7 +430,7 @@ class DataContainer():
         -------
         ndarray
             Fractional anisotropy (FA) calculated from cached eigenvalues.
-        
+
         See Also
         --------
         generate_fa: The method generating the fa values which are returned here.

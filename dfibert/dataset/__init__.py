@@ -14,8 +14,10 @@ from dipy.data import get_sphere
 
 from dfibert.config import Config
 from dfibert.util import get_reference_orientation, rotation_from_vectors, get_grid
+from dfibert.data.exceptions import DeviceNotRetrievableError
 
 from .exceptions import WrongDatasetTypePassedError, FeatureShapesNotEqualError
+
 
 
 class MovableData():
@@ -76,7 +78,7 @@ class MovableData():
         """
         tensors = {}
         for key, value in vars(self).items():
-            if isinstance(value, torch.Tensor) or isinstance(value, MovableData):
+            if isinstance(value, (torch.Tensor, MovableData)):
                 tensors[key] = value
         return tensors
 
@@ -206,7 +208,7 @@ class BaseDataset(MovableData):
     """The base class for Datasets in this library.
 
     It extends `MovableData`.
-    
+
     Attributes
     ----------
     device: torch.device, optional
@@ -214,7 +216,8 @@ class BaseDataset(MovableData):
     data_container: DataContainer
         The DataContainer the dataset is based on
     id: str
-        An ID representing this Dataset. This is not unique to any instance, but it consists of parameters and used dataset. 
+        An ID representing this Dataset. This is not unique to any instance,
+        but it consists of parameters and used dataset.
 
     Methods
     -------
@@ -250,32 +253,35 @@ class BaseDataset(MovableData):
 
 
 class IterableDataset(BaseDataset, torch.utils.data.Dataset):
+    "A dataset which we are able to iterate over"
     def __init__(self, data_container, device=None):
         BaseDataset.__init__(self, data_container, device=device)
         torch.utils.data.Dataset.__init__(self)
 
     def __len__(self):
-        if type(self) is IterableDataset:
-            raise NotImplementedError() from None
+        raise NotImplementedError() from None
 
     def __getitem__(self, index):
-        if type(self) is IterableDataset:
-            raise NotImplementedError() from None
+        raise NotImplementedError() from None
 
 
 class SaveableDataset(IterableDataset):
+    "A dataset which we can save into a file"
     def __init__(self, data_container, device=None):
-        IterableDataset.__init__(self,data_container, device=device)
-    
+        super().__init__(data_container, device=device)
+
     def _get_variable_elements_data(self):
+        assert len(self) > 0
         lengths = np.zeros(len(self), dtype=int)
+        in_shape, out_shape = None, None
         for i, (inp, out) in enumerate(self):
             assert len(inp) == len(out)
             lengths[i] = len(inp)
-        return lengths, inp.shape[1:], out.shape[1:]
+            in_shape, out_shape = inp.shape[1:], out.shape[1:]
+        return lengths, in_shape, out_shape
 
-    def saveToPath(self, path):
-
+    def save_to_path(self, path):
+        "Saves the saveable dataset to a path"
         os.makedirs(path, exist_ok=True)
         lengths, in_shape, out_shape = self._get_variable_elements_data()
         print(lengths)
@@ -284,25 +290,31 @@ class SaveableDataset(IterableDataset):
         in_shape=tuple([data_length] + list(in_shape))
         out_shape=tuple([data_length] + list(out_shape))
 
-        inp_memmap = np.memmap(os.path.join(path, 'input.npy'), dtype='float32', shape=in_shape, mode='w+')
-        out_memmap = np.memmap(os.path.join(path, 'output.npy'), dtype='float32', shape=out_shape, mode='w+')
-        
+        inp_memmap = np.memmap(os.path.join(path, 'input.npy'), dtype='float32',
+                               shape=in_shape, mode='w+')
+        out_memmap = np.memmap(os.path.join(path, 'output.npy'), dtype='float32',
+                               shape=out_shape, mode='w+')
+
         idx = 0
-        assert (len(self) == len(lengths))
-        for i in range(len(self)):
-            inp,out = self[i]
-            print(i, ": ", inp.shape, " l " ,lengths[i],  " - ",lengths.shape)
-            assert(len(inp) == lengths[i])
-            inp_memmap[idx:(idx + lengths[i])] = inp.numpy()
-            out_memmap[idx:(idx + lengths[i])] = out.numpy()
-            idx = idx +  lengths[i] 
+        assert len(self) == len(lengths)
+        for i, ((inp, out), length) in enumerate(zip(self, lengths)):
+            assert len(inp) == length
+            inp_memmap[idx:(idx + length)] = inp.numpy()
+            out_memmap[idx:(idx + length)] = out.numpy()
+            idx = idx +  length
             print("{}/{}".format(i, len(lengths)), end="\r")
         np.save(os.path.join(path, 'lengths.npy'), lengths)
         with open(os.path.join(path, 'info.json'), 'w') as infofile:
             json.dump({"id": self.id, "input_shape":in_shape, "output_shape":out_shape}, infofile)
 
+    def __len__(self):
+        raise NotImplementedError() from None
+
+    def __getitem__(self, index):
+        raise NotImplementedError() from None
 
 class LoadedDataset(IterableDataset):
+    "Represents a dataset loaded from a file"
     def __init__(self, path, device=None, passSingleElements=False):
         IterableDataset.__init__(self, None, device=device)
         self.path = path
@@ -313,7 +325,8 @@ class LoadedDataset(IterableDataset):
 
         inp_shape = tuple(info_data["input_shape"])
         out_shape = tuple(info_data["output_shape"])
-        self.feature_shapes = np.prod(info_data["input_shape"][1:]), np.prod(info_data["output_shape"][1:])
+        self.feature_shapes = (np.prod(info_data["input_shape"][1:]),
+                               np.prod(info_data["output_shape"][1:]))
 
         if not passSingleElements:
             self.sl_lengths = np.load(os.path.join(self.path, 'lengths.npy'))
@@ -321,34 +334,42 @@ class LoadedDataset(IterableDataset):
             self.sl_lengths = np.ones((inp_shape[0]))
         self.sl_start_indices = np.append(0, np.cumsum(self.sl_lengths))
 
-        self.inp_memmap = np.memmap(os.path.join(self.path, 'input.npy'), dtype='float32', shape=inp_shape, mode='r')
-        self.out_memmap = np.memmap(os.path.join(self.path, 'output.npy'), dtype='float32', shape=out_shape, mode='r')
-    
+        self.inp_memmap = np.memmap(os.path.join(self.path, 'input.npy'),
+                                    dtype='float32', shape=inp_shape, mode='r')
+        self.out_memmap = np.memmap(os.path.join(self.path, 'output.npy'),
+                                    dtype='float32', shape=out_shape, mode='r')
+
     def __len__(self):
         return len(self.sl_lengths)
 
     def __getitem__(self, index):
-        inp = torch.from_numpy(self.inp_memmap[self.sl_start_indices[index]:self.sl_start_indices[index+1]]).to(self.device)
-        out = torch.from_numpy(self.out_memmap[self.sl_start_indices[index]:self.sl_start_indices[index+1]]).to(self.device)
+        inp = (torch.from_numpy(
+            self.inp_memmap[self.sl_start_indices[index]:self.sl_start_indices[index+1]])
+            .to(self.device))
+        out = (torch.from_numpy(
+            self.out_memmap[self.sl_start_indices[index]:self.sl_start_indices[index+1]])
+            .to(self.device))
         return (inp, out)
 
     def get_feature_shapes(self):
+        "Returns the feature shapes of the dataset"
         return self.feature_shapes
 
 class ConcatenatedDataset(SaveableDataset):
+    "A Concatenated Dataset built from multiple existing datasets"
     def __init__(self, datasets, device=None):
-        IterableDataset.__init__(self, None, device=device)
+        super().__init__(None, device=device)
         self.id = self.id + "["
         self.__lens = [0]
-        for index, ds in enumerate(datasets):
-            if not isinstance(ds, IterableDataset):
-                raise WrongDatasetTypePassedError(self, ds,
+        for index, dataset in enumerate(datasets):
+            if not isinstance(dataset, IterableDataset):
+                raise WrongDatasetTypePassedError(self, dataset,
                                                   ("Dataset {} doesn't inherit IterableDataset. "
-                                                   "It is {} ").format(index, type(ds))
+                                                   "It is {} ").format(index, type(dataset))
                                                  ) from None
-            ds.to(self.device)
-            self.id = self.id + ds.id + ", "
-            self.__lens.append(len(ds) + self.__lens[-1])
+            dataset.to(self.device)
+            self.id = self.id + dataset.id + ", "
+            self.__lens.append(len(dataset) + self.__lens[-1])
         self.id = self.id[:-2] + "]"
         self.datasets = datasets
         self.options = SimpleNamespace()
@@ -366,11 +387,12 @@ class ConcatenatedDataset(SaveableDataset):
         return self.datasets[i][index - self.__lens[i]]
 
     def get_feature_shapes(self):
+        "Returns the feature shapes of the dataset"
         # assert that each dataset has same dataset shape
         (inp, out) = self.datasets[0].get_feature_shapes()
         for i in range(1, len(self.datasets)):
             (inp2, out2) = self.datasets[i].get_feature_shapes()
-            if (not torch.all(torch.tensor(inp).eq(torch.tensor(inp2))) or 
+            if (not torch.all(torch.tensor(inp).eq(torch.tensor(inp2))) or
                     not torch.all(torch.tensor(out).eq(torch.tensor(out2)))):
                 raise FeatureShapesNotEqualError(i, (inp, out), (inp2, out2))
         return (inp, out)
@@ -395,10 +417,10 @@ class ConcatenatedDataset(SaveableDataset):
         return self
 
 class StreamlineDataset(SaveableDataset):
-
+    "A dataset representing a list of streamlines"
     def __init__(self, tracker, data_container, processing,
                  device=None, append_reverse=None, online_caching=None):
-        IterableDataset.__init__(self, data_container, device=device)
+        super().__init__(data_container, device=device)
         self.streamlines = tracker.get_streamlines()
         self.id = self.id + "-{}-(".format(processing.id) + tracker.id + ")"
         config = Config.get_config()
@@ -415,11 +437,11 @@ class StreamlineDataset(SaveableDataset):
         if online_caching:
             self.cache = [None] * len(self)
         self.feature_shapes = None
-    
+
     def _get_variable_elements_data(self):
         lengths = np.zeros(len(self) , dtype=int)
-        for i, sl in enumerate(self.streamlines):
-            lengths[i] = len(sl)
+        for i, streamline in enumerate(self.streamlines):
+            lengths[i] = len(streamline)
         if self.options.append_reverse:
             lengths[len(self.streamlines):] = lengths[:len(self.streamlines)]
         (inp, out) = self[0]
@@ -435,14 +457,13 @@ class StreamlineDataset(SaveableDataset):
         if self.options.online_caching and self.cache[index] is not None:
             return self.cache[index]
         (inp, output) = self._calculate_item(index)
-        inp = torch.from_numpy(inp).to(device=self.device, dtype=torch.float32) # TODO work on dtypes
+        inp = torch.from_numpy(inp).to(device=self.device, dtype=torch.float32)
         output = torch.from_numpy(output).to(device=self.device, dtype=torch.float32)
 
         if self.options.online_caching:
             self.cache[index] = (inp, output)
-            return self.cache[index]
-        else:
-            return (inp, output)
+
+        return (inp, output)
 
     def _calculate_item(self, index):
         streamline = self._get_streamline(index)
@@ -461,6 +482,7 @@ class StreamlineDataset(SaveableDataset):
 
 
     def get_feature_shapes(self):
+        "Returns the feature shapes of the dataset"
         if self.feature_shapes is None:
             dwi, next_dir = self[0]
             # assert that every type of data processing maintains same shape
@@ -475,53 +497,53 @@ class StreamlineDataset(SaveableDataset):
 
     def cuda(self, device=None, non_blocking=False, memory_format=torch.preserve_format):
         if not self.options.online_caching:
-            return
+            return self
         dwi = None
-        for index, el in enumerate(self.cache):
-            if el is None:
+        for index, element in enumerate(self.cache):
+            if element is None:
                 continue
-            dwi, next_dir = el
+            dwi, next_dir = element
             dwi = dwi.cuda(device=device, non_blocking=non_blocking,
                            memory_format=memory_format)
             next_dir = next_dir.cuda(device=device, non_blocking=non_blocking,
                                      memory_format=memory_format)
             self.cache[index] = (dwi, next_dir)
             if self.device == dwi.device:  # move is unnecessary
-                return
+                return self
         if dwi is not None:
             self.device = dwi.device
         return self
 
     def cpu(self, memory_format=torch.preserve_format):
         if not self.options.online_caching:
-            return
+            return self
         dwi = None
-        for index, el in enumerate(self.cache):
-            if el is None:
+        for index, element in enumerate(self.cache):
+            if element is None:
                 continue
-            dwi, next_dir = el
+            dwi, next_dir = element
             dwi = dwi.cpu(memory_format=memory_format)
             next_dir = next_dir.cpu(memory_format=memory_format)
             self.cache[index] = (dwi, next_dir)
             if self.device == dwi.device:  # move is unnecessary
-                return
+                return self
         if dwi is not None:
             self.device = dwi.device
         return self
 
     def to(self, *args, **kwargs):
         if not self.options.online_caching:
-            return
+            return self
         dwi = None
-        for index, el in enumerate(self.cache):
-            if el is None:
+        for index, element in enumerate(self.cache):
+            if element is None:
                 continue
-            dwi, next_dir = el
+            dwi, next_dir = element
             dwi = dwi.to(*args, **kwargs)
             next_dir = next_dir.to(*args, **kwargs)
             self.cache[index] = (dwi, next_dir)
             if self.device == dwi.device: # move is unnecessary
-                return
+                return self
         if dwi is not None:
             self.device = dwi.device
         return self

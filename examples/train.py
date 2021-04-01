@@ -8,20 +8,20 @@ sys.path.insert(0,'..')
 
 from dfibert.tracker.nn.rl import Agent, Action_Scheduler
 
-import dfibert.envs.RLtractEnvironment as RLTe
+import dfibert.envs.tractography as RLTe
 
 
 def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps=100000, agent_history_length=1, evaluate_every=20000, eval_runs=5, network_update_every=10000, max_episode_length=200, learning_rate=0.0000625):
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Init environment..")
-    env = RLTe.RLtractEnvironment(device = 'cpu')
+    env = RLTe.EnvTractography(device = 'cpu')
     print("..done!")
     n_actions = env.action_space.n
 
     print("Init agent")
     state = env.reset()
-    agent = Agent(n_actions=n_actions, inp_size=state.getValue().shape, device=device, hidden=512, agent_history_length=agent_history_length, memory_size=replay_memory_size, learning_rate=learning_rate)
+    agent = Agent(n_actions=n_actions, inp_size=state.get_value().shape, device=device, hidden=512, agent_history_length=agent_history_length, memory_size=replay_memory_size, learning_rate=learning_rate)
 
     print("Init epsilon-greedy action scheduler")
     action_scheduler = Action_Scheduler(num_actions=n_actions, max_steps=max_steps, eps_annealing_steps=eps_annealing_steps, replay_memory_start_size=replay_memory_size, model=agent.main_dqn)
@@ -43,7 +43,7 @@ def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps
             #for episode_counter in range(max_episode_length):
             while not terminal:
                 # get action with epsilon-greedy strategy       
-                action = action_scheduler.get_action(step_counter, torch.FloatTensor(state.getValue()).to(device).unsqueeze(0))
+                action = action_scheduler.get_action(step_counter, torch.FloatTensor(state.get_value()).to(device).unsqueeze(0))
                         
                 next_state, reward, terminal = env.step(action)
 
@@ -55,9 +55,9 @@ def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps
 
 
                 agent.replay_memory.add_experience(action=action,
-                                    state=state.getValue(),
+                                    state=state.get_value(),
                                     reward=reward,
-                                    new_state=next_state.getValue(),
+                                    new_state=next_state.get_value(),
                                     terminal=terminal)
 
 
@@ -97,7 +97,7 @@ def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps
             eval_episode_reward = 0
             episode_final = 0
             while eval_steps < max_episode_length:
-                action = action_scheduler.get_action(step_counter, torch.FloatTensor(state.getValue()).to(device).unsqueeze(0), evaluation=True)
+                action = action_scheduler.get_action(step_counter, torch.FloatTensor(state.get_value()).to(device).unsqueeze(0), evaluation=True)
 
                 next_state, reward, terminal = env.step(action)
 

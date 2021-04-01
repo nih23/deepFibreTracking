@@ -1,0 +1,9 @@
+[FORMAT]
+# Exceptions to snake_case naming policy
+good-names=i,j,k,x,y,z,to,id,t1,fa,b0
+
+[TYPECHECK]
+
+# List of members which are set dynamically and missed by Pylint inference
+# system, and so shouldn't trigger E1101 when accessed.
+generated-members=numpy.*, torch.*, dipy.*

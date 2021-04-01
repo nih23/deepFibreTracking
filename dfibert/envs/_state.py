@@ -1,17 +1,19 @@
-import numpy as np
-
+"Contains the state for the tractography gym environment"
 class TractographyState:
-    def __init__(self, coordinate, interpolFuncHandle):
+    "The state for the tractography gym environment"
+    def __init__(self, coordinate, interpolation_func):
         self.coordinate = coordinate
-        self.interpolFuncHandle = interpolFuncHandle
-        self.interpolatedDWI = None
+        self.interpolation_func = interpolation_func
+        self.interpolated_dwi = None
 
-    def getCoordinate(self):
+    def get_coordinate(self):
+        "Returns the coordinate of the state"
         return self.coordinate
 
 
-    def getValue(self):
-        if self.interpolatedDWI is None:
+    def get_value(self):
+        "Returns the state value - the interpolated dwi"
+        if self.interpolated_dwi is None:
         # interpolate DWI value at self.coordinate
-            self.interpolatedDWI = self.interpolFuncHandle(self.coordinate)
-        return self.interpolatedDWI
+            self.interpolated_dwi = self.interpolation_func(self.coordinate)
+        return self.interpolated_dwi

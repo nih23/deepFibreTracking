@@ -2,7 +2,9 @@
 
 import os
 import random
+from types import SimpleNamespace
 
+import dipy.reconst.dti as dti
 from dipy.tracking.utils import random_seeds_from_mask, seeds_from_mask
 from dipy.tracking.local_tracking import LocalTracking
 from dipy.tracking.stopping_criterion import ThresholdStoppingCriterion
@@ -13,12 +15,12 @@ from dipy.io.streamline import save_vtk_streamlines, load_vtk_streamlines
 from dipy.reconst.csdeconv import ConstrainedSphericalDeconvModel, auto_response_ssst
 from dipy.data import get_sphere, default_sphere
 from dipy.direction import peaks_from_model, DeterministicMaximumDirectionGetter
-import dipy.reconst.dti as dti
 
-from types import SimpleNamespace
+
 from dfibert.config import Config
 from dfibert.cache import Cache
-from .exceptions import StreamlinesAlreadyTrackedError, ISMRMStreamlinesNotCorrectError, StreamlinesNotTrackedError
+from .exceptions import (StreamlinesAlreadyTrackedError, ISMRMStreamlinesNotCorrectError,
+                         StreamlinesNotTrackedError)
 
 class Tracker():
     """Universal Tracker class"""
@@ -148,7 +150,8 @@ class CSDTracker(SeedBasedTracker):
                                            fallback="10")
         fa_thr = Config.get_config().getfloat("CSDTracking", "autoResponseFaThreshold",
                                               fallback="0.7")
-        response, _ = auto_response_ssst(self.data.gtab, self.data.dwi, roi_radii=roi_r, fa_thr=fa_thr)
+        response, _ = auto_response_ssst(self.data.gtab, self.data.dwi, roi_radii=roi_r,
+                                         fa_thr=fa_thr)
         csd_model = ConstrainedSphericalDeconvModel(self.data.gtab, response)
         relative_peak_thr = Config.get_config().getfloat("CSDTracking", "relativePeakTreshold",
                                                          fallback="0.5")
@@ -208,7 +211,8 @@ class StreamlinesFromFileTracker(Tracker):
 
     def track(self):
         Tracker.track(self)
-        self.streamlines = load_vtk_streamlines(self.path) # TODO catch exception if path does not exist
+        self.streamlines = load_vtk_streamlines(self.path)
+        # TODO catch exception if path does not exist
 
 class ISMRMReferenceStreamlinesTracker(Tracker):
     """Class representing the ISMRM 2015 Ground Truth fiber tracks."""
@@ -230,8 +234,8 @@ class ISMRMReferenceStreamlinesTracker(Tracker):
         for file in os.listdir(self.path):
             if file.endswith(".fib"):
                 bundle_count = bundle_count + 1
-                sl = load_vtk_streamlines(os.path.join(self.path, file))
-                self.streamlines.extend(sl)
+                streamlines = load_vtk_streamlines(os.path.join(self.path, file))
+                self.streamlines.extend(streamlines)
         if len(self.streamlines) != 200433 or bundle_count != 25:
             raise ISMRMStreamlinesNotCorrectError(self, self.path)
         if self.options.streamline_count is not None:
