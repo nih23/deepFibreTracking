@@ -80,7 +80,7 @@ class Config():
             Error is thrown if the configuration is already initialized.
         """
         if cls.config:
-            raise PathAlreadySetError(path) from None
+            raise PathAlreadySetError(path, cls.config.get_path()) from None
         cls._CONFIGURATION_FILE = path
 
     def __init__(self, path):

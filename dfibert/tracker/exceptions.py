@@ -1,3 +1,4 @@
+"Exceptions for the tracker submodule"
 class StreamlinesAlreadyTrackedError(Exception):
     """Error thrown if streamlines are already tracked."""
 

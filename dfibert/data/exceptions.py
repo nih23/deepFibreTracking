@@ -1,3 +1,4 @@
+"Exceptions for the data submodule"
 class DeviceNotRetrievableError(Exception):
     """
     Exception thrown if get_device is called on non-CUDA tensor.
@@ -102,11 +103,12 @@ class DWIAlreadyNormalizedError(Exception):
         """Parameters
         ----------
         data_container : DataContainer
-            The DataContainer which is already normalized.    
+            The DataContainer which is already normalized.
         """
 
         self.data_container = data_container
-        super().__init__("The DWI of the DataContainer {id} is already normalized. ".format(id=data_container.id))
+        super().__init__("The DWI of the DataContainer {id} is already normalized. "
+                         .format(id=data_container.id))
 
 class PointOutsideOfDWIError(Exception):
     """

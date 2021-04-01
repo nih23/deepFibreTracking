@@ -1,3 +1,4 @@
+"Contains all exceptions for the cache submodule"
 class KeyNotCachedError(Exception):
     """
     This error is thrown if the given key cannot be mapped to a data record.

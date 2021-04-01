@@ -1,3 +1,4 @@
+"Exceptions for the dataset submodule"
 class WrongDatasetTypePassedError(Exception):
     """Error thrown if `ConcatenatedDataset` retrieves wrong datasets.
 
