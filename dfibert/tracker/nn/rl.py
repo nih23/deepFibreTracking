@@ -191,8 +191,8 @@ class Agent():
 
         expected_state_action_values = next_state_values.detach() * self.gamma + rewards
 
-        loss = nn.MSELoss()(state_action_values, expected_state_action_values)
-        #loss = torch.nn.SmoothL1Loss()(state_action_values, expected_state_action_values)  
+        #loss = nn.MSELoss()(state_action_values, expected_state_action_values)
+        loss = torch.nn.SmoothL1Loss()(state_action_values, expected_state_action_values)  
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()

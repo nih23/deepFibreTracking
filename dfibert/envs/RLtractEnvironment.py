@@ -61,22 +61,7 @@ class RLtractEnvironment(gym.Env):
     def step(self, action):
         self.reward -= 0.1
         self.stepCounter += 1
-        if self.stepCounter > self.maxSteps:
-            sphere_dist = ((self.state.getCoordinate()[0] - self.referenceStreamline_ijk[np.min([self.stepCounter, len(self.referenceStreamline_ijk)-1])][0])**2 \
-                      + (self.state.getCoordinate()[1] - self.referenceStreamline_ijk[np.min([self.stepCounter, len(self.referenceStreamline_ijk)-1])][1])**2 \
-                      + (self.state.getCoordinate()[2] - self.referenceStreamline_ijk[np.min([self.stepCounter, len(self.referenceStreamline_ijk)-1])][2])**2)
-
-            if sphere_dist <= 0.55**2:
-                print("Episode ended at terminal state but took too long")
-                return self.state, 50, True
-            else:
-                return self.state, -100, True
-            #reward = self.rewardForTerminalState(self.state)
-            #if reward > 1:
-            #    print("Episode ended at terminal state but took too long")
-            #    return self.state, 40, True
-            #else:
-            #    return self.state, -100, True
+        rewardNextState = 0
 
         if action == (self.action_space.n - 1):
             #reward = self.rewardForState(self.state)
@@ -84,12 +69,10 @@ class RLtractEnvironment(gym.Env):
             #return self.state, reward, False
             nextState = self.state
             dist_to_terminal = self.rewardForTerminalState(nextState)
-            if dist_to_terminal < 0.5:
+            if dist_to_terminal < 0.55*2:
                 print("Hey, hey, hey we finally stopped at the terminal state! :D")
                 return nextState, 100, True
-
         else:
-
             ## convert discrete action into tangent vector
             action_vector = self.directions[action]
             
@@ -114,31 +97,19 @@ class RLtractEnvironment(gym.Env):
             #print("Agent left brain mask :(")
             return self.state, -100, done
 
-        #rewardNextState = self.rewardForState(nextState)
-        #sphere_dist = ((nextState.getCoordinate()[0] - self.referenceStreamline_ijk[np.min([self.stepCounter, len(self.referenceStreamline_ijk)-1])][0])**2 + (nextState.getCoordinate()[1] - self.referenceStreamline_ijk[np.min([self.stepCounter, len(self.referenceStreamline_ijk)-1])][0])**2 + (nextState.getCoordinate()[2] - self.referenceStreamline_ijk[np.min([self.stepCounter, len(self.referenceStreamline_ijk)-1])][0])**2)
-        current_index = np.min([self.stepCounter,len(self.referenceStreamline_ijk)-1])
-        x_dist = (nextState.getCoordinate()[0] - self.referenceStreamline_ijk[current_index][0]) **2
-        y_dist = (nextState.getCoordinate()[1] - self.referenceStreamline_ijk[current_index][1]) **2
-        z_dist = (nextState.getCoordinate()[2] - self.referenceStreamline_ijk[current_index][2]) **2
-        sphere_dist = x_dist+y_dist+z_dist
-        if sphere_dist > 1.5**2:
-            #print("Point outside sphere tresh of 2.25:", sphere_dist)
-            return nextState, -100, True
-
-        if sphere_dist <= 0.55**2:
-            self.reward += 1000/len(self.referenceStreamline_ijk)
-            self.points_visited += 1
-            #print("Point currently in", sphere_dist)
+        rewardNextState = self.rewardForState(nextState)
+        if rewardNextState == -100:
+            done = True
+        if self.stepCounter > self.maxSteps:
+            if rewardNextState > 0.:
+                rewardNextState = 50    
+            done = True       
         
-        rewardNextState = self.reward - self.past_reward
-        self.past_reward = self.reward
-
         if self.points_visited == len(self.referenceStreamline_ijk):
             print("Hey, hey, hey we finally visited all tiles! :D")
             done = True
             rewardNextState = 100
 
-        #self.state = TractographyState(positionNextState, self.interpolateDWIatState)
         self.state = nextState
         # return step information
         return nextState, rewardNextState, done
@@ -152,27 +123,30 @@ class RLtractEnvironment(gym.Env):
         #
         # We will be normalising the distance wrt. to LeakyRelu activation function.
         #print(state.getCoordinate())
-        #qry_pt = state.getCoordinate().view(-1,3)
-        #distance = torch.min(torch.sum( (self.referenceStreamline_ijk[np.max([self.stepCounter-1-2,0]):np.min([self.stepCounter-1+1,self.maxSteps])] - qry_pt)**2, dim =1 ))
-        #distance = torch.min(torch.sum((self.referenceStreamline_ijk[np.min([self.stepCounter+1, self.maxSteps-1])] - qry_pt)**2, dim=1))
+        #current_index = np.min([self.stepCounter,len(self.referenceStreamline_ijk)-1])
+        current_index = np.min([self.stepCounter,len(self.referenceStreamline_ijk)-1])
+        qry_pt = state.getCoordinate().view(-1,3)
+        #print(qry_pt)
+        distance = torch.sum((self.referenceStreamline_ijk[current_index] - qry_pt)**2)
+        #print(distance)
+        if distance > 3.:
+            #print("Point outside sphere tresh of 2.25:", sphere_dist)
+            return -100
+
+        if distance <= 1.2:
+            self.reward += 1000.0 / len(self.referenceStreamline_ijk)
+            self.points_visited += 1
+            #print("Point currently in", sphere_dist)
         
-        distance = lineseg_dist(state.getCoordinate().numpy(), self.referenceStreamline_ijk[np.min([self.stepCounter, len(self.referenceStreamline_ijk)-3])].numpy(), self.referenceStreamline_ijk[np.min([self.stepCounter+2, len(self.referenceStreamline_ijk)-1])].numpy())
-        #reward = 2 + (-distance/10)
-        #reward = 1 + (1-distance)
-        #if distance == -1:
-        #    reward = 0.5
-        #elif distance < 0.8:
-        #    reward = 1+ (1-distance)
-        #else:
-        #    reward = np.max([1 - distance, -1])
-       
-        #return reward
-        return -distance
+        rewardNextState = self.reward - self.past_reward
+        self.past_reward = self.reward
+        
+        return rewardNextState
  
 
     def rewardForTerminalState(self, state):
         qry_pt = state.getCoordinate().view(3)
-        distance = torch.max((self.referenceStreamline_ijk[-1,:] - qry_pt)**2 )
+        distance = torch.sum((self.referenceStreamline_ijk[-1,:] - qry_pt)**2)
         #return torch.where(distance < self.maxL2dist_to_terminalState, 1, 0 )
         #return torch.tanh(-distance+5.3)
         #print(distance)
@@ -191,16 +165,16 @@ class RLtractEnvironment(gym.Env):
         tracked_streamlines = file_sl.get_streamlines()
         streamline_index = np.random.randint(len(tracked_streamlines))
         #print("Reset to streamline %d/%d" % (streamline_index+1, len(tracked_streamlines)))
-        referenceStreamline_ras = tracked_streamlines[streamline_index]#tracked_streamlines[1]
+        referenceStreamline_ras = tracked_streamlines[streamline_index]#tracked_streamlines[4]
         referenceStreamline_ijk = self.dataset.to_ijk(referenceStreamline_ras)
         referenceStreamline_ijk = self.dtype(referenceStreamline_ijk).to(self.device)
         initialPosition_ijk = referenceStreamline_ijk[0]
         
-        self.state = TractographyState(initialPosition_ijk, self.interpolateDWIatState)
         #print(self.state.getCoordinate())
         self.done = False
         #self.referenceStreamline_ijk = self.dtype(referenceStreamline_ijk).to(self.device)
         self.referenceStreamline_ijk = referenceStreamline_ijk
+        self.state = TractographyState(initialPosition_ijk, self.interpolateDWIatState)
 
         self.stepCounter = 0
         self.maxSteps = 200#len(self.referenceStreamline_ijk)
