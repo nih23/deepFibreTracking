@@ -69,60 +69,55 @@ class DQN(nn.Module):
     Main modell class. First 4 layers are convolutional layers, after that the model is split into the
     advantage and value stream. See the documentation. The convolutional layers are initialized with Kaiming He initialization.
     """
-    # def __init__(self, n_actions, in_shape, hidden=128):
-    #     """
-    #     Args:
-    #         n_actions: Integer, amount of possible actions of the specific environment
-    #         hidden: Integer, amount of hidden layers (To Do, hidden can change but split_size won't fit anymore)
-    #     """
+    # def __init__(self, input_shape, n_actions):
     #     super(DQN, self).__init__()
-        
-    #     self.n_actions = n_actions
-    #     self.hidden = hidden
-    #     self.in_shape = in_shape
 
-    #     self.fc_1 = nn.Linear(self.in_shape, self.in_shape*2)
-    #     self.fc_2 = nn.Linear(self.in_shape*2, self.hidden*2)
-    #     self.fc_3 = nn.Linear(self.hidden*2, self.hidden)
-    #     self.fc_4 = nn.Linear(self.hidden, self.n_actions)
+    #     self.fc = nn.Sequential(
+    #         nn.Linear(input_shape, 256),
+    #         nn.ReLU()
+    #     )
+
+    #     self.fc_adv = nn.Sequential(
+    #         nn.Linear(256, 512),
+    #         nn.ReLU(),
+    #         nn.Linear(512, n_actions)
+    #     )
+    #     self.fc_val = nn.Sequential(
+    #         nn.Linear(256, 512),
+    #         nn.ReLU(),
+    #         nn.Linear(512, 1)
+    #     )
 
     # def forward(self, x):
     #     x = x.reshape(x.size(0), -1)
-    #     x = F.leaky_relu(self.fc_1(x))
-    #     x = F.leaky_relu(self.fc_2(x))
-    #     x = F.leaky_relu(self.fc_3(x))
-    #     self.q_values = self.fc_4(x)
-    #     return self.q_values
-
-    # def predict_action(self, x):
-    #     q_values = self(x)
-    #     self.best_action = torch.argmax(q_values, 1)
-    #     return self.best_action
-    def __init__(self, input_shape, n_actions):
+    #     lin_out = self.fc(x)
+    #     val = self.fc_val(lin_out)
+    #     adv = self.fc_adv(lin_out)
+    #     return val + (adv - adv.mean(dim=1, keepdim=True))
+    def __init__(self, input_shape, n_actions, hidden_size = 1024, num_hidden = 8, activation=torch.relu):
         super(DQN, self).__init__()
+        self.linear_layers = nn.ModuleList()
+        self.activation = activation
+        self.init_layers(input_shape, n_actions, hidden_size, num_hidden)
 
-        self.fc = nn.Sequential(
-            nn.Linear(input_shape, 256),
-            nn.ReLU()
-        )
 
-        self.fc_adv = nn.Sequential(
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, n_actions)
-        )
-        self.fc_val = nn.Sequential(
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1)
-        )
+    def init_layers(self, input_size, output_size, hidden_size, num_hidden):
+        self.linear_layers.append(nn.Linear(input_size, hidden_size))
+        for _ in range(num_hidden):
+            self.linear_layers.append(nn.Linear(hidden_size, hidden_size))
+        self.linear_layers.append(nn.Linear(hidden_size, output_size))
+
+        for m in self.linear_layers:
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        x = x.reshape(x.size(0), -1)
-        lin_out = self.fc(x)
-        val = self.fc_val(lin_out)
-        adv = self.fc_adv(lin_out)
-        return val + (adv - adv.mean(dim=1, keepdim=True))
+        for i in range(len(self.linear_layers) - 1):
+            x = self.linear_layers[i](x)
+            x = self.activation(x)
+        x = self.linear_layers[-1](x)
+        return x
 
 
 class Agent():
