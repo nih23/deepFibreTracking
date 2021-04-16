@@ -113,6 +113,7 @@ class DQN(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
+        x = x.reshape(x.size(0), -1)
         for i in range(len(self.linear_layers) - 1):
             x = self.linear_layers[i](x)
             x = self.activation(x)
@@ -230,7 +231,7 @@ class Action_Scheduler():
         self.slope_2 = - (self.eps_final - self.eps_final_frame) / (self.max_frames - self.eps_annealing_frames - self.replay_memory_start_size)
         self.intercept_2 = self.eps_final_frame - self.slope_2 * self.max_frames
 
-    def get_action(self, frame_number, state, evaluation=False):
+    def get_action(self, frame_number, state, evaluation=False, influential_action=None):
         if evaluation:
             self.eps_current = 0.0
         elif frame_number < self.replay_memory_start_size:
@@ -241,7 +242,10 @@ class Action_Scheduler():
             self.eps_current = self.slope_2 * frame_number + self.intercept_2
 
         if np.random.rand(1) < self.eps_current:
-            return np.random.randint(0, self.num_actions)
+            if influential_action == None:
+                return np.random.randint(0, self.num_actions)
+            else:
+                return influential_action
         else:
             #print("Not a random action")
             with torch.no_grad():

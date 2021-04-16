@@ -51,7 +51,7 @@ class RLtractEnvironment(gym.Env):
         try:
             interpolated_dwi = self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor)
         except:
-            print("Point outside of brain mask :(")
+            #print("Point outside of brain mask :(")
             return None
         interpolated_dwi = np.rollaxis(interpolated_dwi,3) #CxWxHxD
         #interpolated_dwi = self.dtype(interpolated_dwi).to(self.device)
@@ -59,7 +59,7 @@ class RLtractEnvironment(gym.Env):
   
     
     def step(self, action):
-        self.reward -= 0.1
+        #self.reward -= 0.1
         self.stepCounter += 1
         rewardNextState = 0
 
@@ -69,9 +69,9 @@ class RLtractEnvironment(gym.Env):
             #return self.state, reward, False
             nextState = self.state
             dist_to_terminal = self.rewardForTerminalState(nextState)
-            if dist_to_terminal < 0.55*2:
+            if dist_to_terminal < 0.1:
                 print("Hey, hey, hey we finally stopped at the terminal state! :D")
-                return nextState, 100, True
+                return nextState, 50, True
         else:
             ## convert discrete action into tangent vector
             action_vector = self.directions[action]
@@ -80,7 +80,8 @@ class RLtractEnvironment(gym.Env):
             positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
             nextState = TractographyState(positionNextState, self.interpolateDWIatState)
             if nextState.getValue() is None:
-                return self.state, -100, True
+                rewardNextState = self.rewardForTerminalState(nextState)
+                return self.state, rewardNextState, True
         
         ## compute reward for new state
 
@@ -89,26 +90,28 @@ class RLtractEnvironment(gym.Env):
         # => RLenv.dataset.data.binarymask.shape
         # set done = True if coordinate of nextState is outside of binarymask
         done = False
-        try:
-            nextState.getValue()
-        except PointOutsideOfDWIError:
-            print("PointOutside still occured")
-            done = True
-            #print("Agent left brain mask :(")
-            return self.state, -100, done
+        # try:
+        #     nextState.getValue()
+        # except PointOutsideOfDWIError:
+        #     print("PointOutside still occured")
+        #     done = True
+        #     #print("Agent left brain mask :(")
+        #     return self.state, -100, done
 
         rewardNextState = self.rewardForState(nextState)
-        if rewardNextState == -100:
-            done = True
+        if rewardNextState < -np.exp(2*(0.81 )-1):
+          done = True
+        # if rewardNextState < 0.:
+        #     done = True
         if self.stepCounter > self.maxSteps:
-            if rewardNextState > 0.:
-                rewardNextState = 50    
+            #if rewardNextState > 0.:
+            #    rewardNextState = 50    
             done = True       
         
-        if self.points_visited == len(self.referenceStreamline_ijk):
-            print("Hey, hey, hey we finally visited all tiles! :D")
-            done = True
-            rewardNextState = 100
+        # if self.points_visited == len(self.referenceStreamline_ijk):
+        #     print("Hey, hey, hey we finally visited all tiles! :D")
+        #     done = True
+        #     #rewardNextState = 100
 
         self.state = nextState
         # return step information
@@ -123,23 +126,24 @@ class RLtractEnvironment(gym.Env):
         #
         # We will be normalising the distance wrt. to LeakyRelu activation function.
         #print(state.getCoordinate())
-        #current_index = np.min([self.stepCounter,len(self.referenceStreamline_ijk)-1])
         current_index = np.min([self.stepCounter,len(self.referenceStreamline_ijk)-1])
         qry_pt = state.getCoordinate().view(-1,3)
-        #print(qry_pt)
-        distance = torch.sum((self.referenceStreamline_ijk[current_index] - qry_pt)**2)
-        #print(distance)
-        if distance > 3.:
-            #print("Point outside sphere tresh of 2.25:", sphere_dist)
-            return -100
-
-        if distance <= 1.2:
-            self.reward += 1000.0 / len(self.referenceStreamline_ijk)
-            self.points_visited += 1
-            #print("Point currently in", sphere_dist)
+        l2_distance = torch.sum((self.referenceStreamline_ijk[current_index] - qry_pt)**2)
+        rewardNextState = -torch.exp(2*l2_distance-1)
+        #distance = torch.sum((self.referenceStreamline_ijk[current_index] - qry_pt)**2)
         
-        rewardNextState = self.reward - self.past_reward
-        self.past_reward = self.reward
+        
+        # if distance > 1:
+        #     #print("Point outside sphere tresh of 2.25:", sphere_dist)
+        #     rewardNextState = -10#-= 1000.0 / len(self.referenceStreamline_ijk)
+
+        # if distance <= 0.1:
+        #     self.reward += 1000.0 / len(self.referenceStreamline_ijk)
+        #     self.points_visited += 1
+        #     #print("Point currently in", sphere_dist)
+        
+        # rewardNextState = self.reward - self.past_reward
+        # self.past_reward = self.reward
         
         return rewardNextState
  
@@ -165,12 +169,13 @@ class RLtractEnvironment(gym.Env):
         tracked_streamlines = file_sl.get_streamlines()
         streamline_index = np.random.randint(len(tracked_streamlines))
         #print("Reset to streamline %d/%d" % (streamline_index+1, len(tracked_streamlines)))
-        referenceStreamline_ras = tracked_streamlines[streamline_index]#tracked_streamlines[4]
+        referenceStreamline_ras = tracked_streamlines[streamline_index]
         referenceStreamline_ijk = self.dataset.to_ijk(referenceStreamline_ras)
         referenceStreamline_ijk = self.dtype(referenceStreamline_ijk).to(self.device)
+        
+        #position_index = np.random.randint(len(referenceStreamline_ijk)-10)
         initialPosition_ijk = referenceStreamline_ijk[0]
         
-        #print(self.state.getCoordinate())
         self.done = False
         #self.referenceStreamline_ijk = self.dtype(referenceStreamline_ijk).to(self.device)
         self.referenceStreamline_ijk = referenceStreamline_ijk
@@ -181,7 +186,7 @@ class RLtractEnvironment(gym.Env):
 
         self.reward = 0
         self.past_reward = 0
-        self.points_visited = 0
+        self.points_visited = 0#position_index
         
         return self.state
 
