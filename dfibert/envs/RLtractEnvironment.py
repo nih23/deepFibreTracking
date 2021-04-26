@@ -82,7 +82,7 @@ class RLtractEnvironment(gym.Env):
             nextState = TractographyState(positionNextState, self.interpolateDWIatState)
             if nextState.getValue() is None:
                 rewardNextState = self.rewardForTerminalState(nextState)
-                return self.state, rewardNextState, True
+                return self.state, -rewardNextState, True
         
         ## compute reward for new state
 
@@ -118,6 +118,7 @@ class RLtractEnvironment(gym.Env):
         # return step information
         return nextState, rewardNextState, done
     
+
     
     def rewardForState(self, state):
         # In general, the reward will be negative but very close to zero if the agent is 
@@ -147,7 +148,7 @@ class RLtractEnvironment(gym.Env):
         # rewardNextState = self.reward - self.past_reward
         # self.past_reward = self.reward
         
-        return rewardNextState
+        return l2_distance#rewardNextState
  
 
     def rewardForTerminalState(self, state):
