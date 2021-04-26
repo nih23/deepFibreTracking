@@ -67,11 +67,12 @@ class RLtractEnvironment(gym.Env):
             #reward = self.rewardForState(self.state)
             #self.stepCounter += 1
             #return self.state, reward, False
+            #print(action)
             nextState = self.state
             dist_to_terminal = self.rewardForTerminalState(nextState)
             if dist_to_terminal < 0.1:
                 print("Hey, hey, hey we finally stopped at the terminal state! :D")
-                return nextState, 50, True
+                return nextState, 1, True
         else:
             ## convert discrete action into tangent vector
             action_vector = self.directions[action]
@@ -129,7 +130,8 @@ class RLtractEnvironment(gym.Env):
         current_index = np.min([self.stepCounter,len(self.referenceStreamline_ijk)-1])
         qry_pt = state.getCoordinate().view(-1,3)
         l2_distance = torch.sum((self.referenceStreamline_ijk[current_index] - qry_pt)**2)
-        rewardNextState = -torch.exp(2*l2_distance-1)
+
+        #rewardNextState = -torch.exp(2*l2_distance-1)
         #distance = torch.sum((self.referenceStreamline_ijk[current_index] - qry_pt)**2)
         
         
