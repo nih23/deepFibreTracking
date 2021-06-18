@@ -10,7 +10,7 @@ to work directly with the data.
 import os
 import warnings
 from types import SimpleNamespace
-from collections import namedtuple
+
 import torch
 
 import dipy.reconst.dti as dti
@@ -34,10 +34,39 @@ from dfibert.data.exceptions import (DeviceNotRetrievableError, DataContainerNot
                                      DWIAlreadyCroppedError, DWIAlreadyNormalizedError,
                                      PointOutsideOfDWIError)
 
+class RawData(SimpleNamespace):
+    """
+    This class represents the raw loaded data, providing attributes to access it.
 
-RawData = namedtuple('RawData', ['bvals', 'bvecs', 'img', 't1', 'gtab', 'dwi', 'aff',
-                                 'binarymask', 'b0', 'fa'])
+    You should mainly see it as part of an DataContainer, which provides helpful methods
+    to manipulate it or access (interpolated, processed) values
 
+    Attributes
+    ----------
+    bvals: ndarray
+        the B-values of the image
+    bvecs: ndarray
+        the B-vectors matching the bvals
+    img: nibabel.nifti1.Nifti1Image
+        the DWI-Image
+    t1: ndarray
+        the T1-File data
+    gtab: dipy.core.gradients.GradientTable
+        the calculated gradient table
+    dwi: ndarray
+        the raw DWI data
+    aff: ndarray
+        The affine used for coordinate transformation
+    binarymask: ndarray
+        A binarymask usable to separate brain from the rest
+    b0: ndarray
+        The b0 image usable for normalization etc.
+    """
+    def __init__(self):
+        self.bvals, self.bvecs, self.img = None, None, None
+        self.t1, self.gtab, self.dwi = None, None, None
+        self.aff, self.binarymask, self.b0 = None, None, None
+        self.fa = None
 
 class DataContainer():
     """
@@ -144,34 +173,34 @@ class DataContainer():
         DataContainerNotLoadableError
             This error is thrown if one or multiple files cannot be found.
         """
-
+        data = RawData()
         try:
-            bvals, bvecs = read_bvals_bvecs(os.path.join(self.path, file_names['bvals']),
+            data.bvals, data.bvecs = read_bvals_bvecs(os.path.join(self.path, file_names['bvals']),
                                                       os.path.join(self.path, file_names['bvecs']))
-            img = nb.load(os.path.join(self.path, file_names['img']))
-            t1 = nb.load(os.path.join(self.path, file_names['t1'])).get_data()
+            data.img = nb.load(os.path.join(self.path, file_names['img']))
+            data.t1 = nb.load(os.path.join(self.path, file_names['t1'])).get_data()
         except FileNotFoundError as error:
             raise DataContainerNotLoadableError(self.path, error.filename) from None
 
-        gtab = gradient_table(bvals=bvals, bvecs=bvecs)
-        dwi = img.get_data().astype("float32")
-        aff = img.affine
-        fa = None
+        data.gtab = gradient_table(bvals=data.bvals, bvecs=data.bvecs)
+        data.dwi = data.img.get_data().astype("float32")
+        data.aff = data.img.affine
+        data.fa = None
 
         if denoise:
-            sigma = pca_noise_estimate(dwi, gtab, correct_bias=True,
+            sigma = pca_noise_estimate(data.dwi, data.gtab, correct_bias=True,
                                        smooth=Config.get_config().getint("denoise", "smooth",
                                                                          fallback="3"))
-            dwi = localpca(dwi, sigma=sigma,
+            data.dwi = localpca(data.dwi, sigma=sigma,
                                 patch_radius=Config.get_config().getint("denoise", "pathRadius",
                                                                         fallback="2"))
         if 'mask' in file_names:
-            binarymask = nb.load(os.path.join(self.path, file_names['mask'])).get_data()
+            data.binarymask = nb.load(os.path.join(self.path, file_names['mask'])).get_data()
         else:
-            _, binarymask = median_otsu(dwi[..., 0], 2, 1)
+            _, data.binarymask = median_otsu(data.dwi[..., 0], 2, 1)
 
-        b0 = dwi[..., bvals < b0_threshold].mean(axis=-1)
-        data = RawData(bvals, bvecs, img, t1, gtab, dwi, aff, binarymask, b0, fa)
+        data.b0 = data.dwi[..., data.bvals < b0_threshold].mean(axis=-1)
+
         return data
 
     def to_ijk(self, points):
