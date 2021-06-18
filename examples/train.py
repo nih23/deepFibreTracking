@@ -1,18 +1,20 @@
+"RL Training"
+import os
+import sys
+import argparse
+
 import torch
 import gym
 import numpy as np
-import argparse
 
-import os, sys
 sys.path.insert(0,'..')
 
 from dfibert.tracker.nn.rl import Agent, Action_Scheduler
-
 import dfibert.envs.tractography as RLTe
 
 
 def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps=100000, agent_history_length=1, evaluate_every=20000, eval_runs=5, network_update_every=10000, max_episode_length=200, learning_rate=0.0000625):
-        
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Init environment..")
     env = RLTe.EnvTractography(device = 'cpu')
@@ -88,7 +90,7 @@ def train(path, max_steps=3000000, replay_memory_size=20000, eps_annealing_steps
                 print("[{}] {}, {}, current eps {}".format(len(eps_rewards), step_counter, np.mean(eps_rewards[-1000:]), action_scheduler.eps_current) )
         torch.save(agent.main_dqn.state_dict(), path+'/checkpoints/fibre_agent_{}_reward_{:.2f}.pth'.format(step_counter, np.mean(eps_rewards[-1000:])))
     
-    ########## evaluation starting here
+        ########## evaluation starting here
         eval_rewards = []
         agent.main_dqn.eval()
         for _ in range(eval_runs):
