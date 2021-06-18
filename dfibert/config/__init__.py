@@ -4,10 +4,10 @@ The config module covers all functions handling the configuration file.
 
 import configparser
 import atexit
-from .exceptions import PathAlreadySetError
 
+_UNSET = configparser._UNSET
 
-class Config():
+class Config(configparser.ConfigParser):
     """
     The Configuration can be used to retrieve configuration parameters or to set them and
     their default values.
@@ -36,18 +36,12 @@ class Config():
 
     Attributes
     ----------
-    config: ConfigParser
-        The real config parser this class is based on.
-        It is not advisable to use it directly, use the wrapper functions instead for
-        correct behaviour.
     is_immutable: bool
         The bool indicating wether a change of the configuration is possible in software or not.
     path: str
         The current path of the active cache.
     """
-
-    config = None
-    _UNSET = configparser._UNSET
+    _config = None
     _CONFIGURATION_FILE = "config.ini"
     @classmethod
     def get_config(cls):
@@ -60,9 +54,9 @@ class Config():
         Config
             The current active config.
         """
-        if not cls.config:
-            cls.config = Config(path=cls._CONFIGURATION_FILE)
-        return cls.config
+        if not cls._config:
+            cls._config = Config(path=cls._CONFIGURATION_FILE)
+        return cls._config
     @classmethod
     def set_path(cls, path):
         """
@@ -76,11 +70,12 @@ class Config():
 
         Raises
         ------
-        PathAlreadySetError
+        RuntimeError
             Error is thrown if the configuration is already initialized.
         """
-        if cls.config:
-            raise PathAlreadySetError(path, cls.config.get_path()) from None
+        if cls._config:
+            raise RuntimeError("Can't set the config path to {} because the config was already  \
+                initialised with path {}.".format(path, cls._config.get_path()))
         cls._CONFIGURATION_FILE = path
 
     def __init__(self, path):
@@ -92,17 +87,16 @@ class Config():
         path : str
             The path the config uses to load.
         """
-        self.config = configparser.ConfigParser()
-        self.config.optionxform = str
-        self.config.read(path)
+        super().__init__()
+        self.optionxform = str
+        self.read(path)
 
-        if (not self.config.has_section("configuration") or
-                not self.config.has_option("configuration", "immutableConfiguration")):
+        if not self.has_option("configuration", "immutableConfiguration"):
             self.set("configuration", "immutableConfiguration", "no")
-        if not self.config.has_option("configuration", "addDefaults"):
+        if not self.has_option("configuration", "addDefaults"):
             self.set("configuration", "addDefaults", "yes")
 
-        self.is_immutable = self.config.getboolean("configuration", "immutableConfiguration")
+        self.is_immutable = self.getboolean("configuration", "immutableConfiguration", fallback="False")
         self.path = path
         atexit.register(self.save_configuration)
 
@@ -119,9 +113,8 @@ class Config():
         fallback : str
             The fallback value of this option as string, regardless of real type.
         """
-        if (fallback is not self._UNSET and (not self.config.has_section(section)
-                                             or not self.config.has_option(section, option))
-                and self.config.getboolean("configuration", "addDefaults")):
+        if (fallback is not _UNSET and not self.has_option(section, option)
+                and self.getboolean("configuration", "addDefaults")):
             self.set(section, option, fallback)
 
     def set(self, section, option, value=None):
@@ -138,11 +131,11 @@ class Config():
         value : str, optional
             The value of the option, by default None.
         """
-        if not section in self.config:
-            self.config[section] = {}
-        self.config.set(section, option, value)
+        if not section in self:
+            self[section] = {}
+        super().set(section, option, value)
 
-    def get(self, section, option, fallback=_UNSET):
+    def get(self, section, option, *args,fallback=_UNSET, **kwargs):
         """Gets the configuration option with specified parameters.
 
         `fallback` has to be a string.
@@ -162,8 +155,8 @@ class Config():
             The option to get
         """
         self._handle_add_default(section, option, fallback)
-        return self.config.get(section, option, fallback=fallback)
-    def getint(self, section, option, fallback=_UNSET):
+        return super().get(section, option, *args, fallback=fallback, **kwargs)
+    def getint(self, section, option, *args, fallback=_UNSET, **kwargs):
         """Gets the configuration option with specified parameters as integer.
 
         `fallback` has to be a string.
@@ -183,8 +176,8 @@ class Config():
             The option to retrieve as int.
         """
         self._handle_add_default(section, option, fallback)
-        return self.config.getint(section, option, fallback=fallback)
-    def getfloat(self, section, option, fallback=_UNSET):
+        return super().getint(section, option, *args, fallback=_UNSET, **kwargs)
+    def getfloat(self, section, option, *args, fallback=_UNSET, **kwargs):
         """Gets the configuration option with specified parameters as float.
 
         `fallback` has to be a string.
@@ -204,8 +197,8 @@ class Config():
             The option to retrieve as float.
         """
         self._handle_add_default(section, option, fallback)
-        return self.config.getfloat(section, option, fallback=fallback)
-    def getboolean(self, section, option, fallback=_UNSET):
+        return super().getfloat(section, option, *args, fallback=_UNSET, **kwargs)
+    def getboolean(self, section, option, *args, fallback=_UNSET, **kwargs):
         """Gets the configuration option with specified parameters as boolean.
 
         `fallback` has to be a string.
@@ -225,7 +218,7 @@ class Config():
             The option to retrieve as boolean.
         """
         self._handle_add_default(section, option, fallback)
-        return self.config.getboolean(section, option, fallback=fallback)
+        return super().getboolean(section, option, *args, fallback=_UNSET, **kwargs)
 
 
     def get_path(self):
@@ -246,4 +239,4 @@ class Config():
         """
         if not self.is_immutable:
             with open(self.path, 'w') as configfile:
-                self.config.write(configfile)
+                self.write(configfile)
