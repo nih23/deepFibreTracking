@@ -15,7 +15,6 @@ import numpy as np
 from dipy.io.streamline import save_vtk_streamlines, load_vtk_streamlines
 
 from dfibert.config import Config
-from .exceptions import KeyNotCachedError
 
 class Cache():
     """
@@ -134,11 +133,12 @@ class Cache():
 
         Raises
         ------
-        KeyNotCachedError
+        LookupError
             This exception is thrown if no object is assigned to given key.
         """
         if not self.in_cache(key):
-            raise KeyNotCachedError(key)
+            raise LookupError("""The key {} isn't cached (anymore).
+                                Check if key is cached with in_cache(key).""".format(key))
         self.objects[key]["last_accessed"] = int(time.time()*1000.0)
 
         filename = self.objects[key]["filename"]
