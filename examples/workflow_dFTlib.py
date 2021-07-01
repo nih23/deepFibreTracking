@@ -1,14 +1,17 @@
 """Just example code as explanation. Usable for testing."""
-from dfibert.data import HCPDataContainer, ISMRMDataContainer
+from dfibert.data import DataPreprocessor
 from dfibert.data.postprocessing import res100, spherical_harmonics
 from dfibert.dataset import StreamlineDataset, ConcatenatedDataset
 from dfibert.tracker import CSDTracker, ISMRMReferenceStreamlinesTracker
 from dfibert.dataset.processing import RegressionProcessing, ClassificationProcessing
+
+
 def main():
     """Main method"""
-    hcp_data = HCPDataContainer(100307)
+    preprocessor = DataPreprocessor().normalise().fa_estimate().crop()
+    hcp_data = preprocessor.get_hcp("path/to/hcp/")
     hcp_sl = CSDTracker(hcp_data, random_seeds=True, seeds_count=10000)
-    ismrm_data = ISMRMDataContainer()
+    ismrm_data = preprocessor.get_ismrm("path/to/ismrm")
     ismrm_sl = ISMRMReferenceStreamlinesTracker(ismrm_data, streamline_count=10000)
     print("Loaded DataContainers")
     hcp_sl.track()
@@ -28,5 +31,7 @@ def main():
     ismrm_classification = StreamlineDataset(ismrm_sl, ismrm_data, processing)
     dataset_classification = ConcatenatedDataset([csd_classification, ismrm_classification])
     print("Initialised Classification Datasets")
+
+
 if __name__ == "__main__":
     main()

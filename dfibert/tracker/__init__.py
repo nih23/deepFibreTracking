@@ -3,6 +3,7 @@
 import os
 import random
 
+from dipy.core.gradients import gradient_table
 from dipy.tracking.utils import random_seeds_from_mask, seeds_from_mask
 from dipy.tracking.local_tracking import LocalTracking
 from dipy.tracking.stopping_criterion import ThresholdStoppingCriterion
@@ -20,14 +21,17 @@ from dfibert.config import Config
 from dfibert.cache import Cache
 from .exceptions import StreamlinesAlreadyTrackedError, ISMRMStreamlinesNotCorrectError, StreamlinesNotTrackedError
 
+
 class Tracker():
     """Universal Tracker class"""
+
     def __init__(self, data_container):
         self.id = str(self.__class__.__name__)
         if data_container is not None:
             self.data_container = data_container
             self.id = self.id + "-" + str(data_container.id)
         self.streamlines = None
+
     def track(self):
         """Track given data"""
         if self.streamlines is not None:
@@ -41,8 +45,10 @@ class Tracker():
             raise StreamlinesNotTrackedError(self) from None
         return self.streamlines
 
+
 class SeedBasedTracker(Tracker):
     """Seed based tracker"""
+
     def __init__(self, data_container,
                  random_seeds=None,
                  seeds_count=None,
@@ -76,7 +82,8 @@ class SeedBasedTracker(Tracker):
         self.id = self.id + "-sw{ss}-mil{mil}-max{mal}".format(ss=step_width,
                                                                mil=min_length,
                                                                mal=max_length)
-        self.data = data_container.data
+        self.data = data_container
+        self.gtab = gradient_table(self.data.bvals, self.data.bvecs)
         self.seeds = None
         self.options.seeds_count = seeds_count
         self.options.seeds_per_voxel = seeds_per_voxel
@@ -84,6 +91,7 @@ class SeedBasedTracker(Tracker):
         self.options.max_length = max_length
         self.options.min_length = min_length
         self.options.step_width = step_width
+
     def _track(self, classifier, direction_getter):
         if self.streamlines is not None:
             raise StreamlinesAlreadyTrackedError(self) from None
@@ -91,14 +99,15 @@ class SeedBasedTracker(Tracker):
                                               self.data.aff, step_size=self.options.step_width)
         self.streamlines = Streamlines(streamlines_generator)
         self.streamlines = self.filtered_streamlines_by_length(minimum=self.options.min_length,
-                                                        maximum=self.options.max_length)
+                                                               maximum=self.options.max_length)
+
     def track(self):
         Tracker.track(self)
         if self.streamlines is None:
             if not self.options.random_seeds:
-                seeds = seeds_from_mask(self.data.binarymask, affine=self.data.aff)
+                seeds = seeds_from_mask(self.data.binary_mask, affine=self.data.aff)
             else:
-                seeds = random_seeds_from_mask(self.data.binarymask,
+                seeds = random_seeds_from_mask(self.data.binary_mask,
                                                seeds_count=self.options.seeds_count,
                                                seed_count_per_voxel=self.options.seeds_per_voxel,
                                                affine=self.data.aff)
@@ -111,20 +120,22 @@ class SeedBasedTracker(Tracker):
         save_vtk_streamlines(self.streamlines, path)
 
     def filtered_streamlines_by_length(self,
-                                     minimum=Config.get_config()
-                                     .getfloat("tracking", "minimumStreamlineLength",
-                                               fallback="20"),
-                                     maximum=Config.get_config()
-                                     .getfloat("tracking", "maximumStreamlineLength",
-                                               fallback="200")):
+                                       minimum=Config.get_config()
+                                       .getfloat("tracking", "minimumStreamlineLength",
+                                                 fallback="20"),
+                                       maximum=Config.get_config()
+                                       .getfloat("tracking", "maximumStreamlineLength",
+                                                 fallback="200")):
         """
         removes streamlines that are shorter than minimumLength (in mm)
         """
         return [x for x in self.streamlines if metrics.length(x) > minimum
                 and metrics.length(x) < maximum]
 
+
 class CSDTracker(SeedBasedTracker):
     """A CSD based Tracker"""
+
     def __init__(self, data_container,
                  random_seeds=None,
                  seeds_count=None,
@@ -148,8 +159,8 @@ class CSDTracker(SeedBasedTracker):
                                            fallback="10")
         fa_thr = Config.get_config().getfloat("CSDTracking", "autoResponseFaThreshold",
                                               fallback="0.7")
-        response, _ = auto_response_ssst(self.data.gtab, self.data.dwi, roi_radii=roi_r, fa_thr=fa_thr)
-        csd_model = ConstrainedSphericalDeconvModel(self.data.gtab, response)
+        response, _ = auto_response_ssst(self.gtab, self.data.dwi, roi_radii=roi_r, fa_thr=fa_thr)
+        csd_model = ConstrainedSphericalDeconvModel(self.gtab, response)
         relative_peak_thr = Config.get_config().getfloat("CSDTracking", "relativePeakTreshold",
                                                          fallback="0.5")
         min_separation_angle = Config.get_config().getfloat("CSDTracking", "minimumSeparationAngle",
@@ -157,18 +168,20 @@ class CSDTracker(SeedBasedTracker):
         direction_getter = peaks_from_model(model=csd_model,
                                             data=self.data.dwi,
                                             sphere=get_sphere('symmetric724'),
-                                            mask=self.data.binarymask,
+                                            mask=self.data.binary_mask,
                                             relative_peak_threshold=relative_peak_thr,
                                             min_separation_angle=min_separation_angle,
                                             parallel=False)
-        dti_fit = dti.TensorModel(self.data.gtab, fit_method='LS')
-        dti_fit = dti_fit.fit(self.data.dwi, mask=self.data.binarymask)
+        dti_fit = dti.TensorModel(self.gtab, fit_method='LS')
+        dti_fit = dti_fit.fit(self.data.dwi, mask=self.data.binary_mask)
         self._track(ThresholdStoppingCriterion(dti_fit.fa, self.options.fa_threshold),
                     direction_getter)
         Cache.get_cache().set(self.id, self.streamlines)
 
+
 class DTITracker(SeedBasedTracker):
     """A DTI based Tracker"""
+
     def __init__(self, data_container,
                  random_seeds=None,
                  seeds_count=None,
@@ -188,8 +201,8 @@ class DTITracker(SeedBasedTracker):
         SeedBasedTracker.track(self)
         if self.streamlines is not None:
             return
-        dti_model = TensorModel(self.data.gtab)
-        dti_fit = dti_model.fit(self.data.dwi, mask=self.data.binarymask)
+        dti_model = TensorModel(self.gtab)
+        dti_fit = dti_model.fit(self.data.dwi, mask=self.data.binary_mask)
         dti_fit_odf = dti_fit.odf(sphere=default_sphere)
         max_angle = Config.get_config().getfloat("DTITracking", "maxAngle", fallback="30.0")
         direction_getter = DeterministicMaximumDirectionGetter.from_pmf(dti_fit_odf,
@@ -199,8 +212,10 @@ class DTITracker(SeedBasedTracker):
                     direction_getter)
         Cache.get_cache().set(self.id, self.streamlines)
 
+
 class StreamlinesFromFileTracker(Tracker):
     """A Tracker class representing preloaded Streamlines from file."""
+
     def __init__(self, path):
         Tracker.__init__(self, None)
         self.path = path
@@ -208,10 +223,12 @@ class StreamlinesFromFileTracker(Tracker):
 
     def track(self):
         Tracker.track(self)
-        self.streamlines = load_vtk_streamlines(self.path) # TODO catch exception if path does not exist
+        self.streamlines = load_vtk_streamlines(self.path)  # TODO catch exception if path does not exist
+
 
 class ISMRMReferenceStreamlinesTracker(Tracker):
     """Class representing the ISMRM 2015 Ground Truth fiber tracks."""
+
     def __init__(self, data_container, streamline_count=None):
         Tracker.__init__(self, data_container)
         self.options = SimpleNamespace()
@@ -221,7 +238,6 @@ class ISMRMReferenceStreamlinesTracker(Tracker):
         self.path = Config.get_config().get("data", "pathISMRMGroundTruth",
                                             fallback='data/ISMRM2015GroundTruth')
         self.path = self.path.rstrip(os.path.sep)
-
 
     def track(self):
         Tracker.track(self)
