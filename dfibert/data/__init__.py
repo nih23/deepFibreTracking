@@ -11,7 +11,6 @@ from __future__ import annotations
 import collections
 import os
 import warnings
-from collections import Callable
 
 import dipy.reconst.dti as dti
 import nibabel as nb
@@ -25,8 +24,8 @@ from dipy.segment.mask import median_otsu
 from nibabel.affines import apply_affine
 from scipy.interpolate import RegularGridInterpolator
 
-from dfibert.data.exceptions import (DeviceNotRetrievableError, DataContainerNotLoadableError, DWIAlreadyCroppedError,
-                                     DWIAlreadyNormalizedError, PointOutsideOfDWIError)
+from dfibert.data.exceptions import PointOutsideOfDWIError
+from dfibert.data.postprocessing import PostprocessingOption
 
 
 class DataPreprocessor(object):
@@ -282,7 +281,7 @@ class DataContainer(collections.namedtuple("DataContainer", "bvals, bvecs, t1, d
         """
         return apply_affine(self.aff, points)
 
-    def get_interpolated_dwi(self, points: np.ndarray, postprocessing: Callable = None,
+    def get_interpolated_dwi(self, points: np.ndarray, postprocessing: PostprocessingOption = None,
                              ignore_outside_points: bool = False) -> np.ndarray:
         """
         Returns interpolated dwi for given RAS+ points.
@@ -293,9 +292,9 @@ class DataContainer(collections.namedtuple("DataContainer", "bvals, bvecs, t1, d
         If you provide a postprocessing method, the interpolated data is then fed through this postprocessing option.
 
         :param numpy.ndarray points: The array containing the points. Shape is matched in output.
-        :param data.postprocessing postprocessing:
-        :param ignore_outside_points: A postprocessing method, e.g res100, raw, spherical_harmonics etc.
+        :param PostprocessingOption postprocessing: A postprocessing method, e.g res100, raw, spherical_harmonics etc.
             which will be applied to the output.
+        :param ignore_outside_points:
         :return: The DWI-Values interpolated for the given points. The input shape is matched aside of
         the last dimension.
         :type: numpy.ndarray
@@ -317,9 +316,7 @@ class DataContainer(collections.namedtuple("DataContainer", "bvals, bvecs, t1, d
         result[not is_outside] = self.interpolator(points[not is_outside])
 
         if postprocessing is not None:
-            result[not is_outside] = postprocessing(result[not is_outside], self.b0,
-                                                    self.bvecs,
-                                                    self.bvals)
+            result[not is_outside] = postprocessing.process(self, points[not is_outside], result[not is_outside])
         result[is_outside, :] = 0
         result = result.reshape(new_shape)
         return result

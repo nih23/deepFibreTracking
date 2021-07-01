@@ -1,14 +1,11 @@
-import os, sys
-
 import gym
 from gym import spaces
-from gym.spaces import Discrete, Box
 import numpy as np
 
 from dipy.data import get_sphere
 import torch
 
-from dfibert.data.postprocessing import res100, resample
+from dfibert.data.postprocessing import Resample
 from dfibert.data import DataPreprocessor, PointOutsideOfDWIError
 from dfibert.tracker import StreamlinesFromFileTracker
 from dfibert.util import get_grid
@@ -17,9 +14,11 @@ from ._state import TractographyState
 
 
 class RLtractEnvironment(gym.Env):
-    def __init__(self, device, stepWidth=1, dataset='100307', grid_dim=[3, 3, 3], maxL2dist_to_terminalState=0.1,
+    def __init__(self, device, stepWidth=1, dataset='100307', grid_dim=None, maxL2dist_to_terminalState=0.1,
                  pReferenceStreamlines="data/HCP307200_DTI_smallSet.vtk"):
         # data/HCP307200_DTI_min40.vtk => 5k streamlines
+        if grid_dim is None:
+            grid_dim = [3, 3, 3]
         print("Loading precomputed streamlines (%s) for ID %s" % (pReferenceStreamlines, dataset))
         self.device = device
         preprocessor = DataPreprocessor().normalise()
@@ -31,7 +30,7 @@ class RLtractEnvironment(gym.Env):
         self.directions = sphere.vertices
         noActions, _ = self.directions.shape
         self.action_space = spaces.Discrete(noActions + 1)  # spaces.Discrete(noActions)
-        self.dwi_postprocessor = resample(sphere=sphere)
+        self.dwi_postprocessor = Resample(sphere=sphere)
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
         self.maxL2dist_to_terminalState = maxL2dist_to_terminalState

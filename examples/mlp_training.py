@@ -5,7 +5,7 @@ import torch.optim as optim
 from torch.utils import data as dataL
 
 from dfibert.data import DataPreprocessor
-from dfibert.data.postprocessing import res100
+from dfibert.data.postprocessing import Resample100
 from dfibert.dataset.processing import RegressionProcessing
 from dfibert.dataset import SingleDirectionsDataset  # TODO update example
 from dfibert.tracker import CSDTracker
@@ -23,7 +23,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class ModelMLP(nn.Module):  # the NN as PyTorch module, this is best practise to keep the structure modular and simple.
     'MLP Model Class'  # but you can also just use an nn.Sequential(*layers) for simple models
 
-    def __init__(self, hidden_sizes=None, activation_function=None, dropout=0, input_size=None):
+    def __init__(self, hidden_sizes=None, activation_function=None, dropout=0.0, input_size=None):
         """Initializes the MLP model with given parameters:
         
         Arguments:
@@ -146,7 +146,7 @@ def main():
     print("Initialized streamlines...")
 
     processing = RegressionProcessing(rotate=False, grid_dimension=(3, 3, 3),
-                                      postprocessing=res100())  # choose a data Processing option for your training
+                                      postprocessing=Resample100())  # choose a data Processing option for your training
     dataset = SingleDirectionsDataset(tracker, data, processing, append_reverse=True, online_caching=True)
     # choose a dataset, this one is good for non-recurrent architectures
 
