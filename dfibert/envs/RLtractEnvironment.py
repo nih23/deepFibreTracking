@@ -19,7 +19,7 @@ from ._state import TractographyState
 
 
 class RLtractEnvironment(gym.Env):
-    def __init__(self, device, stepWidth = 1, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_terminalState = 0.1, pReferenceStreamlines = "data/HCP307200_DTI_smallSet.vtk"):
+    def __init__(self, device, stepWidth = 1, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, pReferenceStreamlines = "data/HCP307200_DTI_smallSet.vtk"):
         #data/HCP307200_DTI_min40.vtk => 5k streamlines
         print("Loading precomputed streamlines (%s) for ID %s" % (pReferenceStreamlines, dataset))
         self.device = device
@@ -45,7 +45,7 @@ class RLtractEnvironment(gym.Env):
         self.dwi_postprocessor = resample(sphere=get_sphere('repulsion100'))    #resample(sphere=sphere)
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
-        self.maxL2dist_to_terminalState = maxL2dist_to_terminalState
+        self.maxL2dist_to_State = maxL2dist_to_State
         self.pReferenceStreamlines = pReferenceStreamlines
 
         self.maxSteps = 1000
@@ -74,16 +74,17 @@ class RLtractEnvironment(gym.Env):
 
     def step(self, action):
         self.stepCounter += 1
-        if self.stepCounter >= self.maxSteps:
-            distTerminal = self.rewardForTerminalState(self.state)
-            if distTerminal < 0.5:
-                return self.state, .9, True, {}
-            else:
-                return self.state, -1, True, {}
+        #if self.stepCounter >= self.maxSteps:
+        distTerminal = self.rewardForTerminalState(self.state)
+        if distTerminal < self.maxL2dist_to_State:
+            print("Defi reached the terminal state!")
+            return self.state, 1., True, {}
+            #else:
+            #    return self.state, -1, True, {}
         done = False
         if action == (self.action_space.n - 1):
             distTerminal = self.rewardForTerminalState(self.state)
-            if distTerminal < 0.5:
+            if distTerminal < self.maxL2dist_to_State:
                 print("Defi stopped at/close to the terminal state!")
                 return self.state, 1., True, {}
             nextState = self.state
@@ -102,6 +103,8 @@ class RLtractEnvironment(gym.Env):
             return  self.state, -100, True, {}
         
         rewardNextState = self.rewardForState(nextState)
+        if rewardNextState > 0.:
+            self.points_visited += 1
         
         self.state = nextState
         self.state_history.append(nextState)
@@ -191,15 +194,14 @@ class RLtractEnvironment(gym.Env):
         #
         # We will be normalising the distance wrt. to LeakyRelu activation function.
         #print(state.getCoordinate())
-        current_index = np.min([self.points_visited,len(self.referenceStreamline_ijk)-1])
+        current_index = np.min([self.points_visited, len(self.referenceStreamline_ijk)-1])
         qry_pt = state.getCoordinate().view(-1,3)
-        l2_distance = torch.sum((self.referenceStreamline_ijk[current_index] - qry_pt)**2)
+        self.l2_distance = torch.dist(self.referenceStreamline_ijk[current_index], qry_pt, p=2)
 
-        if l2_distance > 2.:
+        if self.l2_distance > 2.5:
             rewardNextState = -1.
-        elif l2_distance < 0.5:
+        elif self.l2_distance < self.maxL2dist_to_State:
             rewardNextState = 1.
-            self.points_visited += 1
         else:
             rewardNextState = 0.
 
@@ -259,7 +261,7 @@ class RLtractEnvironment(gym.Env):
         
         self.reward = 0
         self.past_reward = 0
-        self.points_visited = 0#position_index
+        self.points_visited = 1#position_index
 
         self.state_history = []
         self.state_history.append(self.state)
