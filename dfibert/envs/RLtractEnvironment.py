@@ -33,7 +33,7 @@ class RLtractEnvironment(gym.Env):
         np.random.seed(42)
         theta = np.pi * np.random.rand(n_pts)
         phi = 2 * np.pi * np.random.rand(n_pts)
-        sphere = Sphere(theta=theta, phi=phi)# HemiSphere(theta=theta, phi=phi)
+        sphere = HemiSphere(theta=theta, phi=phi)#Sphere(theta=theta, phi=phi)
         self.directions = sphere.vertices
         self.directions = np.concatenate((self.directions, np.array([[0.0, 0.0, 0.0]])))
         #self.directions = sphere.vertices #res
@@ -92,8 +92,15 @@ class RLtractEnvironment(gym.Env):
         action_vector = self.directions[action]
 
 
-        #last_direction = self.state_history[-1] - self.state_history[-2]
-        #if np.dot(network_vector, last_direction)< 0 then network_vector = -1 * network_vector
+        # handling keeping the agent to go in the direction we want
+        if self.stepCounter <= 1:                                                               # if no past states
+            last_direction = self.referenceStreamline_ijk[1] - self.referenceStreamline_ijk[0]  # get the direction in which the reference steamline is going
+        else:                                                                                   # else get the direction the agent has been going so far
+            last_direction = self.state_history[-1].getCoordinate() - self.state_history[-2] .getCoordinate()
+
+        if np.dot(action_vector, last_direction) < 0:                                           # if the agent chooses to go in the complete opposite direction
+            action_vector = -1 * action_vector                                                  # force it to follow the rough direction of the streamline
+        
 
         positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
         #positionNextState = self.state.getCoordinate() + action    # <- for continous action space
