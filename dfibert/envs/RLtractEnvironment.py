@@ -90,17 +90,8 @@ class RLtractEnvironment(gym.Env):
             nextState = self.state
         #else:
         action_vector = self.directions[action]
-
-
-        # handling keeping the agent to go in the direction we want
-        if self.stepCounter <= 1:                                                               # if no past states
-            last_direction = self.referenceStreamline_ijk[1] - self.referenceStreamline_ijk[0]  # get the direction in which the reference steamline is going
-        else:                                                                                   # else get the direction the agent has been going so far
-            last_direction = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
-
-        if np.dot(action_vector, last_direction) < 0:                                           # if the agent chooses to go in the complete opposite direction
-            action_vector = -1 * action_vector                                                  # force it to follow the rough direction of the streamline
         
+        action_vector = self._correct_direction(action_vector)
 
         positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
         #positionNextState = self.state.getCoordinate() + action    # <- for continous action space
@@ -117,7 +108,30 @@ class RLtractEnvironment(gym.Env):
         self.state_history.append(nextState)
         # return step information
         return self.state, rewardNextState, done, {}
-    
+
+    def _correct_direction(self, action_vector):
+        # handle keeping the agent to go in the direction we want
+        if self.stepCounter <= 1:                                                               # if no past states
+            last_direction = self.referenceStreamline_ijk[1] - self.referenceStreamline_ijk[0]  # get the direction in which the reference steamline is going
+        else:                                                                                   # else get the direction the agent has been going so far
+            last_direction = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
+
+        if np.dot(action_vector, last_direction) < 0:                                           # if the agent chooses to go in the complete opposite direction
+            action_vector = -1 * action_vector                                                  # force it to follow the rough direction of the streamline
+        return action_vector
+
+    def _get_best_action(self):
+        distances = []
+        current_index = np.min([self.points_visited, len(self.referenceStreamline_ijk)-1])
+        for i in range(self.action_space.n):
+            action_vector = self.directions[i]
+            action_vector = self._correct_direction(action_vector)
+
+            positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
+            l2_distance = torch.dist(self.referenceStreamline_ijk[current_index], positionNextState.view(-1,3), p=2)
+            distances.append(l2_distance)
+
+        return np.argmin(distances)
     
     def cosineSimReward(self, state, nextState):
         current_index = np.min([self.points_visited,len(self.referenceStreamline_ijk)-1])
