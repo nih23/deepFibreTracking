@@ -96,7 +96,7 @@ class RLtractEnvironment(gym.Env):
         if self.stepCounter <= 1:                                                               # if no past states
             last_direction = self.referenceStreamline_ijk[1] - self.referenceStreamline_ijk[0]  # get the direction in which the reference steamline is going
         else:                                                                                   # else get the direction the agent has been going so far
-            last_direction = self.state_history[-1].getCoordinate() - self.state_history[-2] .getCoordinate()
+            last_direction = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
 
         if np.dot(action_vector, last_direction) < 0:                                           # if the agent chooses to go in the complete opposite direction
             action_vector = -1 * action_vector                                                  # force it to follow the rough direction of the streamline
