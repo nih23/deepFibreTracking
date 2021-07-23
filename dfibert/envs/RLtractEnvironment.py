@@ -103,6 +103,16 @@ class RLtractEnvironment(gym.Env):
         rewardNextState = self.rewardForState(nextState)
         if rewardNextState > 0.:
             self.points_visited += 1
+        else:
+            print("Check for next states...")
+            lower_index = np.min([self.points_visited+1, len(self.referenceStreamline_ijk)-1])
+            upper_index = np.min([self.points_visited+10, len(self.referenceStreamline_ijk)-1])
+            next_l2_distances = [torch.dist(self.referenceStreamline_ijk[i], nextState.getCoordinate(), p=2) for i in range(lower_index, upper_index)]
+            if any(distance < self.maxL2dist_to_State for distance in next_l2_distances):
+                rewardNextState = 1.
+                self.points_visited += 1
+                print("Defi got close to a state further down the stream line!")
+
         
         self.state = nextState
         self.state_history.append(nextState)
