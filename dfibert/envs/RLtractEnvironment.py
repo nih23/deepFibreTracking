@@ -74,13 +74,13 @@ class RLtractEnvironment(gym.Env):
 
     def step(self, action):
         self.stepCounter += 1
-        #if self.stepCounter >= self.maxSteps:
-        distTerminal = self.rewardForTerminalState(self.state)
-        if distTerminal < self.maxL2dist_to_State:
-            print("Defi reached the terminal state!")
-            return self.state, 1., True, {}
-            #else:
-            #    return self.state, -1, True, {}
+        if self.stepCounter >= self.maxSteps:
+            distTerminal = self.rewardForTerminalState(self.state)
+            if distTerminal < self.maxL2dist_to_State:
+                print("Defi reached the terminal state!")
+                return self.state, 1., True, {}
+            else:
+                return self.state, -1, True, {}
         done = False
         if action == (self.action_space.n - 1):
             distTerminal = self.rewardForTerminalState(self.state)
@@ -104,7 +104,6 @@ class RLtractEnvironment(gym.Env):
         if rewardNextState > 0.:
             self.points_visited += 1
         else:
-            print("Check for next states...")
             lower_index = np.min([self.points_visited+1, len(self.referenceStreamline_ijk)-1])
             upper_index = np.min([self.points_visited+10, len(self.referenceStreamline_ijk)-1])
             next_l2_distances = [torch.dist(self.referenceStreamline_ijk[i], nextState.getCoordinate(), p=2) for i in range(lower_index, upper_index)]
@@ -126,7 +125,7 @@ class RLtractEnvironment(gym.Env):
         else:                                                                                   # else get the direction the agent has been going so far
             last_direction = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
 
-        if np.dot(action_vector, last_direction) < 0:                                           # if the agent chooses to go in the complete opposite direction
+        if np.dot(action_vector, last_direction) < 0:                                           # if the agent chooses the complete opposite direction
             action_vector = -1 * action_vector                                                  # force it to follow the rough direction of the streamline
         return action_vector
 
