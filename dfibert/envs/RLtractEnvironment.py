@@ -63,7 +63,7 @@ class RLtractEnvironment(gym.Env):
         ras_points = self.dataset.to_ras(stateCoordinates) # Transform state to World RAS+ coordinate system
         
         ras_points = self.grid + ras_points
-        
+
         try:
             interpolated_dwi = self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor)
         except:
@@ -104,7 +104,7 @@ class RLtractEnvironment(gym.Env):
             return  self.prepare_state(self.state), -100., True, {}
 
         
-        self.state_history.append(nextState.getCoordinate.nump())
+        self.state_history.append(nextState.getCoordinate.numpy())
 
         #check if angle between actions is too large
         step_cosine_similarity = 1.
