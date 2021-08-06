@@ -41,18 +41,21 @@ class RLtractEnvironment(gym.Env):
         #noActions = len(self.directions)
 
         self.action_space = Discrete(noActions) #spaces.Discrete(noActions+1)
-        self.observation_space = Box(low=0, high=150, shape=(2700,))
+        #self.observation_space = Box(low=0, high=150, shape=(2700,))
         self.dwi_postprocessor = resample(sphere=get_sphere('repulsion100'))    #resample(sphere=sphere)
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
         self.maxL2dist_to_State = maxL2dist_to_State
         self.pReferenceStreamlines = pReferenceStreamlines
 
-        self.maxSteps = 1000
+        self.maxSteps = 2000
         
-        self.state = self.reset()
-        #self.state_history = []             # all past coordinates
+        #self.state = self.reset()
+        self.reset()
+        self.observation_space = Box(low=0, high=150, shape=self.reset().shape)
 
+        self.max_mean_step_angle = 0.82
+        self.max_step_angle = 1.59
 
         
     def interpolateDWIatState(self, stateCoordinates):       
@@ -74,23 +77,22 @@ class RLtractEnvironment(gym.Env):
 
     def step(self, action):
         self.stepCounter += 1
-        if self.stepCounter >= self.maxSteps:
-            distTerminal = self.rewardForTerminalState(self.state)
-            if distTerminal < self.maxL2dist_to_State:
-                print("Defi reached the terminal state!")
-                return self.state, 1., True, {}
-            else:
-                return self.state, -1, True, {}
         done = False
-        if action == (self.action_space.n - 1):
-            distTerminal = self.rewardForTerminalState(self.state)
-            if distTerminal < self.maxL2dist_to_State:
-                print("Defi stopped at/close to the terminal state!")
-                return self.state, 1., True, {}
-            nextState = self.state
+        if self.stepCounter >= self.maxSteps:
+            done = True
+        
+        distTerminal = self.rewardForTerminalState(self.state)
+        if distTerminal < self.maxL2dist_to_State:
+                print("Defi reached the terminal state!")
+                return self.prepare_state(self.state), 1., True, {}    
+        # if action == (self.action_space.n - 1):
+        #     distTerminal = self.rewardForTerminalState(self.state)
+        #     if distTerminal < self.maxL2dist_to_State:
+        #         print("Defi stopped at/close to the terminal state!")
+        #         return self.state, 1., True, {}
+        #    nextState = self.state
         #else:
         action_vector = self.directions[action]
-        
         action_vector = self._correct_direction(action_vector)
 
         positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
@@ -98,25 +100,53 @@ class RLtractEnvironment(gym.Env):
         nextState = TractographyState(positionNextState, self.interpolateDWIatState)
         if nextState.getValue() is None:
             #rewardNextState = self.rewardForTerminalState(nextState)
-            return  self.state, -100, True, {}
+            print("Defi left brain mask")
+            return  self.prepare_state(self.state), -100., True, {}
+
+        
+        self.state_history.append(nextState.getCoordinate.nump())
+
+        #check if angle between actions is too large
+        step_cosine_similarity = 1.
+        if self.stepCounter > 2:
+            past_path = torch.from_numpy(list(self.state_history)[2] - list(self.state_history)[1])
+            current_path = nextState.getCoordinate() - self.state.getCoordinate()
+            print("past path: ", past_path)
+            print("current_path: ", current_path)
+            step_cosine_similarity = self.cosineSimilarity(past_path, current_path)
+            print("step cosine sim: ", step_cosine_similarity)
+            step_angle = self.arccos(step_cosine_similarity)
+            if step_angle > self.max_step_angle:
+                print("Angle of past to current action too high!")
+                done = True
+
+            self.step_angles.append(step_angle)
+
+            if np.mean(self.step_angles) > self.max_mean_step_angle:
+                print("Mean of all step angles too high! Step counter: {}, Mean: {}".format(self.stepCounter, np.mean(self.step_angles)))
+                done = True
         
         rewardNextState = self.rewardForState(nextState)
         if rewardNextState > 0.:
             self.points_visited += 1
         else:
             lower_index = np.min([self.points_visited+1, len(self.referenceStreamline_ijk)-1])
-            upper_index = np.min([self.points_visited+10, len(self.referenceStreamline_ijk)-1])
+            upper_index = np.min([self.points_visited+4, len(self.referenceStreamline_ijk)-1])
             next_l2_distances = [torch.dist(self.referenceStreamline_ijk[i], nextState.getCoordinate(), p=2) for i in range(lower_index, upper_index)]
             if any(distance < self.maxL2dist_to_State for distance in next_l2_distances):
                 rewardNextState = 1.
                 self.points_visited += 1
                 print("Defi got close to a state further down the stream line!")
 
+        streamline_cosine_similarity = self.cosineSimReward(self.state, nextState)
+        print("Cosine sim to streamline: ", streamline_cosine_similarity)
+        rewardNextState = streamline_cosine_similarity * step_cosine_similarity
+
         
         self.state = nextState
-        self.state_history.append(nextState)
+        #self.state_history.append(nextState)
         # return step information
-        return self.state, rewardNextState, done, {}
+        return self.prepare_state(self.state), rewardNextState.float().item(), done, {}
 
     def _correct_direction(self, action_vector):
         # handle keeping the agent to go in the direction we want
@@ -154,67 +184,6 @@ class RLtractEnvironment(gym.Env):
         #else:
         #    dist = dist - 2.5
         return cosine_sim#-dist
-    # def step(self, action):
-    #     #self.reward -= 0.1
-    #     self.stepCounter += 1
-    #     rewardNextState = 0
-
-    #     if action == (self.action_space.n - 1):
-    #         #reward = self.rewardForState(self.state)
-    #         #self.stepCounter += 1
-    #         #return self.state, reward, False
-    #         #print(action)
-    #         nextState = self.state
-    #         dist_to_terminal = self.rewardForTerminalState(nextState)
-    #         if dist_to_terminal < 0.1:
-    #             print("Hey, hey, hey we finally stopped at the terminal state! :D")
-    #             return nextState, 1, True
-    #     else:
-    #         ## convert discrete action into tangent vector
-    #         action_vector = self.directions[action]
-            
-    #         ## apply step by step length and update state accordingly
-    #         positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
-    #         nextState = TractographyState(positionNextState, self.interpolateDWIatState)
-    #         if nextState.getValue() is None:
-    #             rewardNextState = self.rewardForTerminalState(nextState)
-    #             return self.state, -rewardNextState, True
-        
-    #     ## compute reward for new state
-
-
-    #     ### check if we already left brain map
-    #     # => RLenv.dataset.data.binarymask.shape
-    #     # set done = True if coordinate of nextState is outside of binarymask
-    #     done = False
-    #     # try:
-    #     #     nextState.getValue()
-    #     # except PointOutsideOfDWIError:
-    #     #     print("PointOutside still occured")
-    #     #     done = True
-    #     #     #print("Agent left brain mask :(")
-    #     #     return self.state, -100, done
-
-    #     rewardNextState = self.rewardForState(nextState)
-    #     if rewardNextState < -np.exp(2*(0.81 )-1):
-    #       done = True
-    #     # if rewardNextState < 0.:
-    #     #     done = True
-    #     if self.stepCounter > self.maxSteps:
-    #         #if rewardNextState > 0.:
-    #         #    rewardNextState = 50    
-    #         done = True       
-        
-    #     # if self.points_visited == len(self.referenceStreamline_ijk):
-    #     #     print("Hey, hey, hey we finally visited all tiles! :D")
-    #     #     done = True
-    #     #     #rewardNextState = 100
-
-    #     self.state = nextState
-    #     # return step information
-    #     return nextState, rewardNextState, done
-    
-
     
     def rewardForState(self, state):
         # In general, the reward will be negative but very close to zero if the agent is 
@@ -234,21 +203,6 @@ class RLtractEnvironment(gym.Env):
             rewardNextState = 1.
         else:
             rewardNextState = 0.
-
-        #distance = torch.sum((self.referenceStreamline_ijk[current_index] - qry_pt)**2)
-        
-        
-        # if distance > 1:
-        #     #print("Point outside sphere tresh of 2.25:", sphere_dist)
-        #     rewardNextState = -10#-= 1000.0 / len(self.referenceStreamline_ijk)
-
-        # if distance <= 0.1:
-        #     self.reward += 1000.0 / len(self.referenceStreamline_ijk)
-        #     self.points_visited += 1
-        #     #print("Point currently in", sphere_dist)
-        
-        # rewardNextState = self.reward - self.past_reward
-        # self.past_reward = self.reward
         
         return rewardNextState
  
@@ -256,15 +210,18 @@ class RLtractEnvironment(gym.Env):
     def rewardForTerminalState(self, state):
         qry_pt = state.getCoordinate().view(3)
         distance = torch.sum((self.referenceStreamline_ijk[-1,:] - qry_pt)**2)
-        #return torch.where(distance < self.maxL2dist_to_terminalState, 1, 0 )
-        #return torch.tanh(-distance+5.3)
-        #print(distance)
-        #if distance < 0.5:
-        #    reward =  2 + (distance/10)
-        #else:
-        #    reward = np.max([1 - distance, -1])
-        #return reward
         return distance
+
+    def cosineSimilarity(self, path_1, path_2):
+        return torch.nn.functional.cosine_similarity(path_2, path_1, dim=0)
+
+    def arccos(self, angle):
+        return torch.arccos(angle)
+
+    def prepare_state(self, state):
+        dwi_values = state.getValue().flatten()
+        past_coordinates = np.array(list(self.state_history)).flatten()
+        return np.concatenate((dwi_values, past_coordinates))
 
     # reset the game and returns the observed data from the last episode
     def reset(self, streamline_index=None):       
@@ -293,10 +250,17 @@ class RLtractEnvironment(gym.Env):
         self.past_reward = 0
         self.points_visited = 1#position_index
 
-        self.state_history = []
-        self.state_history.append(self.state)
+        #self.state_history = []
+        #self.state_history.append(self.state)
+
+        self.step_angles = []
+
+        self.state_history = deque(maxlen=4)
+        while len(self.state_history) != 4:
+            self.state_history.append(self.state.getCoordinate().numpy())
+
         
-        return self.state
+        return self.prepare_state(self.state)
 
 
     def render(self, mode="human"):
