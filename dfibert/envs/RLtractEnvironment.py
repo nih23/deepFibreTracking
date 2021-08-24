@@ -16,7 +16,7 @@ from dfibert.util import get_grid
 
 from ._state import TractographyState
 
-
+import shapely.geometry as geom
 
 class RLtractEnvironment(gym.Env):
     def __init__(self, device, stepWidth = 1, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, pReferenceStreamlines = "data/HCP307200_DTI_smallSet.vtk"):
@@ -104,11 +104,11 @@ class RLtractEnvironment(gym.Env):
             return  self.prepare_state(self.state), -100., True, {}
 
         
-        self.state_history.append(nextState.getCoordinate.numpy())
+        self.state_history.append(nextState.getCoordinate().numpy())
 
         #check if angle between actions is too large
         step_cosine_similarity = 1.
-        if self.stepCounter > 2:
+        if self.stepCounter > 1:
             past_path = torch.from_numpy(list(self.state_history)[2] - list(self.state_history)[1])
             current_path = nextState.getCoordinate() - self.state.getCoordinate()
             print("past path: ", past_path)
@@ -138,7 +138,7 @@ class RLtractEnvironment(gym.Env):
                 self.points_visited += 1
                 print("Defi got close to a state further down the stream line!")
 
-        streamline_cosine_similarity = self.cosineSimReward(self.state, nextState)
+        streamline_cosine_similarity = self.cosineSimtoStreamline(self.state, nextState)
         print("Cosine sim to streamline: ", streamline_cosine_similarity)
         rewardNextState = streamline_cosine_similarity * step_cosine_similarity
 
@@ -172,7 +172,7 @@ class RLtractEnvironment(gym.Env):
 
         return np.argmin(distances)
     
-    def cosineSimReward(self, state, nextState):
+    def cosineSimtoStreamline(self, state, nextState):
         current_index = np.min([self.points_visited,len(self.referenceStreamline_ijk)-1])
         path_vector = (nextState.getCoordinate() - state.getCoordinate()).squeeze(0)
         reference_vector = self.referenceStreamline_ijk[current_index]-self.referenceStreamline_ijk[current_index-1]
@@ -223,6 +223,11 @@ class RLtractEnvironment(gym.Env):
         past_coordinates = np.array(list(self.state_history)).flatten()
         return np.concatenate((dwi_values, past_coordinates))
 
+    def lineDistance(self, state):
+        point = geom.Point(state.getCoordinate())
+        return point.distance(self.line)
+
+
     # reset the game and returns the observed data from the last episode
     def reset(self, streamline_index=None):       
         file_sl = StreamlinesFromFileTracker(self.pReferenceStreamlines)
@@ -252,6 +257,9 @@ class RLtractEnvironment(gym.Env):
 
         #self.state_history = []
         #self.state_history.append(self.state)
+
+        coords = self.referenceStreamline_ijk
+        self.line = geom.LineString(coords)
 
         self.step_angles = []
 
