@@ -18,6 +18,8 @@ from ._state import TractographyState
 
 import shapely.geometry as geom
 
+from collections import deque
+
 class RLtractEnvironment(gym.Env):
     def __init__(self, device, stepWidth = 1, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, pReferenceStreamlines = "data/HCP307200_DTI_smallSet.vtk"):
         #data/HCP307200_DTI_min40.vtk => 5k streamlines
