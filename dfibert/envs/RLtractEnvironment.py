@@ -54,7 +54,10 @@ class RLtractEnvironment(gym.Env):
         
         #self.state = self.reset()
         self.reset()
-        self.observation_space = Box(low=0, high=150, shape=self.reset().shape)
+        
+        obs_shape = self.getObservationFromState(self.state).shape
+        
+        self.observation_space = Box(low=0, high=150, shape=obs_shape)
 
         self.max_mean_step_angle = 0.82
         self.max_step_angle = 1.59
@@ -106,12 +109,12 @@ class RLtractEnvironment(gym.Env):
             return  self.prepare_state(self.state), -100., True, {}
 
         
-        self.state_history.append(nextState.getCoordinate().numpy())
+        self.state_history.append(nextState)
 
         #check if angle between actions is too large
         step_cosine_similarity = 1.
         if self.stepCounter > 1:
-            past_path = torch.from_numpy(list(self.state_history)[2] - list(self.state_history)[1])
+            past_path = list(self.state_history)[2] - list(self.state_history)[1]
             current_path = nextState.getCoordinate() - self.state.getCoordinate()
             print("past path: ", past_path)
             print("current_path: ", current_path)
@@ -148,7 +151,7 @@ class RLtractEnvironment(gym.Env):
         self.state = nextState
         #self.state_history.append(nextState)
         # return step information
-        return self.prepare_state(self.state), rewardNextState.float().item(), done, {}
+        return nextState, rewardNextState.float().item(), done, {}
 
     def _correct_direction(self, action_vector):
         # handle keeping the agent to go in the direction we want
@@ -220,7 +223,7 @@ class RLtractEnvironment(gym.Env):
     def arccos(self, angle):
         return torch.arccos(angle)
 
-    def prepare_state(self, state):
+    def getObservationFromState(self, state):
         dwi_values = state.getValue().flatten()
         past_coordinates = np.array(list(self.state_history)).flatten()
         return np.concatenate((dwi_values, past_coordinates))
@@ -236,6 +239,9 @@ class RLtractEnvironment(gym.Env):
         file_sl.track()
         
         tracked_streamlines = file_sl.get_streamlines()
+        
+        print("No. streamlines: " + str(tracked_streamlines))
+        
         if streamline_index == None:
             streamline_index = np.random.randint(len(tracked_streamlines))
         #print("Reset to streamline %d/%d" % (streamline_index+1, len(tracked_streamlines)))
@@ -267,10 +273,11 @@ class RLtractEnvironment(gym.Env):
 
         self.state_history = deque(maxlen=4)
         while len(self.state_history) != 4:
-            self.state_history.append(self.state.getCoordinate().numpy())
+            self.state_history.append(self.state)
 
+        return self.state
         
-        return self.prepare_state(self.state)
+        #return self.prepare_state(self.state)
 
 
     def render(self, mode="human"):
