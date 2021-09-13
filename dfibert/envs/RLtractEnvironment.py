@@ -89,7 +89,7 @@ class RLtractEnvironment(gym.Env):
         distTerminal = self.rewardForTerminalState(self.state)
         if distTerminal < self.maxL2dist_to_State:
                 print("Defi reached the terminal state!")
-                return self.prepare_state(self.state), 1., True, {}    
+                return self.state, 1., True, {}    
         # if action == (self.action_space.n - 1):
         #     distTerminal = self.rewardForTerminalState(self.state)
         #     if distTerminal < self.maxL2dist_to_State:
@@ -106,7 +106,7 @@ class RLtractEnvironment(gym.Env):
         if nextState.getValue() is None:
             #rewardNextState = self.rewardForTerminalState(nextState)
             print("Defi left brain mask")
-            return  self.prepare_state(self.state), -100., True, {}
+            return  self.state, -100., True, {}
 
         
         self.state_history.append(nextState)
@@ -116,10 +116,10 @@ class RLtractEnvironment(gym.Env):
         if self.stepCounter > 1:
             past_path = list(self.state_history)[2] - list(self.state_history)[1]
             current_path = nextState.getCoordinate() - self.state.getCoordinate()
-            print("past path: ", past_path)
-            print("current_path: ", current_path)
+            #print("past path: ", past_path)
+            #print("current_path: ", current_path)
             step_cosine_similarity = self.cosineSimilarity(past_path, current_path)
-            print("step cosine sim: ", step_cosine_similarity)
+            #print("step cosine sim: ", step_cosine_similarity)
             step_angle = self.arccos(step_cosine_similarity)
             if step_angle > self.max_step_angle:
                 print("Angle of past to current action too high!")
@@ -144,7 +144,7 @@ class RLtractEnvironment(gym.Env):
                 print("Defi got close to a state further down the stream line!")
 
         streamline_cosine_similarity = self.cosineSimtoStreamline(self.state, nextState)
-        print("Cosine sim to streamline: ", streamline_cosine_similarity)
+        #print("Cosine sim to streamline: ", streamline_cosine_similarity)
         rewardNextState = streamline_cosine_similarity * step_cosine_similarity
 
         
