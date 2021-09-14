@@ -152,7 +152,7 @@ class RLtractEnvironment(gym.Env):
         current_index = np.min([self.closestStreamlinePoint(self.state) + 1, len(self.referenceStreamline_ijk)-1])
         rewardNextState = self.rewardForState(nextState)
         if action == (self.action_space.n - 1):
-          if distTerminal < self.maxL2dist_to_State:
+          if distTerminal > self.maxL2dist_to_State:
               rewardNextState = -1.
         
         self.state = nextState
