@@ -59,7 +59,7 @@ class RLtractEnvironment(gym.Env):
         
         self.observation_space = Box(low=0, high=150, shape=obs_shape)
 
-        self.max_mean_step_angle = 0.82
+        self.max_mean_step_angle = 1.5
         self.max_step_angle = 1.59
 
         
@@ -112,46 +112,53 @@ class RLtractEnvironment(gym.Env):
         self.state_history.append(nextState)
 
         #check if angle between actions is too large
-        step_cosine_similarity = 1.
-        if self.stepCounter > 1:
-            past_path = list(self.state_history)[2] - list(self.state_history)[1]
-            current_path = nextState.getCoordinate() - self.state.getCoordinate()
-            #print("past path: ", past_path)
-            #print("current_path: ", current_path)
-            step_cosine_similarity = self.cosineSimilarity(past_path, current_path)
-            #print("step cosine sim: ", step_cosine_similarity)
-            step_angle = self.arccos(step_cosine_similarity)
-            if step_angle > self.max_step_angle:
-                print("Angle of past to current action too high!")
-                done = True
+        # step_cosine_similarity = 1.
+        # if self.stepCounter > 1:
+        #     past_path = list(self.state_history)[2] - list(self.state_history)[1]  ### todo
+        #     current_path = nextState.getCoordinate() - self.state.getCoordinate()
+        #     #print("past path: ", past_path)
+        #     #print("current_path: ", current_path)
+        #     step_cosine_similarity = self.cosineSimilarity(past_path, current_path)
+        #     #print("step cosine sim: ", step_cosine_similarity)
+        #     step_angle = self.arccos(step_cosine_similarity)
+        #     if step_angle > self.max_step_angle:
+        #         print("Angle of past to current action too high!")
+        #         done = True
 
-            self.step_angles.append(step_angle)
+        #     self.step_angles.append(step_angle)
 
-            if np.mean(self.step_angles) > self.max_mean_step_angle:
-                print("Mean of all step angles too high! Step counter: {}, Mean: {}".format(self.stepCounter, np.mean(self.step_angles)))
-                done = True
+        #     if np.mean(self.step_angles) > self.max_mean_step_angle:
+        #         print("Mean of all step angles too high! Step counter: {}, Mean: {}".format(self.stepCounter, np.mean(self.step_angles)))
+        #         done = True
         
+        # # rewardNextState = self.rewardForState(nextState)
+        # # if rewardNextState > 0.:
+        # #     self.points_visited += 1
+        # # else:
+        # #     lower_index = np.min([self.points_visited+1, len(self.referenceStreamline_ijk)-1])
+        # #     upper_index = np.min([self.points_visited+4, len(self.referenceStreamline_ijk)-1])
+        # #     next_l2_distances = [torch.dist(self.referenceStreamline_ijk[i], nextState.getCoordinate(), p=2) for i in range(lower_index, upper_index)]
+        # #     if any(distance < self.maxL2dist_to_State for distance in next_l2_distances):
+        # #         rewardNextState = 1.
+        # #         self.points_visited += 1
+        # #         print("Defi got close to a state further down the stream line!")
+
+        # streamline_cosine_similarity = self.cosineSimtoStreamline(self.state, nextState)
+        # # #print("Cosine sim to streamline: ", streamline_cosine_similarity)
+        # rewardNextState = streamline_cosine_similarity * step_cosine_similarity
+
+        # #rewardNextState = 1 - self.lineDistance(nextState)
+        
+        current_index = np.min([self.closestStreamlinePoint(self.state) + 1, len(self.referenceStreamline_ijk)-1])
         rewardNextState = self.rewardForState(nextState)
-        if rewardNextState > 0.:
-            self.points_visited += 1
-        else:
-            lower_index = np.min([self.points_visited+1, len(self.referenceStreamline_ijk)-1])
-            upper_index = np.min([self.points_visited+4, len(self.referenceStreamline_ijk)-1])
-            next_l2_distances = [torch.dist(self.referenceStreamline_ijk[i], nextState.getCoordinate(), p=2) for i in range(lower_index, upper_index)]
-            if any(distance < self.maxL2dist_to_State for distance in next_l2_distances):
-                rewardNextState = 1.
-                self.points_visited += 1
-                print("Defi got close to a state further down the stream line!")
-
-        streamline_cosine_similarity = self.cosineSimtoStreamline(self.state, nextState)
-        #print("Cosine sim to streamline: ", streamline_cosine_similarity)
-        rewardNextState = streamline_cosine_similarity * step_cosine_similarity
-
+        if action == (self.action_space.n - 1):
+          if distTerminal < self.maxL2dist_to_State:
+              rewardNextState = -1.
         
         self.state = nextState
         #self.state_history.append(nextState)
         # return step information
-        return nextState, rewardNextState.float().item(), done, {}
+        return nextState, rewardNextState, done, {}
 
     def _correct_direction(self, action_vector):
         # handle keeping the agent to go in the direction we want
@@ -166,19 +173,27 @@ class RLtractEnvironment(gym.Env):
 
     def _get_best_action(self):
         distances = []
-        current_index = np.min([self.points_visited, len(self.referenceStreamline_ijk)-1])
+        current_index = np.min([self.closestStreamlinePoint(self.state) + 1, len(self.referenceStreamline_ijk)-1])
+        # current_index = np.min([self.points_visited, len(self.referenceStreamline_ijk)-1]
+        #if self.rewardForTerminalState(self.state) < self.maxL2dist_to_State:
+        #    return self.action_space.n - 1
+        
         for i in range(self.action_space.n):
             action_vector = self.directions[i]
             action_vector = self._correct_direction(action_vector)
-
             positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
+            # nextState = TractographyState(positionNextState, self.interpolateDWIatState)
+            # distances.append(self.lineDistance(nextState))                                               # array aus line distances, dann argmin für beste aktion
+
+            # positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
             l2_distance = torch.dist(self.referenceStreamline_ijk[current_index], positionNextState.view(-1,3), p=2)
             distances.append(l2_distance)
 
         return np.argmin(distances)
     
     def cosineSimtoStreamline(self, state, nextState):
-        current_index = np.min([self.points_visited,len(self.referenceStreamline_ijk)-1])
+        #current_index = np.min([self.points_visited,len(self.referenceStreamline_ijk)-1])
+        current_index = np.min([self.closestStreamlinePoint(self.state) + 1, len(self.referenceStreamline_ijk)-1])
         path_vector = (nextState.getCoordinate() - state.getCoordinate()).squeeze(0)
         reference_vector = self.referenceStreamline_ijk[current_index]-self.referenceStreamline_ijk[current_index-1]
         cosine_sim = torch.nn.functional.cosine_similarity(path_vector, reference_vector, dim=0)
@@ -198,18 +213,19 @@ class RLtractEnvironment(gym.Env):
         #
         # We will be normalising the distance wrt. to LeakyRelu activation function.
         #print(state.getCoordinate())
-        current_index = np.min([self.points_visited, len(self.referenceStreamline_ijk)-1])
+        #current_index = np.min([self.points_visited, len(self.referenceStreamline_ijk)-1])
+        current_index = np.min([self.closestStreamlinePoint(self.state) + 1, len(self.referenceStreamline_ijk)-1])
         qry_pt = state.getCoordinate().view(-1,3)
         self.l2_distance = torch.dist(self.referenceStreamline_ijk[current_index], qry_pt, p=2)
 
-        if self.l2_distance > 2.5:
-            rewardNextState = -1.
-        elif self.l2_distance < self.maxL2dist_to_State:
-            rewardNextState = 1.
-        else:
-            rewardNextState = 0.
+        # if self.l2_distance > 2.5:
+        #     rewardNextState = -1.
+        # elif self.l2_distance < self.maxL2dist_to_State:
+        #     rewardNextState = 1.
+        # else:
+        #     rewardNextState = 0.
         
-        return rewardNextState
+        return 1 - self.l2_distance
  
 
     def rewardForTerminalState(self, state):
@@ -229,9 +245,19 @@ class RLtractEnvironment(gym.Env):
         return np.concatenate((dwi_values, past_coordinates))
 
     def lineDistance(self, state):
-        point = geom.Point(state.getCoordinate())
-        return point.distance(self.line)
+        #point = geom.Point(state.getCoordinate())
+        #return point.distance(self.line)
+        point = geom.Point(self.state.getCoordinate())
+        
+        # our action should be closest to the optimal point on our streamline
+        p_streamline = self.line.interpolate(self.stepCounter * self.stepWidth)
+        
+        return p_streamline.distance(point)
 
+    def closestStreamlinePoint(self, state):
+        distances = torch.cdist(torch.FloatTensor([self.line.coords[:]]), state.getCoordinate().unsqueeze(dim=0).float(), p=2,).squeeze(0)
+        index = torch.argmin(distances)
+        return index
 
     # reset the game and returns the observed data from the last episode
     def reset(self, streamline_index=None):       
@@ -240,7 +266,7 @@ class RLtractEnvironment(gym.Env):
         
         tracked_streamlines = file_sl.get_streamlines()
         
-        print("No. streamlines: " + str(tracked_streamlines))
+        #print("No. streamlines: " + str(tracked_streamlines))
         
         if streamline_index == None:
             streamline_index = np.random.randint(len(tracked_streamlines))
