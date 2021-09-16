@@ -9,31 +9,34 @@ import random
 import os, sys
 sys.path.insert(0,'..')
 
-from dfibert.tracker.nn.rl import Agent, Action_Scheduler
+from dfibert.tracker.nn.rl import Agent, Action_Scheduler, DQN
 
 import dfibert.envs.RLtractEnvironment as RLTe
 
 
-def save_model(path_checkpoint, model, epoch, loss):
+def save_model(path_checkpoint, model, epoch, mean_reward, epsilon):
     print("Writing checkpoint to %s" % (path_checkpoint))
     checkpoint = {}
     checkpoint["model"] = model.state_dict()
     checkpoint["epoch"] = epoch
-    checkpoint["loss"] = loss
+    checkpoint["mean_reward"] = mean_reward
+    checkpoint["epsilon"] = epsilon
     torch.save(checkpoint, path_checkpoint)
 
 
-def load_model(path_checkpoint, model):
+def load_model(path_checkpoint):
     print("Loading checkpoint from %s" % (path_checkpoint))
-    cp = torch.load(path_checkpoint)
-    model.load_state_dict(checkpoint['model'])
+    checkpoint = torch.load(path_checkpoint)
+    #model.load_state_dict(checkpoint['model'])
+    model = checkpoint['model']
     epoch = checkpoint['epoch']
-    loss = checkpoint['loss']
+    mean_reward = checkpoint['mean_reward']
+    epsilon = checkpoint['epsilon']
 
-    return model, epoch, loss
+    return model, epoch, mean_reward, epsilon
 
 
-def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, start_learning=10000, eps_annealing_steps=100000, eps_final=0.1, eps_final_step=0.01, gamma=0.99, agent_history_length=1, evaluate_every=20000, eval_runs=5, network_update_every=10000, max_episode_length=200, learning_rate=0.0000625):
+def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, replay_memory_size=20000, start_learning=10000, eps_annealing_steps=100000, eps_final=0.1, eps_final_step=0.01, gamma=0.99, agent_history_length=1, evaluate_every=20000, eval_runs=5, network_update_every=10000, max_episode_length=200, learning_rate=0.0000625, model=None):
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Device..", device)
@@ -42,18 +45,18 @@ def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, star
     print("..done!")
     n_actions = env.action_space.n
 
-    print("Init agent")
+    print("Init agent..")
     state = env.reset().getValue()
     agent = Agent(n_actions=n_actions, inp_size=state.shape, device=device, gamma=gamma, agent_history_length=agent_history_length, memory_size=replay_memory_size, batch_size=batch_size, learning_rate=learning_rate)
-
+    if model != None:
+        agent.main_dqn.load_state_dict(model)
+        agent.target_dqn.load_state_dict(model)
     #print("Init epsilon-greedy action scheduler")
     #action_scheduler = Action_Scheduler(num_actions=n_actions, max_steps=max_steps, eps_annealing_steps=eps_annealing_steps, replay_memory_start_size=start_learning, model=agent.main_dqn)
 
-    step_counter = 0
+    #step_counter = 0
     eps_rewards = []
     episode_lengths = []
-
-    eps = 1.0
 
     print("Start training...")
     while step_counter < max_steps:
@@ -105,18 +108,11 @@ def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, star
                 # optimize agent after certain amount of steps
                 if step_counter > start_learning and step_counter % 4 == 0:
                     
-                    # original optimization function
                     #agent.optimize()
                     
                     ### debugging optimization function
                     
                     states, actions, rewards, new_states, terminal_flags = agent.replay_memory.get_minibatch()
-                    
-                    #states = torch.tensor(states)#.view(replay_memory.batch_size, -1) # 1, -1
-                    #next_states = torch.tensor(new_states)#.view(replay_memory.batch_size, -1)
-                    #actions = torch.LongTensor(actions)
-                    #rewards = torch.tensor(rewards)
-                    #terminal_flags = torch.BoolTensor(terminal_flags)
 
                     states = torch.from_numpy(states).to(device)
                     next_states = torch.from_numpy(new_states).to(device)
@@ -149,9 +145,11 @@ def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, star
             # keep track of past episode rewards
             eps_rewards.append(episode_reward_sum)
             if len(eps_rewards) % 20 == 0:
-                print("{}, done {} episodes, {}, current eps {}".format(step_counter, len(eps_rewards), np.mean(eps_rewards[-100:]), eps))#action_scheduler.eps_current))
+                with open(path+'/logs/rewards.dat', 'a') as reward_file:
+                    print("[{}] {}, {}".format(len(eps_rewards), step_counter, np.mean(eps_rewards[-100:])), file=reward_file)
+                print("{}, done {} episodes, {}, current epsilon {}".format(step_counter, len(eps_rewards), np.mean(eps_rewards[-100:]), eps))#action_scheduler.eps_current))
                 p_cp = '%s/checkpoints/defi_%d_%.2f.pt' % (path, step_counter, np.mean(eps_rewards[-100:]))
-                save_model(p_cp, agent.main_dqn, step_counter, np.mean(eps_rewards[-100:]))
+                save_model(p_cp, agent.main_dqn, step_counter, np.mean(eps_rewards[-100:]), eps)
                 
         ## evaluation        
         eval_rewards = []
@@ -190,7 +188,6 @@ def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, star
         
         print("Evaluation score:", np.mean(eval_rewards))
         print("{} of {} episodes ended close to / at the final state.".format(episode_final, eval_runs))
-        # TODO: add real checkpointing function
         torch.save(agent.main_dqn.state_dict(), path+'/checkpoints/defi_{}_reward_{:.2f}.pth'.format(step_counter, np.mean(eval_rewards)))
 
 if __name__ == "__main__":
@@ -212,11 +209,26 @@ if __name__ == "__main__":
     
     parser.add_argument("--path", default=".", type=str, help="Set default saving path of logs and checkpoints")
 
+    parser.add_argument("--resume_training", dest="resume", action='store_true', help="Load checkpoint from path folder and resume training")
+
     args = parser.parse_args()
     os.makedirs(args.path+'/checkpoints', exist_ok=True)
     os.makedirs(args.path+'/logs', exist_ok=True)
 
+    model = None
+    epsilon = 1.0
+    step_counter = 0
+    if args.resume:
+        import glob
+        paths = glob.glob(args.path+'/checkpoints/*.pt')
+        p_cp = max(paths, key=os.path.getctime)
+        model, step_counter, mean_reward, epsilon = load_model(p_cp)
+
+        args.start_learning += step_counter
+        args.max_steps += step_counter
+
+
     #print(args.replay_memory_size)
-    train(args.path, max_steps=args.max_steps,start_learning=args.start_learning ,replay_memory_size=args.replay_memory_size, batch_size=args.batch_size, eps_annealing_steps=args.eps_annealing_steps, eps_final=args.eps_final, eps_final_step=args.eps_final_step, gamma=args.gamma, agent_history_length=args.agent_history_length, evaluate_every=args.evaluate_every, eval_runs=args.eval_runs, network_update_every=args.network_update_every, max_episode_length=args.max_episode_length, learning_rate=args.learning_rate)
+    train(args.path, step_counter=step_counter, eps=epsilon, model=model, max_steps=args.max_steps,start_learning=args.start_learning ,replay_memory_size=args.replay_memory_size, batch_size=args.batch_size, eps_annealing_steps=args.eps_annealing_steps, eps_final=args.eps_final, eps_final_step=args.eps_final_step, gamma=args.gamma, agent_history_length=args.agent_history_length, evaluate_every=args.evaluate_every, eval_runs=args.eval_runs, network_update_every=args.network_update_every, max_episode_length=args.max_episode_length, learning_rate=args.learning_rate)
     
         
