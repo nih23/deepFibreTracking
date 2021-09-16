@@ -14,9 +14,29 @@ from dfibert.tracker.nn.rl import Agent, Action_Scheduler
 import dfibert.envs.RLtractEnvironment as RLTe
 
 
+def save_model(path_checkpoint, model, epoch, loss):
+    print("Writing checkpoint to %s" % (path_checkpoint))
+    checkpoint = {}
+    checkpoint["model"] = model.state_dict()
+    checkpoint["epoch"] = epoch
+    checkpoint["loss"] = loss
+    torch.save(checkpoint, path_checkpoint)
+
+
+def load_model(path_checkpoint, model):
+    print("Loading checkpoint from %s" % (path_checkpoint))
+    cp = torch.load(path_checkpoint)
+    model.load_state_dict(checkpoint['model'])
+    epoch = checkpoint['epoch']
+    loss = checkpoint['loss']
+
+    return model, epoch, loss
+
+
 def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, start_learning=10000, eps_annealing_steps=100000, eps_final=0.1, eps_final_step=0.01, gamma=0.99, agent_history_length=1, evaluate_every=20000, eval_runs=5, network_update_every=10000, max_episode_length=200, learning_rate=0.0000625):
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print("Device..", device)
     print("Init environment..")
     env = RLTe.RLtractEnvironment(stepWidth=0.1, action_space=20, maxL2dist_to_State=0.2, device = 'cpu', pReferenceStreamlines='data/HCP307200_DTI_min40.vtk')
     print("..done!")
@@ -130,6 +150,8 @@ def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, star
             eps_rewards.append(episode_reward_sum)
             if len(eps_rewards) % 20 == 0:
                 print("{}, done {} episodes, {}, current eps {}".format(step_counter, len(eps_rewards), np.mean(eps_rewards[-100:]), eps))#action_scheduler.eps_current))
+                p_cp = '%s/checkpoints/defi_%d_%.2f.pt' % (path, step_counter, np.mean(eps_rewards[-100:]))
+                save_model(p_cp, agent.main_dqn, step_counter, np.mean(eps_rewards[-100:]))
                 
         ## evaluation        
         eval_rewards = []
