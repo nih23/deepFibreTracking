@@ -14,21 +14,23 @@ from dfibert.tracker.nn.rl import Agent, Action_Scheduler, DQN
 import dfibert.envs.RLtractEnvironment as RLTe
 
 
-def save_model(path_checkpoint, model, epoch, mean_reward, epsilon):
+def save_model(path_checkpoint, model, epoch, mean_reward, epsilon, n_actions, state_shape):
     print("Writing checkpoint to %s" % (path_checkpoint))
     checkpoint = {}
     checkpoint["model"] = model.state_dict()
     checkpoint["epoch"] = epoch
     checkpoint["mean_reward"] = mean_reward
     checkpoint["epsilon"] = epsilon
+    checkpoint["state_shape"] = state_shape
+    checkpoint["n_actions"] = n_actions
     torch.save(checkpoint, path_checkpoint)
 
 
 def load_model(path_checkpoint):
     print("Loading checkpoint from %s" % (path_checkpoint))
     checkpoint = torch.load(path_checkpoint)
-    #model.load_state_dict(checkpoint['model'])
-    model = checkpoint['model']
+    model = DQN(n_actions=checkpoint['n_actions'], input_shape=np.prod(checkpoint["state_shape"]))
+    model.load_state_dict(checkpoint['model'])
     epoch = checkpoint['epoch']
     mean_reward = checkpoint['mean_reward']
     epsilon = checkpoint['epsilon']
@@ -49,8 +51,8 @@ def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, repla
     state = env.reset().getValue()
     agent = Agent(n_actions=n_actions, inp_size=state.shape, device=device, gamma=gamma, agent_history_length=agent_history_length, memory_size=replay_memory_size, batch_size=batch_size, learning_rate=learning_rate)
     if model != None:
-        agent.main_dqn.load_state_dict(model)
-        agent.target_dqn.load_state_dict(model)
+        agent.main_dqn.load_state_dict(model.state_dict())
+        agent.target_dqn.load_state_dict(model.state_dict())
     #print("Init epsilon-greedy action scheduler")
     #action_scheduler = Action_Scheduler(num_actions=n_actions, max_steps=max_steps, eps_annealing_steps=eps_annealing_steps, replay_memory_start_size=start_learning, model=agent.main_dqn)
 
@@ -149,7 +151,7 @@ def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, repla
                     print("[{}] {}, {}".format(len(eps_rewards), step_counter, np.mean(eps_rewards[-100:])), file=reward_file)
                 print("{}, done {} episodes, {}, current epsilon {}".format(step_counter, len(eps_rewards), np.mean(eps_rewards[-100:]), eps))#action_scheduler.eps_current))
                 p_cp = '%s/checkpoints/defi_%d_%.2f.pt' % (path, step_counter, np.mean(eps_rewards[-100:]))
-                save_model(p_cp, agent.main_dqn, step_counter, np.mean(eps_rewards[-100:]), eps)
+                save_model(p_cp, agent.main_dqn, step_counter, np.mean(eps_rewards[-100:]), eps, n_actions, np.array(state.getValue().shape))
                 
         ## evaluation        
         eval_rewards = []
