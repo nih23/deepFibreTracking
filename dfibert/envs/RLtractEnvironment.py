@@ -6,6 +6,7 @@ import numpy as np
 
 from dipy.data import get_sphere
 from dipy.data import HemiSphere, Sphere
+from dipy.core.sphere import disperse_charges
 import torch
 
 
@@ -32,15 +33,15 @@ class RLtractEnvironment(gym.Env):
         self.dataset.normalize() #normalize HCP data
         
         self.stepWidth = stepWidth
-        self.dtype = torch.FloatTensor
+        self.dtype = torch.FloatTensor # vs. torch.cuda.FloatTensor
         #sphere = HemiSphere(xyz=res)#get_sphere("repulsion100")
-        n_pts = action_space - 1                                    ## added action_space variable for flexible debugging
         np.random.seed(42)
-        theta = np.pi * np.random.rand(n_pts)
-        phi = 2 * np.pi * np.random.rand(n_pts)
-        sphere = HemiSphere(theta=theta, phi=phi)#Sphere(theta=theta, phi=phi)
+        
+        phi = np.pi * np.random.rand(action_space)
+        theta = 2 * np.pi * np.random.rand(action_space)
+        sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
+        sphere, potential = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
         self.directions = sphere.vertices
-        self.directions = np.concatenate((self.directions, np.array([[0.0, 0.0, 0.0]])))
         #self.directions = sphere.vertices #res
         noActions, _ = self.directions.shape
         #noActions = len(self.directions)
@@ -55,6 +56,12 @@ class RLtractEnvironment(gym.Env):
 
         self.maxSteps = 2000
         
+        # grab streamlines from file
+        file_sl = StreamlinesFromFileTracker(self.pReferenceStreamlines)
+        file_sl.track()
+        self.tracked_streamlines = file_sl.get_streamlines()
+
+        
         #self.state = self.reset()
         self.reset()
         
@@ -66,14 +73,10 @@ class RLtractEnvironment(gym.Env):
         self.max_step_angle = 1.59
         self.max_dist_to_referenceStreamline = 0.1
         
-        # grab streamlines from file
-        file_sl = StreamlinesFromFileTracker(self.pReferenceStreamlines)
-        file_sl.track()
-        tracked_streamlines = file_sl.get_streamlines()
 
 
         # convert all streamlines of our dataset into IJK & Shapely LineString format
-        lines = [geom.LineString(self.dataset.to_ijk(line)) for line in tracked_streamlines]
+        lines = [geom.LineString(self.dataset.to_ijk(line)) for line in self.tracked_streamlines]
 
         # build search tree to locate nearest streamlines
         self.tree = STRtree(lines)
@@ -101,32 +104,29 @@ class RLtractEnvironment(gym.Env):
         if self.stepCounter >= self.maxSteps:
             done = True
         
+        #@TODO Nico: get rid of that
         distTerminal = self.rewardForTerminalState(self.state)
         if distTerminal < self.maxL2dist_to_State:
-                print("Defi reached the terminal state!")
-                return self.state, 1., True, {}    
+                #Defi reached the terminal state
+                print('_', end='', flush=True)
+                return self.state, 0., True, {}    
 
         action_vector = self.directions[action]
         action_vector = self._correct_direction(action_vector)
 
         positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
-        #positionNextState = self.state.getCoordinate() + action    # <- for continous action space
         nextState = TractographyState(positionNextState, self.interpolateDWIatState)
+        
+        #@TODO Nico: get rid of that
         if nextState.getValue() is None:
-            #rewardNextState = self.rewardForTerminalState(nextState)
-            print("Defi left brain mask")
-            return self.state, -100., True, {}
+            #Defi left brain mask
+            print('^', end='', flush=True)
+            return self.state, 0., True, {}
 
         
         self.state_history.append(nextState)
         
-        current_index = np.min([self.closestStreamlinePoint(self.state) + 1, len(self.referenceStreamline_ijk)-1])
         rewardNextState = self.rewardForState(nextState)
-        
-        # check if decision to end tracking was correct. return negative reward if Defi stopped too early/late
-        if action == (self.action_space.n - 1):
-            if distTerminal > self.maxL2dist_to_State:
-                rewardNextState = -1.
         
         self.state = nextState
         
@@ -135,12 +135,11 @@ class RLtractEnvironment(gym.Env):
         # for that move.
         cur_pos_pt = geom.Point(nextState.getCoordinate())
         if(self.line.distance(cur_pos_pt) > self.max_dist_to_referenceStreamline):
-            
             #print("Defi left reference streamline: switching to closest one.")
             print('#', end='', flush=True)
             line_nearest = self.tree.nearest(cur_pos_pt)
             self.switchStreamline(line_nearest)
-            rewardNextState -= 1
+            rewardNextState -= 0.1
         
         return nextState, rewardNextState, done, {}
 
@@ -159,7 +158,6 @@ class RLtractEnvironment(gym.Env):
     def _get_best_action(self):
         distances = []
         current_index = np.min([self.closestStreamlinePoint(self.state) + 1, len(self.referenceStreamline_ijk)-1])
-
         
         for i in range(self.action_space.n):
             action_vector = self.directions[i]
@@ -191,18 +189,9 @@ class RLtractEnvironment(gym.Env):
         # to the LeakyReLU is gonna result in positive rewards, too
         #
         # We will be normalising the distance wrt. to LeakyRelu activation function.
-        #print(state.getCoordinate())
-        #current_index = np.min([self.points_visited, len(self.referenceStreamline_ijk)-1])
-        current_index = np.min([self.closestStreamlinePoint(self.state) + 1, len(self.referenceStreamline_ijk)-1])
-        qry_pt = state.getCoordinate().view(-1,3)
-        self.l2_distance = torch.dist(self.referenceStreamline_ijk[current_index], qry_pt, p=2)
-
-        # if self.l2_distance > 2.5:
-        #     rewardNextState = -1.
-        # elif self.l2_distance < self.maxL2dist_to_State:
-        #     rewardNextState = 1.
-        # else:
-        #     rewardNextState = 0.
+        
+        distances = torch.cdist(torch.FloatTensor([self.line.coords[:]]), state.getCoordinate().unsqueeze(dim=0).float(), p=2,).squeeze(0)
+        self.l2_distance = torch.min(distances)
         
         return 1 - self.l2_distance
  
@@ -223,6 +212,7 @@ class RLtractEnvironment(gym.Env):
         past_coordinates = np.array(list(self.state_history)).flatten()
         return np.concatenate((dwi_values, past_coordinates))
 
+    '''
     def lineDistance(self, state):
         #point = geom.Point(state.getCoordinate())
         #return point.distance(self.line)
@@ -233,13 +223,15 @@ class RLtractEnvironment(gym.Env):
         
         return p_streamline.distance(point)
 
+    
     def closestStreamlinePoint(self, state):
         distances = torch.cdist(torch.FloatTensor([self.line.coords[:]]), state.getCoordinate().unsqueeze(dim=0).float(), p=2,).squeeze(0)
         index = torch.argmin(distances)
         return index
-    
+    '''
     
     # switch reference streamline of environment
+    ##@TODO: optimize runtime
     def switchStreamline(self, streamline):
         self.line = streamline        
         self.referenceStreamline_ijk = self.dtype(np.array(streamline.coords)).to(self.device)
@@ -248,18 +240,10 @@ class RLtractEnvironment(gym.Env):
 
 
     # reset the game and returns the observed data from the last episode
-    def reset(self, streamline_index=None):       
-        file_sl = StreamlinesFromFileTracker(self.pReferenceStreamlines)
-        file_sl.track()
-        
-        tracked_streamlines = file_sl.get_streamlines()
-        
-        #print("No. streamlines: " + str(tracked_streamlines))
-        
+    def reset(self, streamline_index=None):              
         if streamline_index == None:
-            streamline_index = np.random.randint(len(tracked_streamlines))
-        #print("Reset to streamline %d/%d" % (streamline_index+1, len(tracked_streamlines)))
-        referenceStreamline_ras = tracked_streamlines[streamline_index]
+            streamline_index = np.random.randint(len(self.tracked_streamlines))
+        referenceStreamline_ras = self.tracked_streamlines[streamline_index]
         referenceStreamline_ijk = self.dataset.to_ijk(referenceStreamline_ras)
         
         self.switchStreamline(geom.LineString(referenceStreamline_ijk))
@@ -276,9 +260,6 @@ class RLtractEnvironment(gym.Env):
             self.state_history.append(self.state)
         
         return self.state
-
-        
-        #return self.prepare_state(self.state)
 
 
     def render(self, mode="human"):
