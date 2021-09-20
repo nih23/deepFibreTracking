@@ -17,6 +17,9 @@ from dfibert.util import get_grid
 from ._state import TractographyState
 
 import shapely.geometry as geom
+from shapely.ops import nearest_points
+from shapely.strtree import STRtree
+
 
 from collections import deque
 
@@ -61,6 +64,19 @@ class RLtractEnvironment(gym.Env):
 
         self.max_mean_step_angle = 1.5
         self.max_step_angle = 1.59
+        self.max_dist_to_referenceStreamline = 0.1
+        
+        # grab streamlines from file
+        file_sl = StreamlinesFromFileTracker(self.pReferenceStreamlines)
+        file_sl.track()
+        tracked_streamlines = file_sl.get_streamlines()
+
+
+        # convert all streamlines of our dataset into IJK & Shapely LineString format
+        lines = [geom.LineString(self.dataset.to_ijk(line)) for line in tracked_streamlines]
+
+        # build search tree to locate nearest streamlines
+        self.tree = STRtree(lines)
 
         
     def interpolateDWIatState(self, stateCoordinates):       
@@ -77,7 +93,6 @@ class RLtractEnvironment(gym.Env):
         interpolated_dwi = np.rollaxis(interpolated_dwi,3) #CxWxHxD
         #interpolated_dwi = self.dtype(interpolated_dwi).to(self.device)
         return interpolated_dwi
-  
     
 
     def step(self, action):
@@ -90,13 +105,7 @@ class RLtractEnvironment(gym.Env):
         if distTerminal < self.maxL2dist_to_State:
                 print("Defi reached the terminal state!")
                 return self.state, 1., True, {}    
-        # if action == (self.action_space.n - 1):
-        #     distTerminal = self.rewardForTerminalState(self.state)
-        #     if distTerminal < self.maxL2dist_to_State:
-        #         print("Defi stopped at/close to the terminal state!")
-        #         return self.state, 1., True, {}
-        #    nextState = self.state
-        #else:
+
         action_vector = self.directions[action]
         action_vector = self._correct_direction(action_vector)
 
@@ -106,86 +115,56 @@ class RLtractEnvironment(gym.Env):
         if nextState.getValue() is None:
             #rewardNextState = self.rewardForTerminalState(nextState)
             print("Defi left brain mask")
-            return  self.state, -100., True, {}
+            return self.state, -100., True, {}
 
         
         self.state_history.append(nextState)
-
-        #check if angle between actions is too large
-        # step_cosine_similarity = 1.
-        # if self.stepCounter > 1:
-        #     past_path = list(self.state_history)[2] - list(self.state_history)[1]  ### todo
-        #     current_path = nextState.getCoordinate() - self.state.getCoordinate()
-        #     #print("past path: ", past_path)
-        #     #print("current_path: ", current_path)
-        #     step_cosine_similarity = self.cosineSimilarity(past_path, current_path)
-        #     #print("step cosine sim: ", step_cosine_similarity)
-        #     step_angle = self.arccos(step_cosine_similarity)
-        #     if step_angle > self.max_step_angle:
-        #         print("Angle of past to current action too high!")
-        #         done = True
-
-        #     self.step_angles.append(step_angle)
-
-        #     if np.mean(self.step_angles) > self.max_mean_step_angle:
-        #         print("Mean of all step angles too high! Step counter: {}, Mean: {}".format(self.stepCounter, np.mean(self.step_angles)))
-        #         done = True
-        
-        # # rewardNextState = self.rewardForState(nextState)
-        # # if rewardNextState > 0.:
-        # #     self.points_visited += 1
-        # # else:
-        # #     lower_index = np.min([self.points_visited+1, len(self.referenceStreamline_ijk)-1])
-        # #     upper_index = np.min([self.points_visited+4, len(self.referenceStreamline_ijk)-1])
-        # #     next_l2_distances = [torch.dist(self.referenceStreamline_ijk[i], nextState.getCoordinate(), p=2) for i in range(lower_index, upper_index)]
-        # #     if any(distance < self.maxL2dist_to_State for distance in next_l2_distances):
-        # #         rewardNextState = 1.
-        # #         self.points_visited += 1
-        # #         print("Defi got close to a state further down the stream line!")
-
-        # streamline_cosine_similarity = self.cosineSimtoStreamline(self.state, nextState)
-        # # #print("Cosine sim to streamline: ", streamline_cosine_similarity)
-        # rewardNextState = streamline_cosine_similarity * step_cosine_similarity
-
-        # #rewardNextState = 1 - self.lineDistance(nextState)
         
         current_index = np.min([self.closestStreamlinePoint(self.state) + 1, len(self.referenceStreamline_ijk)-1])
         rewardNextState = self.rewardForState(nextState)
+        
+        # check if decision to end tracking was correct. return negative reward if Defi stopped too early/late
         if action == (self.action_space.n - 1):
-          if distTerminal > self.maxL2dist_to_State:
-              rewardNextState = -1.
+            if distTerminal > self.maxL2dist_to_State:
+                rewardNextState = -1.
         
         self.state = nextState
-        #self.state_history.append(nextState)
-        # return step information
+        
+        # if defi went to a state that is way to far from our reference streamline then the trajectory is not
+        # informative anymore. There, we need to continue tracking on the closest streamline and penalize Defi
+        # for that move.
+        cur_pos_pt = geom.Point(nextState.getCoordinate())
+        if(self.line.distance(cur_pos_pt) > self.max_dist_to_referenceStreamline):
+            
+            #print("Defi left reference streamline: switching to closest one.")
+            print('#', end='', flush=True)
+            line_nearest = self.tree.nearest(cur_pos_pt)
+            self.switchStreamline(line_nearest)
+            rewardNextState -= 1
+        
         return nextState, rewardNextState, done, {}
 
+    
     def _correct_direction(self, action_vector):
         # handle keeping the agent to go in the direction we want
         if self.stepCounter <= 1:                                                               # if no past states
             last_direction = self.referenceStreamline_ijk[1] - self.referenceStreamline_ijk[0]  # get the direction in which the reference steamline is going
-        else:                                                                                   # else get the direction the agent has been going so far
+        else: # else get the direction the agent has been going so far
             last_direction = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
 
-        if np.dot(action_vector, last_direction) < 0:                                           # if the agent chooses the complete opposite direction
-            action_vector = -1 * action_vector                                                  # force it to follow the rough direction of the streamline
+        if np.dot(action_vector, last_direction) < 0: # if the agent chooses the complete opposite direction
+            action_vector = -1 * action_vector  # force it to follow the rough direction of the streamline
         return action_vector
 
     def _get_best_action(self):
         distances = []
         current_index = np.min([self.closestStreamlinePoint(self.state) + 1, len(self.referenceStreamline_ijk)-1])
-        # current_index = np.min([self.points_visited, len(self.referenceStreamline_ijk)-1]
-        #if self.rewardForTerminalState(self.state) < self.maxL2dist_to_State:
-        #    return self.action_space.n - 1
+
         
         for i in range(self.action_space.n):
             action_vector = self.directions[i]
             action_vector = self._correct_direction(action_vector)
             positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
-            # nextState = TractographyState(positionNextState, self.interpolateDWIatState)
-            # distances.append(self.lineDistance(nextState))                                               # array aus line distances, dann argmin für beste aktion
-
-            # positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
             l2_distance = torch.dist(self.referenceStreamline_ijk[current_index], positionNextState.view(-1,3), p=2)
             distances.append(l2_distance)
 
@@ -258,6 +237,15 @@ class RLtractEnvironment(gym.Env):
         distances = torch.cdist(torch.FloatTensor([self.line.coords[:]]), state.getCoordinate().unsqueeze(dim=0).float(), p=2,).squeeze(0)
         index = torch.argmin(distances)
         return index
+    
+    
+    # switch reference streamline of environment
+    def switchStreamline(self, streamline):
+        self.line = streamline        
+        self.referenceStreamline_ijk = self.dtype(np.array(streamline.coords)).to(self.device)
+        self.line = streamline
+        self.step_angles = []
+
 
     # reset the game and returns the observed data from the last episode
     def reset(self, streamline_index=None):       
@@ -273,35 +261,22 @@ class RLtractEnvironment(gym.Env):
         #print("Reset to streamline %d/%d" % (streamline_index+1, len(tracked_streamlines)))
         referenceStreamline_ras = tracked_streamlines[streamline_index]
         referenceStreamline_ijk = self.dataset.to_ijk(referenceStreamline_ras)
-        referenceStreamline_ijk = self.dtype(referenceStreamline_ijk).to(self.device)
         
-        #position_index = np.random.randint(len(referenceStreamline_ijk)-10)
-        initialPosition_ijk = referenceStreamline_ijk[0]
+        self.switchStreamline(geom.LineString(referenceStreamline_ijk))
         
         self.done = False
-        #self.referenceStreamline_ijk = self.dtype(referenceStreamline_ijk).to(self.device)
-        self.referenceStreamline_ijk = referenceStreamline_ijk
-        self.state = TractographyState(initialPosition_ijk, self.interpolateDWIatState)
-
         self.stepCounter = 0
-        
         self.reward = 0
         self.past_reward = 0
-        self.points_visited = 1#position_index
-
-        #self.state_history = []
-        #self.state_history.append(self.state)
-
-        coords = self.referenceStreamline_ijk
-        self.line = geom.LineString(coords)
-
-        self.step_angles = []
-
+        self.points_visited = 1 #position_index
+        
+        self.state = TractographyState(self.referenceStreamline_ijk[0], self.interpolateDWIatState)
         self.state_history = deque(maxlen=4)
         while len(self.state_history) != 4:
             self.state_history.append(self.state)
-
+        
         return self.state
+
         
         #return self.prepare_state(self.state)
 
