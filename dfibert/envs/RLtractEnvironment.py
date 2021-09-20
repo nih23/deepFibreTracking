@@ -29,6 +29,7 @@ class RLtractEnvironment(gym.Env):
         #data/HCP307200_DTI_min40.vtk => 5k streamlines
         print("Loading precomputed streamlines (%s) for ID %s" % (pReferenceStreamlines, dataset))
         self.device = device
+        self.device_nnsearch = "cpu"
         self.dataset = HCPDataContainer(dataset)
         self.dataset.normalize() #normalize HCP data
         
@@ -60,6 +61,7 @@ class RLtractEnvironment(gym.Env):
         file_sl = StreamlinesFromFileTracker(self.pReferenceStreamlines)
         file_sl.track()
         self.tracked_streamlines = file_sl.get_streamlines()
+        self.tracked_streamlines_torch = [torch.FloatTensor(self.dataset.to_ijk(x)).to(self.device_nnsearch) for x in self.tracked_streamlines]
 
         
         #self.state = self.reset()
@@ -71,15 +73,15 @@ class RLtractEnvironment(gym.Env):
 
         self.max_mean_step_angle = 1.5
         self.max_step_angle = 1.59
-        self.max_dist_to_referenceStreamline = 0.1
+        self.max_dist_to_referenceStreamline = 0.5 # => 0.5 average pixel distance
         
 
 
         # convert all streamlines of our dataset into IJK & Shapely LineString format
-        lines = [geom.LineString(self.dataset.to_ijk(line)) for line in self.tracked_streamlines]
+        self.lines = [geom.LineString(self.dataset.to_ijk(line)) for line in self.tracked_streamlines]
 
         # build search tree to locate nearest streamlines
-        self.tree = STRtree(lines)
+        self.tree = STRtree(self.lines)
 
         
     def interpolateDWIatState(self, stateCoordinates):       
@@ -96,6 +98,11 @@ class RLtractEnvironment(gym.Env):
         interpolated_dwi = np.rollaxis(interpolated_dwi,3) #CxWxHxD
         #interpolated_dwi = self.dtype(interpolated_dwi).to(self.device)
         return interpolated_dwi
+    
+    
+    def minDistToStreamline(self, streamline, state):
+        dist_streamline = torch.mean( (torch.FloatTensor(streamline.coords[:]) - state.getCoordinate())**2, dim = 1 )
+        return torch.min(dist_streamline)
     
 
     def step(self, action):
@@ -127,17 +134,28 @@ class RLtractEnvironment(gym.Env):
         self.state_history.append(nextState)
         
         rewardNextState = self.rewardForState(nextState)
-        
         self.state = nextState
         
         # if defi went to a state that is way to far from our reference streamline then the trajectory is not
         # informative anymore. There, we need to continue tracking on the closest streamline and penalize Defi
         # for that move.
-        cur_pos_pt = geom.Point(nextState.getCoordinate())
-        if(self.line.distance(cur_pos_pt) > self.max_dist_to_referenceStreamline):
+        if(rewardNextState < (1-self.max_dist_to_referenceStreamline)):
             #print("Defi left reference streamline: switching to closest one.")
             print('#', end='', flush=True)
-            line_nearest = self.tree.nearest(cur_pos_pt)
+            
+            ## locate closest streamline
+            with torch.no_grad():
+                dists = torch.zeros(len(self.tracked_streamlines)).to(self.device_nnsearch)
+                ref_coord = nextState.getCoordinate().unsqueeze(dim=0).float().to(self.device_nnsearch)
+
+                i=0
+                for sl in self.tracked_streamlines_torch:
+                    dists[i] = torch.min(torch.mean((sl - ref_coord)**2, dim = 1))
+                    i = i + 1
+
+                amin = torch.argmin(dists)
+                line_nearest = self.lines[amin]
+
             self.switchStreamline(line_nearest)
             rewardNextState -= 0.1
         
@@ -155,18 +173,23 @@ class RLtractEnvironment(gym.Env):
             action_vector = -1 * action_vector  # force it to follow the rough direction of the streamline
         return action_vector
 
+    
     def _get_best_action(self):
-        distances = []
-        current_index = np.min([self.closestStreamlinePoint(self.state) + 1, len(self.referenceStreamline_ijk)-1])
-        
-        for i in range(self.action_space.n):
-            action_vector = self.directions[i]
-            action_vector = self._correct_direction(action_vector)
-            positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
-            l2_distance = torch.dist(self.referenceStreamline_ijk[current_index], positionNextState.view(-1,3), p=2)
-            distances.append(l2_distance)
+        with torch.no_grad():
+            distances = []
+
+            for i in range(self.action_space.n):
+                action_vector = self.directions[i]
+                action_vector = self._correct_direction(action_vector)
+                positionNextState = self.state.getCoordinate() + self.stepWidth * action_vector
+
+                dist_streamline = torch.mean( (torch.FloatTensor(self.line.coords[:]) - positionNextState)**2, dim = 1 )
+
+                distances.append(torch.min(dist_streamline))
 
         return np.argmin(distances)
+
+    
     
     def cosineSimtoStreamline(self, state, nextState):
         #current_index = np.min([self.points_visited,len(self.referenceStreamline_ijk)-1])
@@ -174,25 +197,13 @@ class RLtractEnvironment(gym.Env):
         path_vector = (nextState.getCoordinate() - state.getCoordinate()).squeeze(0)
         reference_vector = self.referenceStreamline_ijk[current_index]-self.referenceStreamline_ijk[current_index-1]
         cosine_sim = torch.nn.functional.cosine_similarity(path_vector, reference_vector, dim=0)
-        #dist = torch.sum((self.referenceStreamline_ijk[current_index] - nextState.getCoordinate())**2)
-        #dist = torch.dist()
-        #if dist < 2.5:
-        #    dist = 0
-        #else:
-        #    dist = dist - 2.5
-        return cosine_sim#-dist
+        return cosine_sim
+
     
     def rewardForState(self, state):
-        # In general, the reward will be negative but very close to zero if the agent is 
+        # The reward will be close to one if the agent is 
         # staying close to our reference streamline.
-        # Right now, this function only returns negative rewards but simply adding some threshold 
-        # to the LeakyReLU is gonna result in positive rewards, too
-        #
-        # We will be normalising the distance wrt. to LeakyRelu activation function.
-        
-        distances = torch.cdist(torch.FloatTensor([self.line.coords[:]]), state.getCoordinate().unsqueeze(dim=0).float(), p=2,).squeeze(0)
-        self.l2_distance = torch.min(distances)
-        
+        self.l2_distance = self.minDistToStreamline(self.line, state)
         return 1 - self.l2_distance
  
 
@@ -222,20 +233,19 @@ class RLtractEnvironment(gym.Env):
         p_streamline = self.line.interpolate(self.stepCounter * self.stepWidth)
         
         return p_streamline.distance(point)
-
+    '''
     
     def closestStreamlinePoint(self, state):
         distances = torch.cdist(torch.FloatTensor([self.line.coords[:]]), state.getCoordinate().unsqueeze(dim=0).float(), p=2,).squeeze(0)
         index = torch.argmin(distances)
         return index
-    '''
+    
     
     # switch reference streamline of environment
     ##@TODO: optimize runtime
     def switchStreamline(self, streamline):
         self.line = streamline        
-        self.referenceStreamline_ijk = self.dtype(np.array(streamline.coords)).to(self.device)
-        self.line = streamline
+        self.referenceStreamline_ijk = self.dtype(np.array(streamline.coords[:])).to(self.device)
         self.step_angles = []
 
 

@@ -96,8 +96,8 @@ def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, repla
                 # get an action with epsilon-greedy strategy
                 if random.random() < eps:
                     # random vs supervised action
-                    action = np.random.randint(env.action_space.n)           # either random action
-                    #action = env._get_best_action()                         # supervised learning
+                    #action = np.random.randint(env.action_space.n)           # either random action
+                    action = env._get_best_action()                         # supervised learning
                 else:   
                     # or take action from agent
                     agent.main_dqn.eval()
@@ -166,7 +166,7 @@ def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, repla
             if len(eps_rewards) % 20 == 0:
                 with open(path+'/logs/rewards.dat', 'a') as reward_file:
                     print("[{}] {}, {}".format(len(eps_rewards), step_counter, np.mean(eps_rewards[-100:])), file=reward_file)
-                print("{}, done {} episodes, {}, current epsilon {}, av actions {}".format(step_counter, len(eps_rewards), np.mean(eps_rewards[-100:]), eps, np.mean(action_hist)))#action_scheduler.eps_current))
+                print("\n{}, done {} episodes, {}, current epsilon {}, av actions {}".format(step_counter, len(eps_rewards), np.mean(eps_rewards[-100:]), eps, np.mean(action_hist)))#action_scheduler.eps_current))
                 p_cp = '%s/checkpoints/defi_%d_%.2f.pt' % (path, step_counter, np.mean(eps_rewards[-100:]))
                 save_model(p_cp, agent.main_dqn, step_counter, np.mean(eps_rewards[-100:]), eps)
                 
@@ -205,8 +205,8 @@ def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, repla
 
             eval_rewards.append(eval_episode_reward)
         
-        print("Evaluation score:", np.mean(eval_rewards))
-        print("{} of {} episodes ended close to / at the final state.".format(episode_final, eval_runs))
+        print("\nEvaluation score:", np.mean(eval_rewards))
+        print("\n{} of {} episodes ended close to / at the final state.".format(episode_final, eval_runs))
         torch.save(agent.main_dqn.state_dict(), path+'/checkpoints/defi_{}_reward_{:.2f}.pth'.format(step_counter, np.mean(eval_rewards)))
 
 if __name__ == "__main__":
