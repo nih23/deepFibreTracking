@@ -60,8 +60,7 @@ class ReplayMemory(object):
         if self.count < self.batch_size:
             raise ValueError('Not enough memories to get a minibatch')
         
-        self._indices = np.random.randint(self.size, size=self.batch_size)    
-
+        self._indices = np.random.randint(self.count, size=self.batch_size) 
         return self.states[self._indices], self.actions[self._indices], self.rewards[self._indices], self.new_states[self._indices], self.terminal_flags[self._indices]
 
  
@@ -70,35 +69,56 @@ class DQN(nn.Module):
     Main modell class. First 4 layers are convolutional layers, after that the model is split into the
     advantage and value stream. See the documentation. The convolutional layers are initialized with Kaiming He initialization.
     """
-    def __init__(self, n_actions, in_shape, hidden=128):
-        """
-        Args:
-            n_actions: Integer, amount of possible actions of the specific environment
-            hidden: Integer, amount of hidden layers (To Do, hidden can change but split_size won't fit anymore)
-        """
-        super(DQN, self).__init__()
-        
-        self.n_actions = n_actions
-        self.hidden = hidden
-        self.in_shape = in_shape
+    # def __init__(self, input_shape, n_actions):
+    #     super(DQN, self).__init__()
 
-        self.fc_1 = nn.Linear(self.in_shape, self.hidden)
-        self.fc_2 = nn.Linear(self.hidden, self.hidden)
-        self.fc_3 = nn.Linear(self.hidden, self.hidden)
-        self.fc_4 = nn.Linear(self.hidden, self.n_actions)
+    #     self.fc = nn.Sequential(
+    #         nn.Linear(input_shape, 256),
+    #         nn.ReLU()
+    #     )
+
+    #     self.fc_adv = nn.Sequential(
+    #         nn.Linear(256, 512),
+    #         nn.ReLU(),
+    #         nn.Linear(512, n_actions)
+    #     )
+    #     self.fc_val = nn.Sequential(
+    #         nn.Linear(256, 512),
+    #         nn.ReLU(),
+    #         nn.Linear(512, 1)
+    #     )
+
+    # def forward(self, x):
+    #     x = x.reshape(x.size(0), -1)
+    #     lin_out = self.fc(x)
+    #     val = self.fc_val(lin_out)
+    #     adv = self.fc_adv(lin_out)
+    #     return val + (adv - adv.mean(dim=1, keepdim=True))
+    def __init__(self, input_shape, n_actions, hidden_size = 1024, num_hidden = 8, activation=torch.relu):
+        super(DQN, self).__init__()
+        self.linear_layers = nn.ModuleList()
+        self.activation = activation
+        self.init_layers(input_shape, n_actions, hidden_size, num_hidden)
+
+
+    def init_layers(self, input_size, output_size, hidden_size, num_hidden):
+        self.linear_layers.append(nn.Linear(input_size, hidden_size))
+        for _ in range(num_hidden):
+            self.linear_layers.append(nn.Linear(hidden_size, hidden_size))
+        self.linear_layers.append(nn.Linear(hidden_size, output_size))
+
+        for m in self.linear_layers:
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x = x.reshape(x.size(0), -1)
-        x = F.relu(self.fc_1(x))
-        x = F.relu(self.fc_2(x))
-        x = F.relu(self.fc_3(x))
-        self.q_values = self.fc_4(x)
-        return self.q_values
-
-    def predict_action(self, x):
-        q_values = self(x)
-        self.best_action = torch.argmax(q_values, 1)
-        return self.best_action
+        for i in range(len(self.linear_layers) - 1):
+            x = self.linear_layers[i](x)
+            x = self.activation(x)
+        x = self.linear_layers[-1](x)
+        return x
 
 
 class Agent():
@@ -127,18 +147,18 @@ class Agent():
         self.agent_history_length= agent_history_length
         self.gamma = gamma
         self.memory_size = memory_size
-  
+
         # Create 2 models
-        self.main_dqn = DQN(self.n_actions, np.prod(np.array(self.inp_size)), self.hidden)
-        self.target_dqn = DQN(self.n_actions, np.prod(np.array(self.inp_size)), self.hidden)
+        self.main_dqn = DQN(n_actions=self.n_actions, input_shape=np.prod(np.array(self.inp_size))).to(device)
+        self.target_dqn = DQN(n_actions=self.n_actions, input_shape=np.prod(np.array(self.inp_size))).to(device)
         # and send them to the device
-        self.main_dqn = self.main_dqn.to(self.device)
-        self.target_dqn = self.target_dqn.to(self.device)
+        #self.main_dqn = self.main_dqn.to(self.device)
+        #self.target_dqn = self.target_dqn.to(self.device)
         
         # Copy weights of the main model to the target model
         self.target_dqn.load_state_dict(self.main_dqn.state_dict())
         # and freeze target model. The model will be updated every now an then (specified in main function) 
-        self.target_dqn.eval()
+        #self.target_dqn.eval()
 
         
         self.replay_memory = ReplayMemory(size=self.memory_size, shape=self.inp_size ,agent_history_length=self.agent_history_length, batch_size=self.batch_size)
@@ -167,8 +187,8 @@ class Agent():
 
         expected_state_action_values = next_state_values.detach() * self.gamma + rewards
 
-        loss = nn.MSELoss()(state_action_values, expected_state_action_values)
-          
+        #loss = nn.MSELoss()(state_action_values, expected_state_action_values)
+        loss = torch.nn.SmoothL1Loss()(state_action_values, expected_state_action_values)  
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -224,4 +244,9 @@ class Action_Scheduler():
         if np.random.rand(1) < self.eps_current:
             return np.random.randint(0, self.num_actions)
         else:
-            return torch.argmax(self.model(state)).item()
+            with torch.no_grad():
+                q_vals = self.model(state)
+                #print("Q Values: ", q_vals)
+                action = torch.argmax(q_vals).item()
+                #print("Action: ", action )
+                return action
