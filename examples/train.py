@@ -41,10 +41,10 @@ def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, repla
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Device..", device)
     print("Init environment..")
-    env = RLTe.RLtractEnvironment(stepWidth=0.8, action_space=20, device = 'cpu', pReferenceStreamlines='dti_ijk_0.8_maxDirecGetter.vtk')
+    #env = RLTe.RLtractEnvironment(stepWidth=0.8, action_space=20, device = 'cpu', pReferenceStreamlines='data/HCP307200_CSD_min40.vtk')
+    env = RLTe.RLtractEnvironment(stepWidth=0.8, action_space=20, device = 'cpu', pReferenceStreamlines='data/dti_ijk_0.8_maxDirecGetter.vtk', tracking_in_RAS = False)
     print("..done!")
     n_actions = env.action_space.n
-
     print("Init agent..")
     state = env.reset().getValue()
     agent = Agent(n_actions=n_actions, inp_size=state.shape, device=device, gamma=gamma, agent_history_length=agent_history_length, memory_size=replay_memory_size, batch_size=batch_size, learning_rate=learning_rate)
@@ -80,9 +80,7 @@ def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, repla
             
             # reduce epsilon
             if step_counter > start_learning:
-                eps = max(eps * 0.999, 0.01)
-            
-            action_hist = []
+                eps = max(eps * 0.9999, 0.1)
             
             # play an episode
             while episode_step_counter <= 1000.:
@@ -135,11 +133,8 @@ def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, repla
                     rewards = torch.from_numpy(rewards).to(device)
                     terminal_flags = torch.from_numpy(terminal_flags).to(device)
                     
-                    
                     state_action_values = agent.main_dqn(states).gather(1, actions).squeeze(-1)
                     next_state_actions = torch.argmax(agent.main_dqn(next_states), dim=1)
-                    
-                    action_hist.append(next_state_actions.detach().view(-1).cpu().numpy())
 
                     next_state_values = agent.target_dqn(next_states).gather(1, next_state_actions.unsqueeze(-1)).squeeze(-1)
                     # 
@@ -160,18 +155,18 @@ def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, repla
                 if terminal:
                     break
                     
-            # keep track of past episode rewards
-            eps_rewards.append(episode_reward_sum)
-            if(len(eps_rewards) % 100) == 0:
+            if ((len(eps_rewards) % 100) == 0):
                 with open(path+'/logs/rewards.dat', 'a') as reward_file:
                     print("[{}] {}, {}".format(len(eps_rewards), step_counter, np.mean(eps_rewards[-100:])), file=reward_file)
-                print("\n{}, done {} episodes, {}, current epsilon {}, av actions {}".format(step_counter, len(eps_rewards), np.mean(eps_rewards[-100:]), eps, np.mean(action_hist)))#action_scheduler.eps_current))
+                print("[{}/{}] reward {} @ epsilon {}".format(step_counter, len(eps_rewards), np.mean(eps_rewards[-100:]), eps))#action_scheduler.eps_current))
 
             # save checkpoint
             if((len(eps_rewards) % 1000) == 0):
                 p_cp = '%s/checkpoints/defi_%d_%.2f.pt' % (path, step_counter, np.mean(eps_rewards[-100:]))
                 save_model(p_cp, agent.main_dqn, step_counter, np.mean(eps_rewards[-100:]), eps)
                 
+            # keep track of past episode rewards
+            eps_rewards.append(episode_reward_sum)
         ## evaluation        
         eval_rewards = []
         episode_final = 0

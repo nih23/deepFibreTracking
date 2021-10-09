@@ -163,6 +163,7 @@ class Agent():
         
         self.replay_memory = ReplayMemory(size=self.memory_size, shape=self.inp_size ,agent_history_length=self.agent_history_length, batch_size=self.batch_size)
         self.optimizer = torch.optim.Adam(self.main_dqn.parameters(), self.lr)
+        #self.optimizer = torch.optim.SGD(self.main_dqn.parameters(), self.lr)
 
     def optimize(self):
         """
@@ -187,8 +188,8 @@ class Agent():
 
         expected_state_action_values = next_state_values.detach() * self.gamma + rewards
 
-        #loss = nn.MSELoss()(state_action_values, expected_state_action_values)
-        loss = torch.nn.SmoothL1Loss()(state_action_values, expected_state_action_values)  
+        loss = nn.MSELoss()(state_action_values, expected_state_action_values)
+        #loss = torch.nn.SmoothL1Loss()(state_action_values, expected_state_action_values)  
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
