@@ -27,7 +27,7 @@ from shapely.strtree import STRtree
 from collections import deque
 
 class RLtractEnvironment(gym.Env):
-    def __init__(self, device, stepWidth = 0.8, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, pReferenceStreamlines = "data/HCP307200_DTI_smallSet.vtk", tracking_in_RAS = True, fa_threshold = 0.1, b_val = 1000):
+    def __init__(self, device, stepWidth = 0.8, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, pReferenceStreamlines = "data/HCP307200_DTI_smallSet.vtk", tracking_in_RAS = True, fa_threshold = 0.1, b_val = 1000, odf_state = True):
         print("Loading precomputed streamlines (%s) for ID %s" % (pReferenceStreamlines, dataset))
         self.device = device
         self.dataset = HCPDataContainer(dataset)
@@ -45,38 +45,39 @@ class RLtractEnvironment(gym.Env):
         sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
         sphere, potential = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
         self.sphere = sphere
-        self.sphere_odf = get_sphere('repulsion100')        
-        ## debug ##
-        #self.sphere = get_sphere('repulsion100')
-        #print("Repulsion100!")
+        self.sphere_odf = get_sphere('repulsion100')
+        self.sphere = self.sphere_odf
+        print("sphere_odf = sphere_action = repulsion100")
+        
+        ## interpolation function of state's value ##
+        self.state_interpol_fctn = self.interpolateRawDWIatState
+        if(odf_state):
+            print("Interpolating ODF as state Value")
+            self.state_interpol_fctn = self.interpolateODFatState
+
         self.directions = torch.from_numpy(self.sphere.vertices).to(device)
         noActions, _ = self.directions.shape
         self.directions_odf = torch.from_numpy(self.sphere_odf.vertices).to(device)
 
         self.action_space = Discrete(noActions) #spaces.Discrete(noActions+1)
-        #self.observation_space = Box(low=0, high=150, shape=(2700,))
         self.dwi_postprocessor = resample(sphere=get_sphere('repulsion100'))    #resample(sphere=sphere)
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
         self.maxL2dist_to_State = maxL2dist_to_State
         self.tracking_in_RAS = tracking_in_RAS
-        self.maxSteps = 2000
         
         ## load streamlines
         self.changeReferenceStreamlinesFile(pReferenceStreamlines)
-        
-        obs_shape = self.getObservationFromState(self.state).shape
-        
-        self.observation_space = Box(low=0, high=150, shape=obs_shape)
-
-        self.max_mean_step_angle = 1.5
-        self.max_step_angle = 1.59
-        self.max_dist_to_referenceStreamline = 0.5 # => 0.5 average pixel distance
-        
         self.fa_threshold = fa_threshold
+        self.maxSteps = 2000
+
         
         ## init odf interpolator
         self._init_odf()
+        
+        ## init obersavation space
+        obs_shape = self.getObservationFromState(self.state).shape
+        self.observation_space = Box(low=0, high=150, shape=obs_shape)
         
 
     def _init_odf(self):
@@ -112,19 +113,14 @@ class RLtractEnvironment(gym.Env):
         # convert all streamlines of our dataset into IJK & Shapely LineString format
         if(self.tracking_in_RAS):
             self.tracked_streamlines_torch = [torch.FloatTensor(self.dataset.to_ijk(x)).to(self.device) for x in self.tracked_streamlines]
-            #self.lines = [geom.LineString(self.dataset.to_ijk(line)) for line in self.tracked_streamlines]
         else:
             self.tracked_streamlines_torch = [torch.FloatTensor(x).to(self.device) for x in self.tracked_streamlines]
-            #self.lines = [geom.LineString(line) for line in self.tracked_streamlines]
 
-        #@deprecated
-        ### build search tree to locate nearest streamlines
-        ##self.tree = STRtree(self.lines)
         
         self.reset()
         
         
-    def interpolateDWIatState(self, stateCoordinates):       
+    def interpolateRawDWIatState(self, stateCoordinates):       
         #TODO: maybe stay in RAS all the time then no need to transfer to IJK
         ras_points = self.dataset.to_ras(stateCoordinates) # Transform state to World RAS+ coordinate system
         
@@ -139,7 +135,11 @@ class RLtractEnvironment(gym.Env):
         #interpolated_dwi = self.dtype(interpolated_dwi).to(self.device)
         return interpolated_dwi
     
-
+    def interpolateODFatState(self, stateCoordinates):
+        ijk_pts = self.grid + stateCoordinates.cpu().detach().numpy()
+        interpol_odf = self.odf_interpolator(ijk_pts)
+        interpol_odf = np.rollaxis(interpol_odf,3)
+        return interpol_odf
     
 
     def step(self, action):
@@ -152,27 +152,39 @@ class RLtractEnvironment(gym.Env):
         
         # II. fa below threshold? stop tracking
         if (self.dataset.get_fa(self.state.getCoordinate()) < self.fa_threshold):
-                #Defi reached the terminal state
-                #print('_', end='', flush=True)
                 return self.state, 0., True, {}    
 
         ### Tracking ###
         cur_tangent = self.directions[action].view(-1,3)
         cur_position = self.state.getCoordinate().view(-1,3)
         next_position = cur_position + self.stepWidth * cur_tangent
-        nextState = TractographyState(next_position, self.interpolateDWIatState)
+        nextState = TractographyState(next_position, self.state_interpol_fctn)
         
         ### REWARD ###
         # compute reward based on
         # I. cosine similarity to peak direction of ODF (=> imitate maximum direction getter)
-        odf_peak_dir = self._get_best_action_ODF(cur_position).view(-1,3)
-        reward = abs(torch.nn.functional.cosine_similarity(odf_peak_dir, cur_tangent))
-        # II. cosine similarity of current tangent to previous tangent (=> prefer going straight)
+        #odf_peak_dir = self._get_best_action_ODF(cur_position).view(-1,3)
+        #reward = abs(torch.nn.functional.cosine_similarity(odf_peak_dir, cur_tangent))
+        
+        # Inew. We basically take the normalized odf value corresponding to the encoded (action) tangent as reward
+        #       It is normalized in a way such that its maximum equals 1
+        #       Crucial assumption is that self.directions == self.directions_odf
+        #@TODO: no. of diffusion directions hard-coded to 100
+        #@TODO: taken center slice as this resembles maximum DG more closely. Alternatively: odf should be averaged first
+        odf_cur = torch.from_numpy(self.interpolateODFatState(stateCoordinates=cur_position))[:,1,1,1].view(100)
+        #odf_cur = torch.mean(odf_cur, 1)
+        reward = odf_cur / torch.max(odf_cur)
+        reward = reward[action]
+        
+        # II. cosine similarity of current tangent to previous tangent 
+        #     => Agent should prefer going straight
         if(self.stepCounter > 1):
             prev_tangent = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
             prev_tangent = prev_tangent.view(-1,3)
             prev_tangent = prev_tangent / torch.sqrt(torch.sum(prev_tangent**2, dim = 1)) ## normalize to unit vector
             reward = reward * torch.nn.functional.cosine_similarity(prev_tangent, cur_tangent)
+            
+
         ### book keeping
         self.state_history.append(nextState)
         self.state = nextState
@@ -195,12 +207,17 @@ class RLtractEnvironment(gym.Env):
 
     def _get_best_action(self, current_direction, my_position):
 
-        # main peak from ODF
-        peak_dir = self._get_best_action_ODF(my_position)
+        ## main peak from ODF
+        ##peak_dir = self._get_best_action_ODF(my_position)
+        ## cosine similarity wrt. all directions
+        #reward = abs(torch.nn.functional.cosine_similarity(peak_dir.view(1,-1), self.directions))
 
-        # cosine similarity wrt. all directions
-        reward = abs(torch.nn.functional.cosine_similarity(torch.from_numpy(peak_dir).view(1,-1), self.directions))
+        #@TODO: taken center slice (= my_position) as this resembles maximum DG more closely. Alternatively: odf should be averaged first
+        odf_cur = torch.from_numpy(self.interpolateODFatState(stateCoordinates=my_position))[:,1,1,1].view(100)
+        #odf_cur = torch.mean(odf_cur, 1)
+        reward = odf_cur / torch.max(odf_cur)
 
+        
         if(current_direction is not None):
             reward = reward * (torch.nn.functional.cosine_similarity(self.directions, current_direction))
 
@@ -230,6 +247,7 @@ class RLtractEnvironment(gym.Env):
 
         # maximum direction getter
         best_action = np.argmax(coolsl0_odf)
+        print(best_action)
         peak_dir = self.directions_odf[best_action]
         return peak_dir
 
@@ -278,7 +296,7 @@ class RLtractEnvironment(gym.Env):
 
 
     # reset the game and returns the observed data from the last episode
-    def reset(self, streamline_index=None, start_middle_of_streamline = True):              
+    def reset(self, streamline_index=None, start_middle_of_streamline = True, start_index = 0):              
         if streamline_index == None:
             streamline_index = np.random.randint(len(self.tracked_streamlines))
         
@@ -296,11 +314,11 @@ class RLtractEnvironment(gym.Env):
         self.past_reward = 0
         self.points_visited = 1 #position_index
         
-        tracking_start_index = 0
+        tracking_start_index = start_index
         if(start_middle_of_streamline):
             tracking_start_index = len(self.referenceStreamline_ijk) // 2
         
-        self.state = TractographyState(self.referenceStreamline_ijk[tracking_start_index], self.interpolateDWIatState)
+        self.state = TractographyState(self.referenceStreamline_ijk[tracking_start_index], self.state_interpol_fctn)
         self.state_history = deque(maxlen=4)
         while len(self.state_history) != 4:
             self.state_history.append(self.state)

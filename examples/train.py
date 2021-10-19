@@ -36,13 +36,13 @@ def load_model(path_checkpoint):
     return model, epoch, mean_reward, epsilon
 
 
-def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, replay_memory_size=20000, start_learning=10000, eps_annealing_steps=100000, eps_final=0.1, eps_final_step=0.01, gamma=0.99, agent_history_length=1, evaluate_every=20000, eval_runs=5, network_update_every=10000, max_episode_length=200, learning_rate=0.0000625, model=None):
+def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, replay_memory_size=20000, start_learning=10000, eps_annealing_steps=100000, eps_final=0.1, eps_final_step=0.01, gamma=0.99, agent_history_length=1, evaluate_every=20000, eval_runs=5, network_update_every=10000, max_episode_length=200, learning_rate=0.0000625, model=None, odf_state = False):
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Device..", device)
     print("Init environment..")
     #env = RLTe.RLtractEnvironment(stepWidth=0.8, action_space=20, device = 'cpu', pReferenceStreamlines='data/HCP307200_CSD_min40.vtk')
-    env = RLTe.RLtractEnvironment(stepWidth=0.8, action_space=20, device = 'cpu', pReferenceStreamlines='data/dti_ijk_0.8_maxDirecGetter.vtk', tracking_in_RAS = False)
+    env = RLTe.RLtractEnvironment(stepWidth=0.8, action_space=20, device = 'cpu', pReferenceStreamlines='data/dti_ijk_0.8_maxDirecGetter.vtk', tracking_in_RAS = False, odf_state = odf_state)
     print("..done!")
     n_actions = env.action_space.n
     print("Init agent..")
@@ -80,7 +80,7 @@ def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, repla
             
             # reduce epsilon
             if step_counter > start_learning:
-                eps = max(eps * 0.9999, 0.1)
+                eps = max(eps * 0.99999, 0.1)
             
             # play an episode
             while episode_step_counter <= 1000.:
@@ -226,6 +226,8 @@ if __name__ == "__main__":
     parser.add_argument("--path", default=".", type=str, help="Set default saving path of logs and checkpoints")
 
     parser.add_argument("--resume_training", dest="resume", action='store_true', help="Load checkpoint from path folder and resume training")
+    parser.add_argument("--odf-as-state-value",dest="odf_state", action='store_true')
+    parser.set_defaults(odf_state=False)
 
     args = parser.parse_args()
     os.makedirs(args.path+'/checkpoints', exist_ok=True)
@@ -245,6 +247,6 @@ if __name__ == "__main__":
 
 
     #print(args.replay_memory_size)
-    train(args.path, step_counter=step_counter, eps=epsilon, model=model, max_steps=args.max_steps,start_learning=args.start_learning ,replay_memory_size=args.replay_memory_size, batch_size=args.batch_size, eps_annealing_steps=args.eps_annealing_steps, eps_final=args.eps_final, eps_final_step=args.eps_final_step, gamma=args.gamma, agent_history_length=args.agent_history_length, evaluate_every=args.evaluate_every, eval_runs=args.eval_runs, network_update_every=args.network_update_every, max_episode_length=args.max_episode_length, learning_rate=args.learning_rate)
+    train(args.path, step_counter=step_counter, eps=epsilon, model=model, max_steps=args.max_steps,start_learning=args.start_learning ,replay_memory_size=args.replay_memory_size, batch_size=args.batch_size, eps_annealing_steps=args.eps_annealing_steps, eps_final=args.eps_final, eps_final_step=args.eps_final_step, gamma=args.gamma, agent_history_length=args.agent_history_length, evaluate_every=args.evaluate_every, eval_runs=args.eval_runs, network_update_every=args.network_update_every, max_episode_length=args.max_episode_length, learning_rate=args.learning_rate, odf_state=args.odf_state)
     
         
