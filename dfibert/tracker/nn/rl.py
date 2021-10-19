@@ -69,31 +69,6 @@ class DQN(nn.Module):
     Main modell class. First 4 layers are convolutional layers, after that the model is split into the
     advantage and value stream. See the documentation. The convolutional layers are initialized with Kaiming He initialization.
     """
-    # def __init__(self, input_shape, n_actions):
-    #     super(DQN, self).__init__()
-
-    #     self.fc = nn.Sequential(
-    #         nn.Linear(input_shape, 256),
-    #         nn.ReLU()
-    #     )
-
-    #     self.fc_adv = nn.Sequential(
-    #         nn.Linear(256, 512),
-    #         nn.ReLU(),
-    #         nn.Linear(512, n_actions)
-    #     )
-    #     self.fc_val = nn.Sequential(
-    #         nn.Linear(256, 512),
-    #         nn.ReLU(),
-    #         nn.Linear(512, 1)
-    #     )
-
-    # def forward(self, x):
-    #     x = x.reshape(x.size(0), -1)
-    #     lin_out = self.fc(x)
-    #     val = self.fc_val(lin_out)
-    #     adv = self.fc_adv(lin_out)
-    #     return val + (adv - adv.mean(dim=1, keepdim=True))
     def __init__(self, input_shape, n_actions, hidden_size = 1024, num_hidden = 8, activation=torch.relu):
         super(DQN, self).__init__()
         self.linear_layers = nn.ModuleList()
@@ -136,7 +111,8 @@ class Agent():
         memory_size: Integer, size of the replay memory
     """
     def __init__(self, n_actions, device, inp_size, hidden=128, learning_rate=0.0000625,
-                 gamma=.99, batch_size=32, agent_history_length=4, memory_size=1000000):
+                 gamma=.9995, batch_size=32, agent_history_length=4, memory_size=1000000,
+                 epsilon=1.0, epsilon_decay=0.999, min_epsilon=0.01):
 
         self.n_actions = n_actions
         self.device = device
@@ -147,6 +123,9 @@ class Agent():
         self.agent_history_length= agent_history_length
         self.gamma = gamma
         self.memory_size = memory_size
+        self.epsilon = epsilon
+        self.epsilon_decay = epsilon_decay
+        self.min_epsilon = min_epsilon
 
         # Create 2 models
         self.main_dqn = DQN(n_actions=self.n_actions, input_shape=np.prod(np.array(self.inp_size))).to(device)
@@ -173,28 +152,100 @@ class Agent():
         # get a minibatch of transitions
         states, actions, rewards, new_states, terminal_flags = self.replay_memory.get_minibatch()
 
-        states = torch.FloatTensor(states).to(self.device)
-        next_states = torch.FloatTensor(new_states).to(self.device)
-        actions = torch.LongTensor(actions).to(self.device)
-        rewards = torch.FloatTensor(rewards).to(self.device)
-        terminal_flags = torch.BoolTensor(terminal_flags).to(self.device)
-
-        state_action_values = self.main_dqn(states).gather(1, actions.unsqueeze(-1)).squeeze(-1)
-
-        next_state_actions = self.main_dqn(next_states).max(1)[1]
+        states = torch.from_numpy(states).to(self.device)
+        next_states = torch.from_numpy(new_states).to(self.device)
+        actions = torch.from_numpy(actions).unsqueeze(1).long().to(self.device)
+        rewards = torch.from_numpy(rewards).to(self.device)
+        terminal_flags = torch.from_numpy(terminal_flags).to(self.device)
+        
+        
+        state_action_values = self.main_dqn(states).gather(1, actions).squeeze(-1)
+        next_state_actions = torch.argmax(self.main_dqn(next_states), dim=1)
         next_state_values = self.target_dqn(next_states).gather(1, next_state_actions.unsqueeze(-1)).squeeze(-1)
+        
         next_state_values[terminal_flags] = 0.0
-
         expected_state_action_values = next_state_values.detach() * self.gamma + rewards
 
-        #loss = nn.MSELoss()(state_action_values, expected_state_action_values)
-        loss = torch.nn.SmoothL1Loss()(state_action_values, expected_state_action_values)  
+        loss = F.smooth_l1_loss(state_action_values, expected_state_action_values)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
                
         return loss
 
+    def reduce_epsilon(self):
+        self.epsilon = max(self.epsilon * self.epsilon_decay, self.min_epsilon)
+
+    def predict_action(self, state):
+        if random.random() < eps:                                 
+            action = np.random.randint(self.n_actions)           # either random action
+        else:                                                        # or action from agent
+            self.main_dqn.eval()
+            with torch.no_grad():
+                state_v = torch.from_numpy(state.getValue()).unsqueeze(0).float().to(device)
+                action = torch.argmax(self.main_dqn(state_v)).item()
+            self.main_dqn.train()
+        return action
+
+    def save_model(self, path_checkpoint, epoch, mean_reward, max_steps, start_learning, network_update_every, max_episode_length, evaluate_every, eval_runs):
+        print("Writing checkpoint to %s" % (path_checkpoint))
+        checkpoint = {}
+        checkpoint["epoch"] = epoch
+        checkpoint["mean_reward"] = mean_reward
+        checkpoint["max_steps"] = max_steps
+        checkpoint["start_learning"] = start_learning
+        checkpoint["network_update_every"] = network_update_every
+        checkpoint["max_episode_length"] = max_episode_length
+        checkpoint["evaluate_every"] = evaluate_every
+        checkpoint["eval_runs"] = eval_runs
+
+        checkpoint["model"] = self.main_dqn.state_dict()
+        checkpoint["epsilon"] = self.epsilon
+        checkpoint["batch_size"] = self.batch_size
+        checkpoint["gamma"] = self.gamma
+        checkpoint["memory_size"] = self.memory_size
+        checkpoint["learning_rate"] = self.learning_rate
+        checkpoint["state_shape"] = self.inp_size
+        checkpoint["n_actions"] = self.n_actions
+        torch.save(checkpoint, path_checkpoint)
+
+
+    def load_model(path_checkpoint, overwrite=False):
+        print("Loading checkpoint from %s" % (path_checkpoint))
+        checkpoint = torch.load(path_checkpoint)
+
+        # load crucial parameters
+        epoch = checkpoint['epoch']
+        self.inp_size = checkpoint["state_shape"]
+        self.n_actions = checkpoint["n_actions"]
+        self.epsilon = checkpoint['epsilon']
+
+        # re-initialize the models with loaded hyperparameters and state dict
+        self.main_dqn = DQN(n_actions=self.n_actions, input_shape=np.prod(np.array(self.inp_size))).to(device)
+        self.target_dqn = DQN(n_actions=self.n_actions, input_shape=np.prod(np.array(self.inp_size))).to(device)
+        self.main_dqn.load_state_dict(checkpoint['model'])
+        self.target_dqn.load_state_dict(checkpoint['model'])
+        
+        # load external parameters
+        mean_reward = checkpoint['mean_reward']
+        max_steps = checkpoint["max_steps"]
+        start_learning = checkpoint["start_learning"]
+        network_update_every = checkpoint["network_update_every"] 
+        max_episode_length = checkpoint["max_episode_length"]
+        evaluate_every = checkpoint["evaluate_every"]
+        eval_runs = checkpoint["eval_runs"]
+
+        # overwrite internal hyperparameters set at initialization with saved ones
+        if overwrite:
+            self.batch_size = checkpoint["batch_size"]
+            self.gamma = checkpoint["gamma"] 
+            self.memory_size = checkpoint["memory_size"]
+            self.learning_rate = checkpoint["learning_rate"]
+
+        return epoch, mean_reward, max_steps, start_learning, network_update_every, max_episode_length, evaluate_every, eval_runs
+
+
+'''
 class Action_Scheduler():
     """Determines an action according to an epsilon greedy strategy with annealing epsilon"""
     def __init__(self, num_actions, model, eps_initial=1, eps_final=0.1, eps_final_step=0.01,
@@ -250,3 +301,4 @@ class Action_Scheduler():
                 action = torch.argmax(q_vals).item()
                 #print("Action: ", action )
                 return action
+'''
