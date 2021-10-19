@@ -406,15 +406,24 @@ class DataContainer():
         ndarray
             Fractional anisotropy (FA) calculated from cached eigenvalues.
         """
-        if self.options.cropped:
-            warnings.warn("""You are generating the fa values from already cropped DWI. 
-            You typically want to generate_fa() before you crop the data.""")
+        #@Nico: actually you typically compute FA values after selecting a certain b-value 
+        #       meaning that this error message is misleading.
+        ##if self.options.cropped:
+        ##    warnings.warn("""You are generating the fa values from already cropped DWI. 
+        ##    You typically want to generate_fa() before you crop the data.""")
         dti_model = dti.TensorModel(self.data.gtab, fit_method='LS')
-        dti_fit = dti_model.fit(self.data.dwi)
+        dti_fit = dti_model.fit(self.data.dwi, mask=self.data.binarymask)
         self.data.fa = dti_fit.fa
+        
+        x_range = np.arange(self.data.dwi.shape[0])
+        y_range = np.arange(self.data.dwi.shape[1])
+        z_range = np.arange(self.data.dwi.shape[2])
+        self.fa_interpolator = RegularGridInterpolator((x_range,y_range,z_range), self.data.fa)
+        
         return self.data.fa
-    def get_fa(self):
-        """Retrieves the previously generated FA values
+    
+    def get_fa(self, coordinate):
+        """Retrieves the FA values at a specific position.
 
         Returns
         -------
@@ -425,8 +434,9 @@ class DataContainer():
         --------
         generate_fa: The method generating the fa values which are returned here.
         """
-        return self.data.fa
+        return self.fa_interpolator(coordinate)
 
+    
 class HCPDataContainer(DataContainer):
     """
     The HCPDataContainer class is representing a single HCP Dataset.
