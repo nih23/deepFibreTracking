@@ -9,6 +9,8 @@ from dipy.data import get_sphere
 from dipy.data import HemiSphere, Sphere
 from dipy.core.sphere import disperse_charges
 
+from dipy.direction import peaks_from_model
+from dipy.reconst.shm import order_from_ncoef, sph_harm_lookup
 from dipy.core.interpolation import trilinear_interpolate4d
 
 import torch
@@ -30,7 +32,7 @@ from shapely.strtree import STRtree
 from collections import deque
 
 class RLtractEnvironment(gym.Env):
-    def __init__(self, device, stepWidth = 0.8, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, pReferenceStreamlines = "data/HCP307200_DTI_smallSet.vtk", tracking_in_RAS = True, fa_threshold = 0.1, b_val = 1000, max_angle=30., odf_state = True):
+    def __init__(self, device, stepWidth = 0.8, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, pReferenceStreamlines = "data/HCP307200_DTI_smallSet.vtk", tracking_in_RAS = True, fa_threshold = 0.1, b_val = 1000, max_angle=80., odf_state = True):
         print("Loading precomputed streamlines (%s) for ID %s" % (pReferenceStreamlines, dataset))
         self.device = device
         self.dataset = HCPDataContainer(dataset)
@@ -115,9 +117,23 @@ class RLtractEnvironment(gym.Env):
         
         self.odf_interpolator = RegularGridInterpolator((x_range,y_range,z_range), odf)
 
-        print("Computing pmf")
-        self.pmf = odf.clip(min=0)
+        #print("Computing pmf")
+        #self.pmf = odf.clip(min=0)
 
+    def _init_shmcoeff(self, sh_basis_type=None):
+        dti_model = dti.TensorModel(self.dataset.data.gtab, fit_method='LS')
+
+        peaks = peaks_from_model(model=dti_model, data=self.dataset.data.dwi, sphere=self.sphere, \
+                                relative_peak_threshold=.2, min_separation_angle=25, mask=self.dataset.data.binarymask, npeaks=2)
+        
+        self.shcoeff = peaks.shm_coeff
+        sh_order = order_from_ncoef(self.shcoeff.shape[-1])
+        try:
+            basis = sph_harm_lookup[sh_basis_type]
+        except KeyError:
+            raise ValueError("%s is not a known basis type." % sh_basis_type)
+
+        self._B, m, n = basis(sh_order, self.sphere.theta, self.sphere.phi)
         
     def changeReferenceStreamlinesFile(self, pReferenceStreamlines):
         self.pReferenceStreamlines = pReferenceStreamlines
@@ -163,7 +179,11 @@ class RLtractEnvironment(gym.Env):
         return interpol_odf
     
     def interpolatePMFatState(self, stateCoordinates):
-        return trilinear_interpolate4d(self.pmf, stateCoordinates)
+        coeff = trilinear_interpolate4d(self.shcoeff, stateCoordinates)
+        pmf = np.dot(self._B, coeff)
+        pmf.clip(0, out=pmf)
+        return pmf
+        #return trilinear_interpolate4d(self.pmf, stateCoordinates)
 
 
     def step(self, action):
@@ -181,7 +201,6 @@ class RLtractEnvironment(gym.Env):
             return self.state, 0., True, {}    
 
         ### Tracking ###
-        print("action shape: ", action.shape)
         cur_tangent = self.directions[action]
         print("cur_tangent: ", cur_tangent)
         cur_position = self.state.getCoordinate().view(-1,3)
@@ -434,6 +453,7 @@ class RLtractEnvironment(gym.Env):
             last_direction = self.referenceStreamline_ijk[1] - self.referenceStreamline_ijk[0]  # get the direction in which the reference steamline is going
         else: # else get the direction the agent has been going so far
             last_direction = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
+            last_direction = last_direction.squeeze(0)
 
         if np.dot(action_vector, last_direction) < 0: # if the agent chooses the complete opposite direction
             action_vector = -1 * action_vector  # force it to follow the rough direction of the streamline
