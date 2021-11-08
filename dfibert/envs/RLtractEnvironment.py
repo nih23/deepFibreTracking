@@ -32,13 +32,15 @@ from shapely.strtree import STRtree
 from collections import deque
 
 class RLtractEnvironment(gym.Env):
-    def __init__(self, device, stepWidth = 0.8, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, pReferenceStreamlines = "data/HCP307200_DTI_smallSet.vtk", tracking_in_RAS = True, fa_threshold = 0.1, b_val = 1000, max_angle=80., odf_state = True):
-        print("Loading precomputed streamlines (%s) for ID %s" % (pReferenceStreamlines, dataset))
+    def __init__(self, device, seeds, stepWidth = 0.8, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, tracking_in_RAS = True, fa_threshold = 0.1, b_val = 1000, max_angle=80., odf_state = True):
+        print("Loading dataset # ", dataset)
         self.device = device
         self.dataset = HCPDataContainer(dataset)
         self.dataset.normalize() #normalize HCP data
         self.dataset.crop(b_val) #select only data corresponding to a certain b-value
         self.dataset.generate_fa() #prepare for interpolation of fa values
+
+        self.seeds = seeds
         
         self.stepWidth = stepWidth
         self.dtype = torch.FloatTensor # vs. torch.cuda.FloatTensor
@@ -72,10 +74,11 @@ class RLtractEnvironment(gym.Env):
         self.tracking_in_RAS = tracking_in_RAS
         
         ## load streamlines
-        self.changeReferenceStreamlinesFile(pReferenceStreamlines)
+        #self.changeReferenceStreamlinesFile(pReferenceStreamlines)
         self.fa_threshold = fa_threshold
         self.maxSteps = 2000
 
+        self.reset()
         
         ## init odf interpolator
         self._init_odf()
@@ -186,7 +189,7 @@ class RLtractEnvironment(gym.Env):
         #return trilinear_interpolate4d(self.pmf, stateCoordinates)
 
 
-    def step(self, action):
+    def step(self, action, direction="forward"):
         self.stepCounter += 1
 
         ### Termination conditions ###
@@ -198,14 +201,16 @@ class RLtractEnvironment(gym.Env):
         # II. fa below threshold? stop tracking
         if (self.dataset.get_fa(self.state.getCoordinate()) < self.fa_threshold):
             print("Terminal due to too low fa. ", self.dataset.get_fa(self.state.getCoordinate()))
-            return self.state, 0., True, {}    
+            return self.state, 0., True, {}     
 
         ### Tracking ###
         cur_tangent = self.directions[action]
         print("cur_tangent: ", cur_tangent)
         cur_position = self.state.getCoordinate().view(-1,3)
-        cur_tangent = self._correct_direction(cur_tangent).view(-1,3)
-        print("cur_tangent after correction: ", cur_tangent)
+        if self.stepCounter == 1. and direction == "backward":
+            cur_tangent = cur_tangent * -1
+        #cur_tangent = self._correct_direction(cur_tangent).view(-1,3)
+        #print("cur_tangent after correction: ", cur_tangent)
         next_position = cur_position + self.stepWidth * cur_tangent
         print("next_position in step: ", next_position)
         nextState = TractographyState(next_position, self.state_interpol_fctn)
@@ -361,17 +366,21 @@ class RLtractEnvironment(gym.Env):
 
 
     # reset the game and returns the observed data from the last episode
-    def reset(self, streamline_index=None, start_middle_of_streamline = True, start_index = 0):              
-        if streamline_index == None:
-            streamline_index = np.random.randint(len(self.tracked_streamlines))
+    def reset(self, seed_index=None, terminal_F=True, terminal_B=True):
+        # seed index statt start_index
+        # 2 terminals --> forward, backward
+
+        if terminal_F  and terminal_B:           
+        #if seed_index == None:
+            self.seed_index = np.random.randint(len(self.seeds))
         
-        if(self.tracking_in_RAS):
-            referenceStreamline_ras = self.tracked_streamlines[streamline_index]
-            referenceStreamline_ijk = self.dataset.to_ijk(referenceStreamline_ras)
-        else:
-            referenceStreamline_ijk = self.tracked_streamlines[streamline_index]
+            if(self.tracking_in_RAS):
+                referenceSeedPoint_ras = self.seeds[self.seed_index]
+                referenceSeedPoint_ijk = self.dataset.to_ijk(referenceSeedPoint_ras)    # könnte evtl. mit den shapes nicht hinhauen
+            else:
+                referenceSeedPoint_ijk = self.seeds[self.seed_index]
         
-        self.switchStreamline(geom.LineString(referenceStreamline_ijk))
+        #self.switchStreamline(geom.LineString(referenceStreamline_ijk))
         
         self.done = False
         self.stepCounter = 0
@@ -379,11 +388,12 @@ class RLtractEnvironment(gym.Env):
         self.past_reward = 0
         self.points_visited = 1 #position_index
         
-        tracking_start_index = start_index
-        if(start_middle_of_streamline):
-            tracking_start_index = len(self.referenceStreamline_ijk) // 2
+        #tracking_start_index = start_index
+        #if(start_middle_of_streamline):
+        #    tracking_start_index = len(self.referenceStreamline_ijk) // 2
         
-        self.state = TractographyState(self.referenceStreamline_ijk[tracking_start_index], self.state_interpol_fctn)
+        self.referenceSeedPoint_ijk = referenceSeedPoint_ijk
+        self.state = TractographyState(self.referenceSeedPoint_ijk, self.state_interpol_fctn)
         self.state_history = deque(maxlen=4)
         while len(self.state_history) != 4:
             self.state_history.append(self.state)
