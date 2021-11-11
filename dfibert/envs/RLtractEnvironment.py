@@ -85,8 +85,8 @@ class RLtractEnvironment(gym.Env):
 
         ## init adjacency matric
         self.max_angle = max_angle                                      # the maximum angle between two direction vectors
-        cos_similarity = np.cos(np.deg2rad(max_angle))                  # set cosine similarity treshold for initialization of adjacency matrix
-        self._set_adjacency_matrix(self.sphere, cos_similarity)
+        self.cos_similarity = np.cos(np.deg2rad(max_angle))                  # set cosine similarity treshold for initialization of adjacency matrix
+        self._set_adjacency_matrix(self.sphere, self.cos_similarity)
         
         ## init obersavation space
         obs_shape = self.getObservationFromState(self.state).shape
@@ -195,24 +195,24 @@ class RLtractEnvironment(gym.Env):
         ### Termination conditions ###
         # I. number of steps larger than maximum
         if (self.stepCounter == self.maxSteps):
-            print("Terminal due to max amount of steps reached.")
+            #print("Terminal due to max amount of steps reached.")
             return self.state, 0., True, {} 
         
         # II. fa below threshold? stop tracking
         if (self.dataset.get_fa(self.state.getCoordinate()) < self.fa_threshold):
-            print("Terminal due to too low fa. ", self.dataset.get_fa(self.state.getCoordinate()))
+            #print("Terminal due to too low fa. ", self.dataset.get_fa(self.state.getCoordinate()))
             return self.state, 0., True, {}     
 
         ### Tracking ###
-        cur_tangent = self.directions[action]
-        print("cur_tangent: ", cur_tangent)
+        cur_tangent = self.directions[action].view(-1,3)
+        #print("cur_tangent: ", cur_tangent)
         cur_position = self.state.getCoordinate().view(-1,3)
         if self.stepCounter == 1. and direction == "backward":
             cur_tangent = cur_tangent * -1
         #cur_tangent = self._correct_direction(cur_tangent).view(-1,3)
         #print("cur_tangent after correction: ", cur_tangent)
         next_position = cur_position + self.stepWidth * cur_tangent
-        print("next_position in step: ", next_position)
+        #print("next_position in step: ", next_position)
         nextState = TractographyState(next_position, self.state_interpol_fctn)
         
         ### REWARD ###
@@ -237,7 +237,10 @@ class RLtractEnvironment(gym.Env):
             prev_tangent = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
             prev_tangent = prev_tangent.view(-1,3)
             prev_tangent = prev_tangent / torch.sqrt(torch.sum(prev_tangent**2, dim = 1)) ## normalize to unit vector
-            reward = (reward * torch.nn.functional.cosine_similarity(prev_tangent, cur_tangent)).squeeze()
+            cos_similarity = torch.nn.functional.cosine_similarity(prev_tangent, cur_tangent)
+            reward = (reward * cos_similarity).squeeze()
+            if cos_similarity <= 0.:
+                return nextState, reward, True, {}
             
 
         ### book keeping
@@ -268,10 +271,10 @@ class RLtractEnvironment(gym.Env):
         #reward = abs(torch.nn.functional.cosine_similarity(peak_dir.view(1,-1), self.directions))
 
         #@TODO: taken center slice (= my_position) as this resembles maximum DG more closely. Alternatively: odf should be averaged first
-        # odf_cur = torch.from_numpy(self.interpolateODFatState(stateCoordinates=my_position))[:,1,1,1].view(100)
+        odf_cur = torch.from_numpy(self.interpolateODFatState(stateCoordinates=my_position))[:,1,1,1].view(100)
         # #odf_cur = torch.mean(odf_cur, 1)
         # print("odf_cur: ", odf_cur)
-        # reward = odf_cur / torch.max(odf_cur)
+        reward = odf_cur / torch.max(odf_cur)
         # print("reward: ", reward)
         
         # if(current_direction is not None):
@@ -282,9 +285,9 @@ class RLtractEnvironment(gym.Env):
         # print("best action: ", best_action)
         # print("Max reward: %.2f" % (torch.max(reward).cpu().detach().numpy()))
         # return best_action
-        pmf_cur = self.interpolatePMFatState(my_position)
+        #pmf_cur = self.interpolatePMFatState(my_position)
         #print(pmf_cur)
-        reward = pmf_cur / np.max(pmf_cur)
+        #reward = pmf_cur / np.max(pmf_cur)
         if current_direction is None:
             best_action = np.argmax(reward)
         else:
@@ -366,19 +369,18 @@ class RLtractEnvironment(gym.Env):
 
 
     # reset the game and returns the observed data from the last episode
-    def reset(self, seed_index=None, terminal_F=True, terminal_B=True):
-        # seed index statt start_index
-        # 2 terminals --> forward, backward
-
-        if terminal_F  and terminal_B:           
-        #if seed_index == None:
+    def reset(self, seed_index=None, terminal_F=False, terminal_B=False):
+        #self.seed_index = seed_index        
+        if seed_index is not None:
+            self.seed_index = seed_index
+        elif not terminal_F  and not terminal_B or terminal_F and terminal_B:           
             self.seed_index = np.random.randint(len(self.seeds))
         
-            if(self.tracking_in_RAS):
-                referenceSeedPoint_ras = self.seeds[self.seed_index]
-                referenceSeedPoint_ijk = self.dataset.to_ijk(referenceSeedPoint_ras)    # könnte evtl. mit den shapes nicht hinhauen
-            else:
-                referenceSeedPoint_ijk = self.seeds[self.seed_index]
+        if(self.tracking_in_RAS):
+            referenceSeedPoint_ras = self.seeds[self.seed_index]
+            referenceSeedPoint_ijk = self.dataset.to_ijk(referenceSeedPoint_ras)    # könnte evtl. mit den shapes nicht hinhauen
+        else:
+            referenceSeedPoint_ijk = self.seeds[self.seed_index]
         
         #self.switchStreamline(geom.LineString(referenceStreamline_ijk))
         
