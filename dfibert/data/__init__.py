@@ -8,9 +8,9 @@ to work directly with the data.
 """
 from __future__ import annotations
 
-import collections
 import os
 import warnings
+from types import Union, NoneType
 
 import dipy.reconst.dti as dti
 import nibabel as nb
@@ -57,9 +57,9 @@ class DataPreprocessor(object):
         :param data_container: The given data_container
         :return: A new preprocessed data_container
         """
-        bvals, bvecs, t1, dwi, aff, binary_mask, b0, fa = data_container
-        data_container = DataContainer(bvals.copy(), bvecs.copy(), t1.copy(), dwi.copy(), aff.copy(),
-                                       binary_mask.copy(), b0.copy(), None if fa is None else fa.copy())
+        dc = data_container
+        data_container = DataContainer(dc.bvals.copy(), dc.bvecs.copy(), dc.t1.copy(), dc.dwi.copy(), dc.aff.copy(),
+                                       dc.binary_mask.copy(), dc.b0.copy(), None if dc.fa is None else dc.fa.copy())
         return self._preprocess(data_container)
 
     def denoise(self, smooth=3, patch_radius=3) -> DataPreprocessor:
@@ -162,16 +162,16 @@ class _DataCropper(DataPreprocessor):
         self.max_deviation = max_deviation
 
     def _preprocess(self, data_container: DataContainer) -> DataContainer:
-        bvals, bvecs, t1, dwi, aff, binary_mask, b0, fa = \
+        dc = \
             super()._preprocess(data_container)
 
-        indices = np.where(np.abs(bvals - self.b_value) < self.max_deviation)[0]
+        indices = np.where(np.abs(dc.bvals - self.b_value) < self.max_deviation)[0]
 
-        dwi = dwi[..., indices]
-        bvals = bvals[indices]
-        bvecs = bvecs[indices]
+        dwi = dc.dwi[..., indices]
+        bvals = dc.bvals[indices]
+        bvecs = dc.bvecs[indices]
 
-        return DataContainer(bvals, bvecs, t1, dwi, aff, binary_mask, b0, fa)
+        return DataContainer(bvals, bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
 
     def __str__(self):
         return str(self._parent) + "-Crop-b_value-{}-deviation-{}".format(self.b_value, self.max_deviation)
@@ -182,12 +182,12 @@ class _DataNormaliser(DataPreprocessor):
         super().__init__(parent)
 
     def _preprocess(self, data_container: DataContainer) -> DataContainer:
-        bvals, bvecs, t1, dwi, aff, binary_mask, b0, fa = \
+        dc = \
             super()._preprocess(data_container)
 
-        b0 = b0[..., None]
-
-        nb_erroneous_voxels = np.sum(dwi > b0)
+        b0 = dc.b0[..., None]
+        dwi = dc.dwi
+        nb_erroneous_voxels = np.sum(dc.dwi > b0)
         if nb_erroneous_voxels != 0:
             dwi = np.minimum(dwi, b0)
         with warnings.catch_warnings():
@@ -195,7 +195,7 @@ class _DataNormaliser(DataPreprocessor):
             dwi = dwi / b0
             dwi[np.logical_not(np.isfinite(dwi))] = 0.
 
-        return DataContainer(bvals, bvecs, t1, dwi, aff, binary_mask, b0, fa)
+        return DataContainer(dc.bvals, dc.bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, b0, dc.fa)
 
     def __str__(self):
         return str(self._parent) + "-Normalise"
@@ -208,14 +208,14 @@ class _DataDenoiser(DataPreprocessor):
         self.patch_radius = patch_radius
 
     def _preprocess(self, data_container: DataContainer) -> DataContainer:
-        bvals, bvecs, t1, dwi, aff, binary_mask, b0, fa = \
+        dc = \
             super()._preprocess(data_container)
-        gtab = gradient_table(bvals, bvecs)
-        sigma = pca_noise_estimate(dwi, gtab, correct_bias=True,
+        gtab = gradient_table(dc.bvals, dc.bvecs)
+        sigma = pca_noise_estimate(dc.dwi, gtab, correct_bias=True,
                                    smooth=self.smooth)
-        dwi = localpca(dwi, sigma=sigma,
+        dwi = localpca(dc.dwi, sigma=sigma,
                        patch_radius=self.patch_radius)
-        return DataContainer(bvals, bvecs, t1, dwi, aff, binary_mask, b0, fa)
+        return DataContainer(dc.bvals, dc.bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
 
     def __str__(self) -> str:
         return str(self._parent) + "-Denoise-smooth-{}-patch_radius-{}".format(self.smooth, self.patch_radius)
@@ -226,34 +226,38 @@ class _DataFAEstimator(DataPreprocessor):
         super().__init__(parent)
 
     def _preprocess(self, data_container: DataContainer) -> DataContainer:
-        bvals, bvecs, t1, dwi, aff, binary_mask, b0, fa = \
+        dc = \
             super()._preprocess(data_container)
 
         # calculating fractional anisotropy (fa)
-        gtab = gradient_table(bvals, bvecs)
+        gtab = gradient_table(dc.bvals, dc.bvecs)
         dti_model = dti.TensorModel(gtab, fit_method='LS')
-        dti_fit = dti_model.fit(dwi)
+        dti_fit = dti_model.fit(dc.dwi, mask=dc.binary_mask)
         fa = dti_fit.fa
-        return DataContainer(bvals, bvecs, t1, dwi, aff, binary_mask, b0, fa)
+        return DataContainer(dc.bvals, dc.bvecs, dc.t1, dc.dwi, dc.aff, dc.binary_mask, dc.b0, fa)
 
     def __str__(self):
         return str(self._parent) + "-FA-estimation"
 
 
-class DataContainer(collections.namedtuple("DataContainer", "bvals, bvecs, t1, dwi, aff, binary_mask, b0, fa")):
+class DataContainer(object):
 
-    def __new__(cls, bvals: np.ndarray, bvecs: np.ndarray, t1: np.ndarray,
-                dwi: np.ndarray, aff: np.ndarray, binary_mask: np.ndarray, b0: np.ndarray, fa: np.ndarray | None):
-
-        self = super().__new__(cls, bvals, bvecs, t1, dwi, aff,
-                               binary_mask, b0, fa)
-
+    def __init__(self, bvals: np.ndarray, bvecs: np.ndarray, t1: np.ndarray,
+                 dwi: np.ndarray, aff: np.ndarray, binary_mask: np.ndarray, b0: np.ndarray,
+                 fa: Union[np.ndarray, NoneType]):
+        self.bvals = bvals
+        self.bvecs = bvecs
+        self.t1 = t1
+        self.dwi = dwi
+        self.aff = aff
+        self.binary_mask = binary_mask
+        self.b0 = b0
+        self.fa = fa
         x_range = np.arange(dwi.shape[0])
         y_range = np.arange(dwi.shape[1])
         z_range = np.arange(dwi.shape[2])
 
         self.interpolator = RegularGridInterpolator((x_range, y_range, z_range), dwi)
-        return self
 
     def to_ijk(self, points: np.ndarray) -> np.ndarray:
         """
