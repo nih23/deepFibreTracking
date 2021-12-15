@@ -27,71 +27,45 @@ def _get_seeds(data_container, random_seeds=False, seeds_count=30000, seeds_per_
                                       affine=data_container.aff)
 
 
-"""class CSDTracker(object):
-    def __init__(self, step_width=1.0, roi_r=10, auto_response_fa_threshold=0.7, fa_threshold=0.7,
-                 relative_peak_threshold=0.5, min_separation_angle=25):
-        self.step_width = step_width
-        self.roi_r = roi_r
-        self.auto_response_fa_threshold = auto_response_fa_threshold
-        self.fa_threshold = fa_threshold
-        self.relative_peak_threshold = relative_peak_threshold
-        self.min_separation_angle = min_separation_angle
-
-    def track(self, data_container, random_seeds=False, seeds_count=30000, seeds_per_voxel=False) -> Streamlines:
-        seeds = _get_seeds(data_container, random_seeds, seeds_count, seeds_per_voxel)
-
-        gtab = gradient_table(data_container.bvals, data_container.bvecs)
-        response, _ = auto_response_ssst(gtab, data_container.dwi, roi_radii=self.roi_r,
-                                         fa_thr=self.auto_response_fa_threshold)
-        csd_model = ConstrainedSphericalDeconvModel(gtab, response)
-
-        direction_getter = peaks_from_model(model=csd_model,
-                                            data=data_container.dwi,
-                                            sphere=get_sphere('symmetric724'),
-                                            mask=data_container.binary_mask,
-                                            relative_peak_threshold=self.relative_peak_threshold,
-                                            min_separation_angle=self.min_separation_angle,
-                                            parallel=False)
-    
-        dti_fit = dti.TensorModel(gtab, fit_method='LS').fit(data_container.dwi, mask=data_container.binary_mask)
-
-        classifier = ThresholdStoppingCriterion(dti_fit.fa, self.fa_threshold)
-        streamlines_generator = LocalTracking(direction_getter, classifier, seeds, data_container.aff,
-                                              step_size=self.step_width)
-        streamlines = Streamlines(streamlines_generator)
-
-        return streamlines
-"""
-
-
 def get_csd_streamlines(data_container, random_seeds=False, seeds_count=30000, seeds_per_voxel=False, step_width=1.0,
                         roi_r=10, auto_response_fa_threshold=0.7, fa_threshold=0.15, relative_peak_threshold=0.5,
                         min_separation_angle=25):
     """
+    Tracks and returns CSD Streamlines for the given DataContainer.
 
     Parameters
     ----------
     data_container
+        The DataContainer we would like to track streamlines on
     random_seeds
+        A boolean indicating whether we would like to use random seeds
     seeds_count
+        If we use random seeds, this specifies the seed count
     seeds_per_voxel
+        If True, the seed count is specified per voxel
     step_width
+        The step width used while tracking
     roi_r
+        The radii of the cuboid roi for the automatic estimation of single-shell single-tissue response function using FA.
     auto_response_fa_threshold
+        The FA threshold for the automatic estimation of single-shell single-tissue response function using FA.
     fa_threshold
+        The FA threshold to use to stop tracking
     relative_peak_threshold
+        The relative peak threshold to use to get peaks from the CSDModel
     min_separation_angle
-
+        The minimal separation angle of peaks
     Returns
     -------
-
+    Streamlines
+        A list of Streamlines
     """
     seeds = _get_seeds(data_container, random_seeds, seeds_count, seeds_per_voxel)
 
     gtab = gradient_table(data_container.bvals, data_container.bvecs)
     response, _ = auto_response_ssst(gtab, data_container.dwi, roi_radii=roi_r, fa_thr=auto_response_fa_threshold)
     csd_model = ConstrainedSphericalDeconvModel(gtab, response)
-    
+
     direction_getter = peaks_from_model(model=csd_model,
                                         data=data_container.dwi,
                                         sphere=get_sphere('symmetric724'),
@@ -99,18 +73,42 @@ def get_csd_streamlines(data_container, random_seeds=False, seeds_count=30000, s
                                         relative_peak_threshold=relative_peak_threshold,
                                         min_separation_angle=min_separation_angle,
                                         parallel=False)
-    
+
     dti_fit = dti.TensorModel(gtab, fit_method='LS').fit(data_container.dwi, mask=data_container.binary_mask)
     classifier = ThresholdStoppingCriterion(dti_fit.fa, fa_threshold)
 
     streamlines_generator = LocalTracking(direction_getter, classifier, seeds, data_container.aff, step_size=step_width)
     streamlines = Streamlines(streamlines_generator)
-    
+
     return streamlines
 
 
 def get_dti_streamlines(data_container, random_seeds=False, seeds_count=30000, seeds_per_voxel=False, step_width=1.0,
                         max_angle=30.0, fa_threshold=0.15):
+    """
+    Tracks and returns CSD Streamlines for the given DataContainer.
+
+    Parameters
+    ----------
+    data_container
+        The DataContainer we would like to track streamlines on
+    random_seeds
+        A boolean indicating whether we would like to use random seeds
+    seeds_count
+        If we use random seeds, this specifies the seed count
+    seeds_per_voxel
+        If True, the seed count is specified per voxel
+    step_width
+        The step width used while tracking
+    fa_threshold
+        The FA threshold to use to stop tracking
+    max_angle
+        The maximum allowed angle between incoming and outgoing angle, float between 0.0 and 90.0 deg
+    Returns
+    -------
+    Streamlines
+        A list of Streamlines
+    """
     seeds = _get_seeds(data_container, random_seeds, seeds_count, seeds_per_voxel)
 
     gtab = gradient_table(data_container.bvals, data_container.bvecs)
@@ -129,11 +127,40 @@ def get_dti_streamlines(data_container, random_seeds=False, seeds_count=30000, s
     return streamlines
 
 
-def save_streamlines(streamlines: list, filename: str, to_lps=True, binary=False):
-    save_vtk_streamlines(streamlines, filename, to_lps=to_lps, binary=binary)
+def save_streamlines(streamlines: list, path: str, to_lps=True, binary=False):
+    """
+    Saves the given streamlines to a file
+    Parameters
+    ----------
+    streamlines
+        The streamlines we want to save
+    path
+        The path we save the streamlines to
+    to_lps
+        A boolean indicating whether we want to save them in the LPS format instead of RAS (True by default)
+    binary
+        If True, the file will be written in a binary format.
+    Returns
+    -------
+
+    """
+    save_vtk_streamlines(streamlines, path, to_lps=to_lps, binary=binary)
 
 
-def load_streamlines(path: str, to_lps=True):
+def load_streamlines(path: str, to_lps=True) -> list:
+    """
+    Loads streamlines from the given path.
+    Parameters
+    ----------
+    path
+        The path to load streamlines from
+    to_lps
+        If True, we load streamlines under the assumption that they were stored in LPS (True by default)
+    Returns
+    -------
+    list
+        The streamlines we are trying to load
+    """
     if os.path.isdir(path):
         streamlines = []
         for file in os.listdir(path):
@@ -147,8 +174,18 @@ def load_streamlines(path: str, to_lps=True):
 
 def filtered_streamlines_by_length(streamlines: List, minimum=20, maximum=200) -> List:
     """
-    returns filtered streamlines that are longer than minimum (in mm) and shorter than maximum (in mm)
+    Returns filtered streamlines that are longer than minimum (in mm) and shorter than maximum (in mm)
+    Parameters
+    ----------
+    streamlines
+        The streamlines we would like to filter
+    minimum
+        The minimum length in mm
+    maximum
+        The maximum length in mm
+    Returns
+    -------
+    List
+        The filtered streamlines
     """
     return [x for x in streamlines if minimum <= metrics.length(x) <= maximum]
-
-
