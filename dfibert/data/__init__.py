@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import warnings
-from types import Union, NoneType
+from typing import Optional
 
 import dipy.reconst.dti as dti
 import nibabel as nb
@@ -195,7 +195,7 @@ class _DataNormaliser(DataPreprocessor):
             dwi = dwi / b0
             dwi[np.logical_not(np.isfinite(dwi))] = 0.
 
-        return DataContainer(dc.bvals, dc.bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, b0, dc.fa)
+        return DataContainer(dc.bvals, dc.bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
 
     def __str__(self):
         return str(self._parent) + "-Normalise"
@@ -244,7 +244,7 @@ class DataContainer(object):
 
     def __init__(self, bvals: np.ndarray, bvecs: np.ndarray, t1: np.ndarray,
                  dwi: np.ndarray, aff: np.ndarray, binary_mask: np.ndarray, b0: np.ndarray,
-                 fa: Union[np.ndarray, NoneType]):
+                 fa: Optional[np.ndarray]):
         self.bvals = bvals
         self.bvecs = bvecs
         self.t1 = t1
