@@ -1,9 +1,6 @@
 """
 The postprocessing submodule of the data module hosts different options
 of postprocessing the DWI data. Those can be passed to datasets for further use.
-
-Each postprocessing function returns a function to pass to the Dataset.
-For unique identification, each of those functions contains an attribute `id`.
 """
 from typing import Union
 import numpy as np
@@ -32,8 +29,11 @@ class SphericalHarmonics(PostprocessingOption):
 
         The resampled data is calculated using the DWI Sphere.
 
-        :param sh_order: The order of the spherical harmonics
-        :param smooth:
+        Parameters
+        ----------
+        sh_order
+            The order of the spherical harmonics
+        smooth
         """
         super().__init__()
         self.sh_order = sh_order
@@ -57,9 +57,13 @@ class Resample(SphericalHarmonics):
 
         The real sphere data is resampled to the new sphere, then spherical harmonics are applied.
 
-        :param sh_order: The order of the spherical harmonics
-        :param smooth:
-        :param sphere: The sphere we are resampling to
+        Parameters
+        ----------
+        sh_order
+            The order of the spherical harmonics
+        smooth
+        sphere
+            The sphere we are resampling to
         """
         super().__init__(sh_order=sh_order, smooth=smooth)
         if isinstance(sphere, Sphere):
@@ -81,8 +85,12 @@ class Resample100(Resample):
         Resamples the value to 100 directions with the repulsion100 sphere.
 
         Just a shortcut for the `resample` option.
-        :param sh_order: The order of the spherical harmonics
-        :param smooth:
+
+        Parameters
+        ----------
+        sh_order
+            The order of the spherical harmonics
+        smooth
         """
         super().__init__(sh_order=sh_order, smooth=smooth, sphere="repulsion100")
 
@@ -95,9 +103,14 @@ class Resample2D(Resample):
 
         See `dfibert.util.get_2D_sphere` for more details on how the 2D sphere is generated.
 
-        :param sh_order: The order of the spherical harmonics
-        :param smooth:
-        :param no_thetas: the number of thetas to use for the sphere generation
-        :param no_phis: the number of thetas to use for the sphere generation
+        Parameters
+        ----------
+        sh_order
+            The order of the spherical harmonics
+        smooth
+        no_thetas
+            the number of thetas to use for the sphere generation
+        no_phis
+            the number of phis to use for the sphere generation
         """
         super().__init__(sh_order=sh_order, smooth=smooth, sphere=get_2D_sphere(no_phis=no_phis, no_thetas=no_thetas))
