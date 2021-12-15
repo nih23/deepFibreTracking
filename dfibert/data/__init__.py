@@ -28,20 +28,18 @@ from dfibert.data.postprocessing import PostprocessingOption
 
 
 class DataPreprocessor(object):
-    def __init__(self, parent: DataPreprocessor = None):
+    def __init__(self, parent: Optional[DataPreprocessor] = None):
         """
         Creates a new empty DataPreprocessor.
 
-        :param parent: An optional previous DataPreprocessor we want to continue with
-        :type parent: DataPreprocessor, optional
+        Parameters
+        ----------
+        parent
+            An optional previous DataPreprocessor we want to continue from
         """
         self._parent = parent
 
     def _preprocess(self, data_container: DataContainer) -> DataContainer:
-        """
-        :param data_container: a DataContainer
-        :return: a tuple with the identical parameters processed
-        """
         if self._parent is None:
             return data_container
         else:
@@ -53,30 +51,48 @@ class DataPreprocessor(object):
         Because data_containers are treated as immutable, the given data_container (and its numpy arrays)
         won't be modified.
 
-        :param data_container: The given data_container
-        :return: A new preprocessed data_container
+        Parameters
+        ----------
+        data_container
+            The given data_container
+
+        Returns
+        -------
+        DataContainer
+            A new preprocessed DataContainer
         """
+
         dc = data_container
         data_container = DataContainer(dc.bvals.copy(), dc.bvecs.copy(), dc.t1.copy(), dc.dwi.copy(), dc.aff.copy(),
                                        dc.binary_mask.copy(), dc.b0.copy(), None if dc.fa is None else dc.fa.copy())
         return self._preprocess(data_container)
 
     def denoise(self, smooth=3, patch_radius=3) -> DataPreprocessor:
-        """Denoises the data using Local PCA with empirical thresholds
+        """
+        Denoises the data using Local PCA with empirical thresholds
 
-        :param smooth: the voxel radius used by the Gaussian filter for the noise estimate
-        :param patch_radius: the voxel radius used by the Local PCA algorithm to denoise
-        :return:A new DataPreprocessor, incorporating the previous steps plus the new denoise
+        Parameters
+        ----------
+        smooth
+            the voxel radius used by the Gaussian filter for the noise estimate
+        patch_radius
+            the voxel radius used by the Local PCA algorithm to denoise
+        Returns
+        -------
+        DataPreprocessor
+            A new DataPreprocessor, incorporating the previous steps plus the new denoise
         """
         return _DataDenoiser(self, smooth, patch_radius)
 
     def normalize(self) -> DataPreprocessor:
         """
         Normalize DWI Data based on b0 image.
-
         The weights are divided by their b0 value.
 
-        :return: A new DataPreprocessor, incorporating the previous steps plus the new normalize
+        Returns
+        -------
+        DataPreprocessor
+            A new DataPreprocessor, incorporating the previous steps plus the new normalize
         """
         return _DataNormalizer(self)
 
@@ -87,16 +103,27 @@ class DataPreprocessor(object):
         All measurements where the B-value deviates more than `max_deviation` from the `b_value`
         are removed from the dataset.
 
-        :param b_value: the intended B-value
-        :param max_deviation: the maximum allowed deviation
-        :return: A new DataPreprocessor, incorporating the previous steps plus the new crop
+        Parameters
+        ----------
+        b_value
+            the intended B-value
+        max_deviation
+            the maximum allowed deviation from the given b_value
+        Returns
+        -------
+        DataPreprocessor
+            A new DataPreprocessor, incorporating the previous steps plus the new crop
         """
         return _DataCropper(self, b_value, max_deviation)
 
     def fa_estimate(self):
         """
         Does the FA estimation at the current position in the pipeline
-        :return: A new DataPreprocessor, incorporating the previous steps plus the new fa estimate
+
+        Returns
+        -------
+        DataPreprocessor
+            A new DataPreprocessor, incorporating the previous steps plus the new fa estimate
         """
         return _DataFAEstimator(self)
 
@@ -104,21 +131,36 @@ class DataPreprocessor(object):
         """
         Loads a HCP Dataset and preprocesses it, returning a DataContainer
 
-        :param path: The path of the HCP Dataset
-        :param b0_threshold: The threshold for the b0 image
-        :return: A newly created DataContainer with the preprocessed HCP data.
+        Parameters
+        ----------
+        path
+            The path of the HCP Dataset
+        b0_threshold
+            The threshold for the b0 image
+        Returns
+        -------
+        DataContainer
+            A newly created DataContainer with the preprocessed HCP data.
         """
+
         file_mapping = {'bvals': 'bvals', 'bvecs': 'bvecs', 'img': 'data.nii.gz',
                         't1': 'T1w_acpc_dc_restore_1.25.nii.gz', 'mask': 'nodif_brain_mask.nii.gz'}
         return self._get_from_file_mapping(path, file_mapping, b0_threshold)
 
     def get_ismrm(self, path: str, b0_threshold: float = 10.0) -> DataContainer:
         """
-        Loads an ISMRM Dataset and preprocesses it, returning a DataContainer
+        Loads a ISMRM Dataset and preprocesses it, returning a DataContainer
 
-        :param path: The path of the HCP Dataset
-        :param b0_threshold: The threshold for the b0 image
-        :return: A newly created DataContainer with the preprocessed ISMRM data.
+        Parameters
+        ----------
+        path
+            The path of the ISMRM Dataset
+        b0_threshold
+            The threshold for the b0 image
+        Returns
+        -------
+        DataContainer
+            A newly created DataContainer with the preprocessed ISMRM data.
         """
         file_mapping = {'bvals': 'Diffusion.bvals', 'bvecs': 'Diffusion.bvecs',
                         'img': 'Diffusion.nii.gz', 't1': 'T1.nii.gz'}
@@ -172,9 +214,6 @@ class _DataCropper(DataPreprocessor):
 
         return DataContainer(bvals, bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
 
-    def __str__(self):
-        return str(self._parent) + "-Crop-b_value-{}-deviation-{}".format(self.b_value, self.max_deviation)
-
 
 class _DataNormalizer(DataPreprocessor):
     def __init__(self, parent):
@@ -196,9 +235,6 @@ class _DataNormalizer(DataPreprocessor):
 
         return DataContainer(dc.bvals, dc.bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
 
-    def __str__(self):
-        return str(self._parent) + "-Normalize"
-
 
 class _DataDenoiser(DataPreprocessor):
     def __init__(self, parent, smooth, patch_radius):
@@ -215,9 +251,6 @@ class _DataDenoiser(DataPreprocessor):
                        patch_radius=self.patch_radius)
         return DataContainer(dc.bvals, dc.bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
 
-    def __str__(self) -> str:
-        return str(self._parent) + "-Denoise-smooth-{}-patch_radius-{}".format(self.smooth, self.patch_radius)
-
 
 class _DataFAEstimator(DataPreprocessor):
     def __init__(self, parent):
@@ -233,9 +266,6 @@ class _DataFAEstimator(DataPreprocessor):
         dti_fit = dti_model.fit(dc.dwi, mask=dc.binary_mask)
         fa = dti_fit.fa
         return DataContainer(dc.bvals, dc.bvecs, dc.t1, dc.dwi, dc.aff, dc.binary_mask, dc.b0, fa)
-
-    def __str__(self):
-        return str(self._parent) + "-FA-estimation"
 
 
 class DataContainer(object):
@@ -264,8 +294,14 @@ class DataContainer(object):
         The conversion happens using the affine of the DWI image.
         It should be noted that the dimension of the given point array stays the same.
 
-        :param points: The points to convert.
-        :return: The converted points.
+        Parameters
+        ----------
+        points
+            The points to convert.
+        Returns
+        -------
+        np.ndarray
+            The converted points.
         """
 
         aff = np.linalg.inv(self.aff)
@@ -278,12 +314,20 @@ class DataContainer(object):
         The conversion happens using the affine of the DWI image.
         It should be noted that the dimension of the given point array stays the same.
 
-        :param points:  The points to convert.
-        :return: The converted points.
+
+        Parameters
+        ----------
+        points
+            The points to convert.
+
+        Returns
+        -------
+        np.ndarray
+            The converted points.
         """
         return apply_affine(self.aff, points)
 
-    def get_interpolated_dwi(self, points: np.ndarray, postprocessing: PostprocessingOption = None,
+    def get_interpolated_dwi(self, points: np.ndarray, postprocessing: Optional[PostprocessingOption] = None,
                              ignore_outside_points: bool = False) -> np.ndarray:
         """
         Returns interpolated dwi for given RAS+ points.
@@ -293,14 +337,20 @@ class DataContainer(object):
 
         If you provide a postprocessing method, the interpolated data is then fed through this postprocessing option.
 
-        :param numpy.ndarray points: The array containing the points. Shape is matched in output.
-        :param PostprocessingOption postprocessing: A postprocessing method, e.g res100, raw, spherical_harmonics etc.
+        Parameters
+        ----------
+        points
+            The array containing the points. Shape is matched in output.
+        postprocessing
+            A postprocessing method, e.g Resample100, Raw, SphericalHarmonics etc.
             which will be applied to the output.
-        :param ignore_outside_points:
-        :return: The DWI-Values interpolated for the given points. The input shape is matched aside of
-        the last dimension.
-        :type: numpy.ndarray
-
+        ignore_outside_points
+            A boolean indicating whether an exception should be thrown if points lay outside of the DWI scan
+        Returns
+        -------
+        np.ndarray
+            The DWI-Values interpolated for the given points. The input shape is matched aside of
+            the last dimension.
         """
         new_shape = (*points.shape[:-1], -1)
 
