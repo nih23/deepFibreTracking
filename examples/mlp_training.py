@@ -8,7 +8,7 @@ from dfibert.data import DataPreprocessor
 from dfibert.data.postprocessing import Resample100
 from dfibert.dataset.processing import RegressionProcessing
 from dfibert.dataset import SingleDirectionsDataset  # TODO update example
-from dfibert.tracker import CSDTracker
+from dfibert.tracker import get_csd_streamlines
 from dfibert.util import random_split
 
 # This is a simple MLP training to show example usage for the provided library
@@ -132,22 +132,17 @@ def radians_loss(x, y):
 
 def main():
     """The main function"""
-    preprocessor = DataPreprocessor().normalise().crop()  # normalisation and cropping
+    preprocessor = DataPreprocessor().normalize().crop()  # normalisation and cropping
     tracker_data = DataPreprocessor().get_hcp("data/HCP/100307")  # Initialize DW-MRT Image of HCP Participant #100307
     data = preprocessor.preprocess(tracker_data)
     print("Initialized data...")
-    tracker = CSDTracker(tracker_data, random_seeds=True,
-                         seeds_count=10000)  # Initialize CSD Tracker to track some streamlines.
-    # In production, you would probably generate the streamlines in a separate file and then prepare them and load
-    # them with another Tracker
-    tracker.track()  # Track the streamlines. This may take some time. It is able to cache the streamlines into cache
-    # folder for further executions
+    streamlines = get_csd_streamlines(tracker_data, random_seeds=True, seeds_count=10000)
 
     print("Initialized streamlines...")
 
     processing = RegressionProcessing(rotate=False, grid_dimension=(3, 3, 3),
                                       postprocessing=Resample100())  # choose a data Processing option for your training
-    dataset = SingleDirectionsDataset(tracker, data, processing, append_reverse=True, online_caching=True)
+    dataset = SingleDirectionsDataset(streamlines, data, processing, append_reverse=True, online_caching=True)
     # choose a dataset, this one is good for non-recurrent architectures
 
     training_set, validation_set = random_split(

@@ -19,7 +19,7 @@ from scipy.interpolate import RegularGridInterpolator
 
 from dfibert.data.postprocessing import Resample100, Resample
 from dfibert.data import DataPreprocessor, DataContainer
-from dfibert.tracker import StreamlinesFromFileTracker
+from dfibert.tracker import load_streamlines
 from dfibert.util import get_grid
 
 from ._state import TractographyState
@@ -145,9 +145,9 @@ class RLtractEnvironment(gym.Env):
         self.pReferenceStreamlines = pReferenceStreamlines
 
         # grab streamlines from file
-        file_sl = StreamlinesFromFileTracker(self.pReferenceStreamlines)
+        file_sl = StreamlinesFromFileTracker()
         file_sl.track()
-        self.tracked_streamlines = file_sl.get_streamlines()
+        self.tracked_streamlines = load_streamlines(self.pReferenceStreamlines)
 
         # filter streamlines that are shorter than 10 nodes
         self.tracked_streamlines = list(filter(lambda sl: len(sl) >= 10, self.tracked_streamlines))

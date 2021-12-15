@@ -8,7 +8,7 @@ Firstly, you can use `DataContainer` objects to store and retrieve DWI data:
 
 ```python
 from dfibert.data import DataPreprocessor
-preprocessor = DataPreprocessor().denoise().fa_estimate().normalise().crop()
+preprocessor = DataPreprocessor().denoise().fa_estimate().normalize().crop()
 hcp_data = preprocessor.get_hcp("/path/to/hcp/dataset/")
 ismrm_data = preprocessor.get_ismrm("/path/to/ismrm/")
 ```
