@@ -17,7 +17,7 @@ import torch
 
 from scipy.interpolate import RegularGridInterpolator
 
-from dfibert.data.postprocessing import res100, resample
+from dfibert.data.postprocessing import Resample100, Resample
 from dfibert.data import DataPreprocessor, DataContainer
 from dfibert.tracker import StreamlinesFromFileTracker
 from dfibert.util import get_grid
@@ -69,7 +69,7 @@ class RLtractEnvironment(gym.Env):
         self.directions_odf = torch.from_numpy(self.sphere_odf.vertices).to(device)
 
         self.action_space = Discrete(noActions)  # spaces.Discrete(noActions+1)
-        self.dwi_postprocessor = resample(sphere=get_sphere('repulsion100'))  # resample(sphere=sphere)
+        self.dwi_postprocessor = Resample(sphere=get_sphere('repulsion100'))  # resample(sphere=sphere)
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
         self.maxL2dist_to_State = maxL2dist_to_State
