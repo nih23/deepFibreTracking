@@ -14,7 +14,6 @@ from typing import Optional
 
 import dipy.reconst.dti as dti
 import nibabel as nb
-import numpy
 import numpy as np
 from dipy.core.gradients import gradient_table
 from dipy.denoise.localpca import localpca
@@ -71,15 +70,15 @@ class DataPreprocessor(object):
         """
         return _DataDenoiser(self, smooth, patch_radius)
 
-    def normalise(self) -> DataPreprocessor:
+    def normalize(self) -> DataPreprocessor:
         """
         Normalize DWI Data based on b0 image.
 
         The weights are divided by their b0 value.
 
-        :return: A new DataPreprocessor, incorporating the previous steps plus the new normalise
+        :return: A new DataPreprocessor, incorporating the previous steps plus the new normalize
         """
-        return _DataNormaliser(self)
+        return _DataNormalizer(self)
 
     def crop(self, b_value=1000.0, max_deviation=100.0) -> DataPreprocessor:
         """
@@ -177,7 +176,7 @@ class _DataCropper(DataPreprocessor):
         return str(self._parent) + "-Crop-b_value-{}-deviation-{}".format(self.b_value, self.max_deviation)
 
 
-class _DataNormaliser(DataPreprocessor):
+class _DataNormalizer(DataPreprocessor):
     def __init__(self, parent):
         super().__init__(parent)
 
@@ -198,7 +197,7 @@ class _DataNormaliser(DataPreprocessor):
         return DataContainer(dc.bvals, dc.bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
 
     def __str__(self):
-        return str(self._parent) + "-Normalise"
+        return str(self._parent) + "-Normalize"
 
 
 class _DataDenoiser(DataPreprocessor):
@@ -208,8 +207,7 @@ class _DataDenoiser(DataPreprocessor):
         self.patch_radius = patch_radius
 
     def _preprocess(self, data_container: DataContainer) -> DataContainer:
-        dc = \
-            super()._preprocess(data_container)
+        dc = super()._preprocess(data_container)
         gtab = gradient_table(dc.bvals, dc.bvecs)
         sigma = pca_noise_estimate(dc.dwi, gtab, correct_bias=True,
                                    smooth=self.smooth)
