@@ -129,8 +129,7 @@ class SeedBasedTracker(Tracker):
         """
         removes streamlines that are shorter than minimumLength (in mm)
         """
-        return [x for x in self.streamlines if metrics.length(x) > minimum
-                and metrics.length(x) < maximum]
+        return [x for x in self.streamlines if minimum < metrics.length(x) < maximum]
 
 
 class CSDTracker(SeedBasedTracker):
