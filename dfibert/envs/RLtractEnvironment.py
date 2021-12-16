@@ -21,6 +21,8 @@ from dfibert.data.postprocessing import res100, resample
 from dfibert.data import HCPDataContainer, ISMRMDataContainer, PointOutsideOfDWIError
 from dfibert.tracker import StreamlinesFromFileTracker
 from dfibert.util import get_grid
+from dipy.tracking import utils
+import dipy.reconst.dti as dti
 
 from ._state import TractographyState
 
@@ -32,19 +34,17 @@ from shapely.strtree import STRtree
 from collections import deque
 
 class RLtractEnvironment(gym.Env):
-    def __init__(self, device, seeds, stepWidth = 0.8, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, tracking_in_RAS = True, fa_threshold = 0.1, b_val = 1000, max_angle=80., odf_state = True):
+    def __init__(self, device, seeds = None, stepWidth = 0.8, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, tracking_in_RAS = True, fa_threshold = 0.1, b_val = 1000, max_angle=80., odf_state = True):
         print("Loading dataset # ", dataset)
         self.device = device
         self.dataset = HCPDataContainer(dataset)
         self.dataset.normalize() #normalize HCP data
         self.dataset.crop(b_val) #select only data corresponding to a certain b-value
         self.dataset.generate_fa() #prepare for interpolation of fa values
-
-        self.seeds = seeds
-        
         self.stepWidth = stepWidth
         self.dtype = torch.FloatTensor # vs. torch.cuda.FloatTensor
-        #sphere = HemiSphere(xyz=res)#get_sphere("repulsion100")
+        self.dti_model = None
+        self.dti_fit = None
         np.random.seed(42)
         
         phi = np.pi * np.random.rand(action_space)
@@ -77,15 +77,29 @@ class RLtractEnvironment(gym.Env):
         #self.changeReferenceStreamlinesFile(pReferenceStreamlines)
         self.fa_threshold = fa_threshold
         self.maxSteps = 2000
-
-        self.reset()
         
         ## init odf interpolator
         self._init_odf()
+        
+        ## init seeds
+        self.seeds = seeds
+        if(self.seeds is None):
+            fa_img = self.dti_fit.fa
+
+            seed_mask = fa_img.copy()
+            seed_mask[seed_mask >= 0.2] = 1
+            seed_mask[seed_mask < 0.2] = 0
+
+            seeds = utils.seeds_from_mask(seed_mask, affine=np.eye(4), density=1) # tracking in IJK
+            self.seeds = torch.from_numpy(seeds)
+
+        self.reset()
+        
+
 
         ## init adjacency matric
-        self.max_angle = max_angle                                      # the maximum angle between two direction vectors
-        self.cos_similarity = np.cos(np.deg2rad(max_angle))                  # set cosine similarity treshold for initialization of adjacency matrix
+        self.max_angle = max_angle                          # the maximum angle between two direction vectors
+        self.cos_similarity = np.cos(np.deg2rad(max_angle)) # set cosine similarity treshold for initialization of adjacency matrix
         self._set_adjacency_matrix(self.sphere, self.cos_similarity)
         
         ## init obersavation space
@@ -108,11 +122,13 @@ class RLtractEnvironment(gym.Env):
     def _init_odf(self):
         print("Computing ODF")
         # fit DTI model to data
-        dti_model = dti.TensorModel(self.dataset.data.gtab, fit_method='LS')
-        dti_fit = dti_model.fit(self.dataset.data.dwi, mask=self.dataset.data.binarymask)
+        if(self.dti_model is None):
+            self.dti_model = dti.TensorModel(self.dataset.data.gtab, fit_method='LS')
+        if(self.dti_fit is None):
+            self.dti_fit = self.dti_model.fit(self.dataset.data.dwi, mask=self.dataset.data.binarymask)
 
         # compute ODF
-        odf = dti_fit.odf(self.sphere_odf)
+        odf = self.dti_fit.odf(self.sphere_odf)
         ## set up interpolator for odf evaluation
         x_range = np.arange(odf.shape[0])
         y_range = np.arange(odf.shape[1])
@@ -124,11 +140,12 @@ class RLtractEnvironment(gym.Env):
         #self.pmf = odf.clip(min=0)
 
     def _init_shmcoeff(self, sh_basis_type=None):
-        dti_model = dti.TensorModel(self.dataset.data.gtab, fit_method='LS')
+        if(self.dti_model is None):
+            self.dti_model = dti.TensorModel(self.dataset.data.gtab, fit_method='LS')
 
-        peaks = peaks_from_model(model=dti_model, data=self.dataset.data.dwi, sphere=self.sphere, \
+        peaks = peaks_from_model(model=self.dti_model, data=self.dataset.data.dwi, sphere=self.sphere, \
                                 relative_peak_threshold=.2, min_separation_angle=25, mask=self.dataset.data.binarymask, npeaks=2)
-        
+                
         self.shcoeff = peaks.shm_coeff
         sh_order = order_from_ncoef(self.shcoeff.shape[-1])
         try:
@@ -181,12 +198,12 @@ class RLtractEnvironment(gym.Env):
         interpol_odf = np.rollaxis(interpol_odf,3)
         return interpol_odf
     
+    
     def interpolatePMFatState(self, stateCoordinates):
         coeff = trilinear_interpolate4d(self.shcoeff, stateCoordinates)
         pmf = np.dot(self._B, coeff)
         pmf.clip(0, out=pmf)
         return pmf
-        #return trilinear_interpolate4d(self.pmf, stateCoordinates)
 
 
     def step(self, action, direction="forward"):
@@ -195,24 +212,18 @@ class RLtractEnvironment(gym.Env):
         ### Termination conditions ###
         # I. number of steps larger than maximum
         if (self.stepCounter == self.maxSteps):
-            #print("Terminal due to max amount of steps reached.")
             return self.state, 0., True, {} 
         
         # II. fa below threshold? stop tracking
         if (self.dataset.get_fa(self.state.getCoordinate()) < self.fa_threshold):
-            #print("Terminal due to too low fa. ", self.dataset.get_fa(self.state.getCoordinate()))
             return self.state, 0., True, {}     
 
         ### Tracking ###
         cur_tangent = self.directions[action].view(-1,3)
-        #print("cur_tangent: ", cur_tangent)
         cur_position = self.state.getCoordinate().view(-1,3)
         if self.stepCounter == 1. and direction == "backward":
             cur_tangent = cur_tangent * -1
-        #cur_tangent = self._correct_direction(cur_tangent).view(-1,3)
-        #print("cur_tangent after correction: ", cur_tangent)
         next_position = cur_position + self.stepWidth * cur_tangent
-        #print("next_position in step: ", next_position)
         nextState = TractographyState(next_position, self.state_interpol_fctn)
         
         ### REWARD ###
@@ -227,7 +238,6 @@ class RLtractEnvironment(gym.Env):
         #@TODO: no. of diffusion directions hard-coded to 100
         #@TODO: taken center slice as this resembles maximum DG more closely. Alternatively: odf should be averaged first
         odf_cur = torch.from_numpy(self.interpolateODFatState(stateCoordinates=cur_position))[:,1,1,1].view(100)
-        #odf_cur = torch.mean(odf_cur, 1)
         reward = odf_cur / torch.max(odf_cur)
         reward = reward[action]
         
