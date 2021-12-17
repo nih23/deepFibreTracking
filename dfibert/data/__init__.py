@@ -284,7 +284,7 @@ class DataContainer(object):
         x_range = np.arange(dwi.shape[0])
         y_range = np.arange(dwi.shape[1])
         z_range = np.arange(dwi.shape[2])
-
+        self.fa_interpolator = RegularGridInterpolator((x_range, y_range, z_range), fa) if fa is not None else None
         self.interpolator = RegularGridInterpolator((x_range, y_range, z_range), dwi)
 
     def to_ijk(self, points: np.ndarray) -> np.ndarray:
@@ -363,12 +363,26 @@ class DataContainer(object):
         if np.sum(is_outside) > 0 and not ignore_outside_points:
             raise PointOutsideOfDWIError(self, self.to_ras(points), self.to_ras(points[is_outside]))
 
-        result = np.empty_like(points)
-
-        result[not is_outside] = self.interpolator(points[not is_outside])
+        points[is_outside, :] = 0
+        result = self.interpolator(points)
 
         if postprocessing is not None:
-            result[not is_outside] = postprocessing.process(self, points[not is_outside], result[not is_outside])
+            result = postprocessing.process(self, points, result)
         result[is_outside, :] = 0
+
         result = result.reshape(new_shape)
         return result
+
+    def get_fa(self, coordinate):
+        """Retrieves the FA values at a specific position.
+
+        Returns
+        -------
+        ndarray
+            Fractional anisotropy (FA) calculated from cached eigenvalues.
+        
+        See Also
+        --------
+        generate_fa: The method generating the fa values which are returned here.
+        """
+        return self.fa_interpolator(coordinate)
