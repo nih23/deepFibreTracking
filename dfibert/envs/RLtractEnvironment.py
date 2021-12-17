@@ -5,7 +5,7 @@ import numpy as np
 from dipy.data import get_sphere
 from dipy.data import HemiSphere
 from dipy.core.sphere import disperse_charges
-
+from dipy.core.gradients import gradient_table
 from dipy.direction import peaks_from_model
 from dipy.reconst.shm import order_from_ncoef, sph_harm_lookup
 from dipy.core.interpolation import trilinear_interpolate4d
@@ -119,9 +119,10 @@ class RLtractEnvironment(gym.Env):
         print("Computing ODF")
         # fit DTI model to data
         if (self.dti_model is None):
-            self.dti_model = dti.TensorModel(self.dataset.data.gtab, fit_method='LS')
+            gtab = gradient_table(self.dataset.bvals, self.dataset.bvecs)
+            self.dti_model = dti.TensorModel(gtab, fit_method='LS')
         if (self.dti_fit is None):
-            self.dti_fit = self.dti_model.fit(self.dataset.data.dwi, mask=self.dataset.data.binarymask)
+            self.dti_fit = self.dti_model.fit(self.dataset.dwi, mask=self.dataset.binary_mask)
 
         # compute ODF
         odf = self.dti_fit.odf(self.sphere_odf)
@@ -137,10 +138,11 @@ class RLtractEnvironment(gym.Env):
 
     def _init_shmcoeff(self, sh_basis_type=None):
         if (self.dti_model is None):
-            self.dti_model = dti.TensorModel(self.dataset.data.gtab, fit_method='LS')
+            gtab = gradient_table(self.dataset.bvals, self.dataset.bvecs)
+            self.dti_model = dti.TensorModel(gtab, fit_method='LS')
 
-        peaks = peaks_from_model(model=self.dti_model, data=self.dataset.data.dwi, sphere=self.sphere, \
-                                 relative_peak_threshold=.2, min_separation_angle=25, mask=self.dataset.data.binarymask,
+        peaks = peaks_from_model(model=self.dti_model, data=self.dataset.dwi, sphere=self.sphere, \
+                                 relative_peak_threshold=.2, min_separation_angle=25, mask=self.dataset.binary_mask,
                                  npeaks=2)
 
         self.shcoeff = peaks.shm_coeff
@@ -172,13 +174,14 @@ class RLtractEnvironment(gym.Env):
 
     def interpolateRawDWIatState(self, stateCoordinates):
         # TODO: maybe stay in RAS all the time then no need to transfer to IJK
+        print("interpolateRawDWIatState")
         ras_points = self.dataset.to_ras(stateCoordinates)  # Transform state to World RAS+ coordinate system
 
         ras_points = self.grid + ras_points
 
         try:
             interpolated_dwi = self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor)
-        except:
+        except LookupError as e:
             # print("Point outside of brain mask :(")
             return None
         interpolated_dwi = np.rollaxis(interpolated_dwi, 3)  # CxWxHxD
@@ -186,7 +189,9 @@ class RLtractEnvironment(gym.Env):
         return interpolated_dwi
 
     def interpolateODFatState(self, stateCoordinates):
-        ijk_pts = self.grid + stateCoordinates.cpu().detach().numpy()
+        if isinstance(stateCoordinates, torch.Tensor):
+            stateCoordinates = stateCoordinates.cpu().detach().numpy() 
+        ijk_pts = self.grid + stateCoordinates
         interpol_odf = self.odf_interpolator(ijk_pts)
         interpol_odf = np.rollaxis(interpol_odf, 3)
         return interpol_odf
