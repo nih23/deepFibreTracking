@@ -67,7 +67,7 @@ class Resample(SphericalHarmonics):
         """
         super().__init__(sh_order=sh_order, smooth=smooth)
         if isinstance(sphere, Sphere):
-            self.sphere = Sphere
+            self.sphere = sphere
         else:  # get with name
             self.sphere = get_sphere(sphere)
         self.real_sh, _, _ = real_sym_sh_mrtrix(self.sh_order, self.sphere.theta, self.sphere.phi)
