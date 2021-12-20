@@ -1,8 +1,9 @@
-"""Implementing different tracker classes"""
+"""Implementing different tracking approaches"""
 
 import os
-import random
+from typing import List
 
+from dipy.core.gradients import gradient_table
 from dipy.tracking.utils import random_seeds_from_mask, seeds_from_mask
 from dipy.tracking.local_tracking import LocalTracking
 from dipy.tracking.stopping_criterion import ThresholdStoppingCriterion
@@ -15,224 +16,176 @@ from dipy.data import get_sphere, default_sphere
 from dipy.direction import peaks_from_model, DeterministicMaximumDirectionGetter
 import dipy.reconst.dti as dti
 
-from types import SimpleNamespace
-from dfibert.config import Config
-from dfibert.cache import Cache
-from .exceptions import StreamlinesAlreadyTrackedError, ISMRMStreamlinesNotCorrectError, StreamlinesNotTrackedError
 
-class Tracker():
-    """Universal Tracker class"""
-    def __init__(self, data_container):
-        self.id = str(self.__class__.__name__)
-        if data_container is not None:
-            self.data_container = data_container
-            self.id = self.id + "-" + str(data_container.id)
-        self.streamlines = None
-    def track(self):
-        """Track given data"""
-        if self.streamlines is not None:
-            raise StreamlinesAlreadyTrackedError(self) from None
-        if Cache.get_cache().in_cache(self.id):
-            self.streamlines = Cache.get_cache().get(self.id)
-
-    def get_streamlines(self):
-        """Retrieve the calculated streamlines"""
-        if self.streamlines is None:
-            raise StreamlinesNotTrackedError(self) from None
-        return self.streamlines
-
-class SeedBasedTracker(Tracker):
-    """Seed based tracker"""
-    def __init__(self, data_container,
-                 random_seeds=None,
-                 seeds_count=None,
-                 seeds_per_voxel=None,
-                 step_width=None,
-                 min_length=None,
-                 max_length=None):
-        super().__init__(data_container)
-        self.options = SimpleNamespace()
-        if seeds_count is not None and random_seeds is None:
-            random_seeds = True
-        if random_seeds is None:
-            random_seeds = Config.get_config().getboolean("tracking", "randomSeeds", fallback="no")
-        if seeds_count is None:
-            seeds_count = Config.get_config().getint("tracking", "seedsCount", fallback="30000")
-        if seeds_per_voxel is None:
-            seeds_per_voxel = Config.get_config().getboolean("tracking", "seedsPerVoxel",
-                                                             fallback="no")
-        if step_width is None:
-            step_width = Config.get_config().getfloat("tracking", "stepWidth", fallback="1.0")
-        if min_length is None:
-            min_length = Config.get_config().getfloat("tracking", "minimumStreamlineLength",
-                                                      fallback="20")
-        if max_length is None:
-            max_length = Config.get_config().getfloat("tracking", "maximumStreamlineLength",
-                                                      fallback="200")
-        if random_seeds:
-            self.id = self.id + \
-                      "-randomStreamlines-no{n}-perVoxel{perVoxel}".format(n=seeds_count,
-                                                                           perVoxel=seeds_per_voxel)
-        self.id = self.id + "-sw{ss}-mil{mil}-max{mal}".format(ss=step_width,
-                                                               mil=min_length,
-                                                               mal=max_length)
-        self.data = data_container.data
-        self.seeds = None
-        self.options.seeds_count = seeds_count
-        self.options.seeds_per_voxel = seeds_per_voxel
-        self.options.random_seeds = random_seeds
-        self.options.max_length = max_length
-        self.options.min_length = min_length
-        self.options.step_width = step_width
-    def _track(self, classifier, direction_getter):
-        if self.streamlines is not None:
-            raise StreamlinesAlreadyTrackedError(self) from None
-        streamlines_generator = LocalTracking(direction_getter, classifier, self.seeds,
-                                              self.data.aff, step_size=self.options.step_width)
-        self.streamlines = Streamlines(streamlines_generator)
-        self.streamlines = self.filtered_streamlines_by_length(minimum=self.options.min_length,
-                                                        maximum=self.options.max_length)
-    def track(self):
-        Tracker.track(self)
-        if self.streamlines is None:
-            if not self.options.random_seeds:
-                seeds = seeds_from_mask(self.data.binarymask, affine=self.data.aff)
-            else:
-                seeds = random_seeds_from_mask(self.data.binarymask,
-                                               seeds_count=self.options.seeds_count,
-                                               seed_count_per_voxel=self.options.seeds_per_voxel,
-                                               affine=self.data.aff)
-            self.seeds = seeds
-
-    def save_to_file(self, path):
-        """Save the calculated streamlines to file"""
-        if self.streamlines is None:
-            raise StreamlinesNotTrackedError(self) from None
-        save_vtk_streamlines(self.streamlines, path)
-
-    def filtered_streamlines_by_length(self,
-                                     minimum=Config.get_config()
-                                     .getfloat("tracking", "minimumStreamlineLength",
-                                               fallback="20"),
-                                     maximum=Config.get_config()
-                                     .getfloat("tracking", "maximumStreamlineLength",
-                                               fallback="200")):
-        """
-        removes streamlines that are shorter than minimumLength (in mm)
-        """
-        return [x for x in self.streamlines if metrics.length(x) > minimum
-                and metrics.length(x) < maximum]
-
-class CSDTracker(SeedBasedTracker):
-    """A CSD based Tracker"""
-    def __init__(self, data_container,
-                 random_seeds=None,
-                 seeds_count=None,
-                 seeds_per_voxel=None,
-                 step_width=None,
-                 min_length=None,
-                 max_length=None,
-                 fa_threshold=None):
-        SeedBasedTracker.__init__(self, data_container, random_seeds, seeds_count, seeds_per_voxel,
-                                  step_width, min_length, max_length)
-        if fa_threshold is None:
-            fa_threshold = Config.get_config().getfloat("tracking", "faTreshhold", fallback="0.15")
-        self.id = self.id + "-fa{fa}".format(fa=fa_threshold)
-        self.options.fa_threshold = fa_threshold
-
-    def track(self):
-        SeedBasedTracker.track(self)
-        if self.streamlines is not None:
-            return
-        roi_r = Config.get_config().getint("CSDTracking", "autoResponseRoiRadius",
-                                           fallback="10")
-        fa_thr = Config.get_config().getfloat("CSDTracking", "autoResponseFaThreshold",
-                                              fallback="0.7")
-        response, _ = auto_response_ssst(self.data.gtab, self.data.dwi, roi_radii=roi_r, fa_thr=fa_thr)
-        csd_model = ConstrainedSphericalDeconvModel(self.data.gtab, response)
-        relative_peak_thr = Config.get_config().getfloat("CSDTracking", "relativePeakTreshold",
-                                                         fallback="0.5")
-        min_separation_angle = Config.get_config().getfloat("CSDTracking", "minimumSeparationAngle",
-                                                            fallback="25")
-        direction_getter = peaks_from_model(model=csd_model,
-                                            data=self.data.dwi,
-                                            sphere=get_sphere('symmetric724'),
-                                            mask=self.data.binarymask,
-                                            relative_peak_threshold=relative_peak_thr,
-                                            min_separation_angle=min_separation_angle,
-                                            parallel=False)
-        dti_fit = dti.TensorModel(self.data.gtab, fit_method='LS')
-        dti_fit = dti_fit.fit(self.data.dwi, mask=self.data.binarymask)
-        self._track(ThresholdStoppingCriterion(dti_fit.fa, self.options.fa_threshold),
-                    direction_getter)
-        Cache.get_cache().set(self.id, self.streamlines)
-
-class DTITracker(SeedBasedTracker):
-    """A DTI based Tracker"""
-    def __init__(self, data_container,
-                 random_seeds=None,
-                 seeds_count=None,
-                 seeds_per_voxel=None,
-                 step_width=None,
-                 min_length=None,
-                 max_length=None,
-                 fa_threshold=None):
-        SeedBasedTracker.__init__(self, data_container, random_seeds, seeds_count, seeds_per_voxel,
-                                  step_width, min_length, max_length)
-        if fa_threshold is None:
-            fa_threshold = Config.get_config().getfloat("tracking", "faTreshhold", fallback="0.15")
-        self.id = self.id + "-fa{fa}".format(fa=fa_threshold)
-        self.options.fa_threshold = fa_threshold
-
-    def track(self):
-        SeedBasedTracker.track(self)
-        if self.streamlines is not None:
-            return
-        dti_model = TensorModel(self.data.gtab)
-        dti_fit = dti_model.fit(self.data.dwi, mask=self.data.binarymask)
-        dti_fit_odf = dti_fit.odf(sphere=default_sphere)
-        max_angle = Config.get_config().getfloat("DTITracking", "maxAngle", fallback="30.0")
-        direction_getter = DeterministicMaximumDirectionGetter.from_pmf(dti_fit_odf,
-                                                                        max_angle=max_angle,
-                                                                        sphere=default_sphere)
-        self._track(ThresholdStoppingCriterion(dti_fit.fa, self.options.fa_threshold),
-                    direction_getter)
-        Cache.get_cache().set(self.id, self.streamlines)
-
-class StreamlinesFromFileTracker(Tracker):
-    """A Tracker class representing preloaded Streamlines from file."""
-    def __init__(self, path):
-        Tracker.__init__(self, None)
-        self.path = path
-        self.id = self.id + "-" + path.replace(os.path.sep, "+")
-
-    def track(self):
-        Tracker.track(self)
-        self.streamlines = load_vtk_streamlines(self.path) # TODO catch exception if path does not exist
-
-class ISMRMReferenceStreamlinesTracker(Tracker):
-    """Class representing the ISMRM 2015 Ground Truth fiber tracks."""
-    def __init__(self, data_container, streamline_count=None):
-        Tracker.__init__(self, data_container)
-        self.options = SimpleNamespace()
-        self.options.streamline_count = streamline_count
-        if streamline_count is not None:
-            self.id = self.id + "-" + str(streamline_count)
-        self.path = Config.get_config().get("data", "pathISMRMGroundTruth",
-                                            fallback='data/ISMRM2015GroundTruth')
-        self.path = self.path.rstrip(os.path.sep)
+def _get_seeds(data_container, random_seeds=False, seeds_count=30000, seeds_per_voxel=False):
+    if not random_seeds:
+        return seeds_from_mask(data_container.binary_mask, affine=data_container.aff)
+    else:
+        return random_seeds_from_mask(data_container.binary_mask,
+                                      seeds_count=seeds_count,
+                                      seed_count_per_voxel=seeds_per_voxel,
+                                      affine=data_container.aff)
 
 
-    def track(self):
-        Tracker.track(self)
-        self.streamlines = []
-        bundle_count = 0
-        for file in os.listdir(self.path):
-            if file.endswith(".fib"):
-                bundle_count = bundle_count + 1
-                sl = load_vtk_streamlines(os.path.join(self.path, file))
-                self.streamlines.extend(sl)
-        if len(self.streamlines) != 200433 or bundle_count != 25:
-            raise ISMRMStreamlinesNotCorrectError(self, self.path)
-        if self.options.streamline_count is not None:
-            self.streamlines = random.sample(self.streamlines, self.options.streamline_count)
+def get_csd_streamlines(data_container, random_seeds=False, seeds_count=30000, seeds_per_voxel=False, step_width=1.0,
+                        roi_r=10, auto_response_fa_threshold=0.7, fa_threshold=0.15, relative_peak_threshold=0.5,
+                        min_separation_angle=25):
+    """
+    Tracks and returns CSD Streamlines for the given DataContainer.
+
+    Parameters
+    ----------
+    data_container
+        The DataContainer we would like to track streamlines on
+    random_seeds
+        A boolean indicating whether we would like to use random seeds
+    seeds_count
+        If we use random seeds, this specifies the seed count
+    seeds_per_voxel
+        If True, the seed count is specified per voxel
+    step_width
+        The step width used while tracking
+    roi_r
+        The radii of the cuboid roi for the automatic estimation of single-shell single-tissue response function using FA.
+    auto_response_fa_threshold
+        The FA threshold for the automatic estimation of single-shell single-tissue response function using FA.
+    fa_threshold
+        The FA threshold to use to stop tracking
+    relative_peak_threshold
+        The relative peak threshold to use to get peaks from the CSDModel
+    min_separation_angle
+        The minimal separation angle of peaks
+    Returns
+    -------
+    Streamlines
+        A list of Streamlines
+    """
+    seeds = _get_seeds(data_container, random_seeds, seeds_count, seeds_per_voxel)
+
+    gtab = gradient_table(data_container.bvals, data_container.bvecs)
+    response, _ = auto_response_ssst(gtab, data_container.dwi, roi_radii=roi_r, fa_thr=auto_response_fa_threshold)
+    csd_model = ConstrainedSphericalDeconvModel(gtab, response)
+
+    direction_getter = peaks_from_model(model=csd_model,
+                                        data=data_container.dwi,
+                                        sphere=get_sphere('symmetric724'),
+                                        mask=data_container.binary_mask,
+                                        relative_peak_threshold=relative_peak_threshold,
+                                        min_separation_angle=min_separation_angle,
+                                        parallel=False)
+
+    dti_fit = dti.TensorModel(gtab, fit_method='LS').fit(data_container.dwi, mask=data_container.binary_mask)
+    classifier = ThresholdStoppingCriterion(dti_fit.fa, fa_threshold)
+
+    streamlines_generator = LocalTracking(direction_getter, classifier, seeds, data_container.aff, step_size=step_width)
+    streamlines = Streamlines(streamlines_generator)
+
+    return streamlines
+
+
+def get_dti_streamlines(data_container, random_seeds=False, seeds_count=30000, seeds_per_voxel=False, step_width=1.0,
+                        max_angle=30.0, fa_threshold=0.15):
+    """
+    Tracks and returns CSD Streamlines for the given DataContainer.
+
+    Parameters
+    ----------
+    data_container
+        The DataContainer we would like to track streamlines on
+    random_seeds
+        A boolean indicating whether we would like to use random seeds
+    seeds_count
+        If we use random seeds, this specifies the seed count
+    seeds_per_voxel
+        If True, the seed count is specified per voxel
+    step_width
+        The step width used while tracking
+    fa_threshold
+        The FA threshold to use to stop tracking
+    max_angle
+        The maximum allowed angle between incoming and outgoing angle, float between 0.0 and 90.0 deg
+    Returns
+    -------
+    Streamlines
+        A list of Streamlines
+    """
+    seeds = _get_seeds(data_container, random_seeds, seeds_count, seeds_per_voxel)
+
+    gtab = gradient_table(data_container.bvals, data_container.bvecs)
+
+    dti_fit = TensorModel(gtab).fit(data_container.dwi, mask=data_container.binary_mask)
+    dti_fit_odf = dti_fit.odf(sphere=default_sphere)
+
+    direction_getter = DeterministicMaximumDirectionGetter.from_pmf(dti_fit_odf,
+                                                                    max_angle=max_angle,
+                                                                    sphere=default_sphere)
+    classifier = ThresholdStoppingCriterion(dti_fit.fa, fa_threshold)
+
+    streamlines_generator = LocalTracking(direction_getter, classifier, seeds, data_container.aff, step_size=step_width)
+    streamlines = Streamlines(streamlines_generator)
+
+    return streamlines
+
+
+def save_streamlines(streamlines: list, path: str, to_lps=True, binary=False):
+    """
+    Saves the given streamlines to a file
+    Parameters
+    ----------
+    streamlines
+        The streamlines we want to save
+    path
+        The path we save the streamlines to
+    to_lps
+        A boolean indicating whether we want to save them in the LPS format instead of RAS (True by default)
+    binary
+        If True, the file will be written in a binary format.
+    Returns
+    -------
+
+    """
+    save_vtk_streamlines(streamlines, path, to_lps=to_lps, binary=binary)
+
+
+def load_streamlines(path: str, to_lps=True) -> list:
+    """
+    Loads streamlines from the given path.
+    Parameters
+    ----------
+    path
+        The path to load streamlines from
+    to_lps
+        If True, we load streamlines under the assumption that they were stored in LPS (True by default)
+    Returns
+    -------
+    list
+        The streamlines we are trying to load
+    """
+    if os.path.isdir(path):
+        streamlines = []
+        for file in os.listdir(path):
+            if file.endswith(".fib") or file.endswith(".vtk"):
+                sl = load_vtk_streamlines(os.path.join(path, file), to_lps)
+                streamlines.extend(sl)
+    else:
+        streamlines = load_vtk_streamlines(path, to_lps)
+    return streamlines
+
+
+def filtered_streamlines_by_length(streamlines: List, minimum=20, maximum=200) -> List:
+    """
+    Returns filtered streamlines that are longer than minimum (in mm) and shorter than maximum (in mm)
+    Parameters
+    ----------
+    streamlines
+        The streamlines we would like to filter
+    minimum
+        The minimum length in mm
+    maximum
+        The maximum length in mm
+    Returns
+    -------
+    List
+        The filtered streamlines
+    """
+    return [x for x in streamlines if minimum <= metrics.length(x) <= maximum]

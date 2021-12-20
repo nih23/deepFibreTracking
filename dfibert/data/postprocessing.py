@@ -1,143 +1,116 @@
 """
 The postprocessing submodule of the data module hosts different options
 of postprocessing the DWI data. Those can be passed to datasets for further use.
-
-Each postprocessing function returns a function to pass to the Dataset.
-For unique identification, each of those functions contains an attribute `id`.
 """
-import warnings
-
+from typing import Union
 import numpy as np
 from dipy.core.sphere import Sphere
 from dipy.reconst.shm import real_sym_sh_mrtrix, smooth_pinv
 from dipy.data import get_sphere
 
-from dfibert.config import Config
 from dfibert.util import get_2D_sphere
 
-def raw():
-    """Does no resampling.
 
-    Returns
-    -------
-    function
-        A function with `id` attribute, which parses dwi according given params.
-    """
-    def _wrapper(dwi, _b0, _bvecs, _bvals):
+class PostprocessingOption(object):
+    def process(self, data_container, points, dwi):
+        raise NotImplementedError()
+
+
+class Raw(PostprocessingOption):
+    """Does no resampling."""
+    def process(self, data_container, points, dwi):
         return dwi
-    _wrapper.id = "raw"
-    return _wrapper
 
 
-def spherical_harmonics(sh_order=None, smooth=None):
-    """Resamples the data using spherical harmonics
+class SphericalHarmonics(PostprocessingOption):
+    def __init__(self, sh_order=8, smooth=0.006):
+        """
+        Resamples the data using spherical harmonics
 
-    The data is calculated out of the real DWI Sphere.
+        The resampled data is calculated using the DWI Sphere.
 
-    Returns
-    -------
-    function
-        A function with `id` attribute, which parses dwi accordingly.
-    """
-    config = Config.get_config()
-    if sh_order is None:
-        sh_order = config.getint("ResamplingOptions", "sphericalHarmonicsOrder", fallback="8")
-    if smooth is None:
-        smooth = config.getfloat("ResamplingOptions", "smooth", fallback="0.006")
+        Parameters
+        ----------
+        sh_order
+            The order of the spherical harmonics
+        smooth
+        """
+        super().__init__()
+        self.sh_order = sh_order
+        self.smooth = smooth
 
-    def _wrapper(dwi, _b0, bvecs, _bvals):
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning) # TODO - look if bvecs should be normalized, then this can be removed
-            raw_sphere = Sphere(xyz=bvecs)
+    def process(self, data_container, points, dwi):
+        raw_sphere = Sphere(xyz=data_container.bvecs)
 
-        real_sh, _, n = real_sym_sh_mrtrix(sh_order, raw_sphere.theta, raw_sphere.phi)
+        real_sh, _, n = real_sym_sh_mrtrix(self.sh_order, raw_sphere.theta, raw_sphere.phi)
         l = -n * (n + 1)
-        inv_b = smooth_pinv(real_sh, np.sqrt(smooth) * l)
+        inv_b = smooth_pinv(real_sh, np.sqrt(self.smooth) * l)
         data_sh = np.dot(dwi, inv_b.T)
 
         return data_sh
-    _wrapper.id = "sh-order-{sh}-smooth-{sm}".format(sh=sh_order, sm=smooth)
-    return _wrapper
 
 
-def resample(directions=None, sh_order=None, smooth=None, mean_centering=None, sphere=None):
-    """Resample the values according to given sphere or directions.
+class Resample(SphericalHarmonics):
+    def __init__(self, sh_order=8, smooth=0.006, sphere: Union[Sphere, str] = "repulsion100"):
+        """
+        Resample the values according to given sphere or directions.
 
-    The real sphere data is resampled to the new sphere, then spherical harmonics are applied.
+        The real sphere data is resampled to the new sphere, then spherical harmonics are applied.
 
-    Returns
-    -------
-    function
-        A function with `id` attribute, which parses dwi accordingly.
-    """
-    config = Config.get_config()
-    if sh_order is None:
-        sh_order = config.getint("ResamplingOptions", "sphericalHarmonicsOrder", fallback="8")
-    if smooth is None:
-        smooth = config.getfloat("ResamplingOptions", "smooth", fallback="0.006")
-    if mean_centering is None:
-        mean_centering = config.getboolean("ResamplingOptions", "meanCentering", fallback="no")
-    if sphere is None:
-        sphere = config.get("ResamplingOptions", "sphere", fallback="repulsion100")
+        Parameters
+        ----------
+        sh_order
+            The order of the spherical harmonics
+        smooth
+        sphere
+            The sphere we are resampling to
+        """
+        super().__init__(sh_order=sh_order, smooth=smooth)
+        if isinstance(sphere, Sphere):
+            self.sphere = sphere
+        else:  # get with name
+            self.sphere = get_sphere(sphere)
+        self.real_sh, _, _ = real_sym_sh_mrtrix(self.sh_order, self.sphere.theta, self.sphere.phi)
 
-    if isinstance(sphere, Sphere):
-        rsphere = sphere
-        sphere = "custom"
-    else:
-        rsphere = get_sphere(sphere)
-    if directions is not None:
-        rsphere = Sphere(xyz=directions)
-    real_sh, _, _ = real_sym_sh_mrtrix(sh_order, rsphere.theta, rsphere.phi)
+    def process(self, data_container, points, dwi):
+        data_sh = super().process(data_container, points, dwi)
+        data_resampled = np.dot(data_sh, self.real_sh.T)
 
-    def _wrapper(dwi, b0, bvecs, bvals):
-        data_sh = spherical_harmonics(sh_order=sh_order, smooth=smooth)(dwi, b0, bvecs, bvals)
-
-        data_resampled = np.dot(data_sh, real_sh.T)
-
-        if mean_centering:
-            assert False # TODO should not be used
-            idx = data_resampled.sum(axis=-1).nonzero()
-            means = data_resampled[idx].mean(axis=0)
-            data_resampled[idx] -= means
         return data_resampled
-    _wrapper.id = ("resample-{sphere}-sh-order-{sh}-smooth-{sm}-mean_centering-{mc}"
-                   .format(sphere=sphere, sh=sh_order, sm=smooth, mc=mean_centering))
-    return _wrapper
 
-def res100(sh_order=None, smooth=None, mean_centering=None):
-    """Resamples the value to 100 directions with the repulsion100 sphere.
 
-    Just a shortcut for the `resample` option.
+class Resample100(Resample):
+    def __init__(self, sh_order=8, smooth=0.006):
+        """
+        Resamples the value to 100 directions with the repulsion100 sphere.
 
-    See Also
-    --------
-    resample: the function this is based on.
+        Just a shortcut for the `resample` option.
 
-    Returns
-    -------
-    function
-        A function with `id` attribute, which parses dwi accordingly.
-    """
-    return resample(sh_order=sh_order, smooth=smooth, mean_centering=mean_centering,
-                    sphere="repulsion100")
+        Parameters
+        ----------
+        sh_order
+            The order of the spherical harmonics
+        smooth
+        """
+        super().__init__(sh_order=sh_order, smooth=smooth, sphere="repulsion100")
 
-def resample2D(sh_order=None, smooth=None, mean_centering=None, no_thetas=None, no_phis=None):
-    """Resamples the value to directions with the 2D sphere.
 
-    Just a shortcut for the `resample` option with 2D sphere.
+class Resample2D(Resample):
+    def __init__(self, sh_order=8, smooth=0.006, no_thetas=16, no_phis=16):
+        """
+        Resamples the value to directions with the 2D sphere.
+        Just a shortcut for the `resample` option with 2D sphere.
 
-    See Also
-    --------
-    resample: the function this is based on.
-    dfibert.util.get_2D_sphere: the function the 2D sphere is generated with.
+        See `dfibert.util.get_2D_sphere` for more details on how the 2D sphere is generated.
 
-    Returns
-    -------
-    function
-        A function with `id` attribute, which parses dwi accordingly.
-    """
-    func = resample(sh_order=sh_order, smooth=smooth, mean_centering=mean_centering,
-                    sphere=get_2D_sphere(no_phis=no_phis, no_thetas=no_thetas))
-    func.id = ("resample-2Dsphere-{nt}x{np}-sh-order-{sh}-smooth-{sm}-mean_centering-{mc}"
-               .format(nt=no_thetas, np=no_phis, sh=sh_order, sm=smooth, mc=mean_centering))
-    return func
+        Parameters
+        ----------
+        sh_order
+            The order of the spherical harmonics
+        smooth
+        no_thetas
+            the number of thetas to use for the sphere generation
+        no_phis
+            the number of phis to use for the sphere generation
+        """
+        super().__init__(sh_order=sh_order, smooth=smooth, sphere=get_2D_sphere(no_phis=no_phis, no_thetas=no_thetas))

@@ -396,11 +396,11 @@ class ConcatenatedDataset(SaveableDataset):
 
 class StreamlineDataset(SaveableDataset):
 
-    def __init__(self, tracker, data_container, processing,
+    def __init__(self, streamlines, data_container, processing,
                  device=None, append_reverse=None, online_caching=None):
         IterableDataset.__init__(self, data_container, device=device)
-        self.streamlines = tracker.get_streamlines()
-        self.id = self.id + "-{}-(".format(processing.id) + tracker.id + ")"
+        self.streamlines = streamlines
+        self.id = self.id + "-{}-(".format(processing.id) + ")"
         config = Config.get_config()
         if append_reverse is None:
             append_reverse = config.getboolean("DatasetOptions", "appendReverseStreamlines",

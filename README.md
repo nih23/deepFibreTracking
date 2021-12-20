@@ -4,32 +4,22 @@ There are a few classes and methods which could help you building your reinforce
 ## DWI Data representation
 Firstly, you can use `DataContainer` objects to store and retrieve DWI data:
 
-### Initialization
+### Initialization and preprocessing
 
 ```python
-from dfibert.data import HCPDataContainer, ISMRMDataContainer
-hcp_data = HCPDataContainer(100307)
-ismrm_data = ISMRMDataContainer()
+from dfibert.data import DataPreprocessor
+preprocessor = DataPreprocessor().denoise().fa_estimate().normalize().crop()
+hcp_data = preprocessor.get_hcp("/path/to/hcp/dataset/")
+ismrm_data = preprocessor.get_ismrm("/path/to/ismrm/")
 ```
-### Normalizing and Cropping
-
-```python
-ismrm_data.crop().normalize()
-hcp_data.crop().normalize()
-```
-
-### Retrieving the FA:
-```python
-fa = hcp_data.get_fa() # I am not sure if it is better to calculate FA before cropping/normalizing or after
-```
-Keep in mind that any tracking should be done before applying the crop and normalize operations because they alter the MRI values.
 
 ### Coordinate system transforms:
 ```python
+import numpy as np
 ijk_points = hcp_data.to_ijk(ras_points) # Transform to Image coordinate system
 ras_points = hcp_data.to_ras(ijk_points) # Transform to World RAS+ coordinate system
 
-ras_points == hcp_data.to_ras(hcp_data.to_ijk(ras_points)) # True
+np.array_equal(ras_points, hcp_data.to_ras(hcp_data.to_ijk(ras_points))) # True
 ```
 
 ### DWI interpolation
@@ -41,9 +31,12 @@ interpolated_dwi = hcp_data.get_interpolated_dwi(ras_points, ignore_outside_poin
 ### Fields
 The fields can be helpful for checks or additional calculations based on the loaded data.
 ```python
-hcp_data.options # configuration 
-hcp_data.path # file path to loaded data
-hcp_data.data # the actual MRI Data as SimpleNamespace
+hcp.fa # fa values if fa_estimate was part of the preprocessing pipeline
+hcp.dwi
+hcp.t1
+hcp.bvals
+hcp.bvecs
+...
 ```
 
 ## Tracking and Streamline Representation

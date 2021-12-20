@@ -208,9 +208,9 @@ class RegressionProcessing(Processing):
         rot_matrix = None if rot_matrix is None else rot_matrix[np.newaxis, -1]
         dwi, _ = self._get_dwi(data_container, previous_sl[np.newaxis, -1], rot_matrix=rot_matrix)
         if self.options.postprocessing is not None:
-            dwi = self.options.postprocessing(dwi, data_container.data.b0,
-                                              data_container.data.bvecs,
-                                              data_container.data.bvals)
+            dwi = self.options.postprocessing(dwi, data_container.b0,
+                                              data_container.bvecs,
+                                              data_container.bvals)
         dwi = dwi.squeeze(axis=0)
         if self.options.normalize:
             next_dir = (next_dir - self.options.normalize_mean)/self.options.normalize_std
@@ -236,9 +236,9 @@ class RegressionProcessing(Processing):
         next_dir, rot_matrix = self._apply_rot_matrix(next_dir)
         dwi, _ = self._get_dwi(data_container, streamline, rot_matrix=rot_matrix, postprocessing=self.options.postprocessing)
         if self.options.postprocessing is not None:
-            dwi = self.options.postprocessing(dwi, data_container.data.b0,
-                                              data_container.data.bvecs,
-                                              data_container.data.bvals)
+            dwi = self.options.postprocessing(dwi, data_container.b0,
+                                              data_container.bvecs,
+                                              data_container.bvals)
         if self.options.normalize:
             next_dir = (next_dir - self.options.normalize_mean)/self.options.normalize_std
         return (dwi, next_dir)
