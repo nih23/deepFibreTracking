@@ -7,7 +7,7 @@ from gym.spaces import Discrete, Box
 from collections import deque
 
 import dipy.reconst.dti as dti
-from dipy.data import HemiSphere, Sphere, default_sphere, get_sphere
+from dipy.data import HemiSphere, Sphere, get_sphere
 from dipy.core.interpolation import trilinear_interpolate4d
 from dipy.core.sphere import disperse_charges
 from dipy.direction import peaks_from_model
@@ -20,9 +20,18 @@ from dfibert.tracker import StreamlinesFromFileTracker
 from dfibert.util import get_grid
 from ._state import TractographyState
 
+from dipy.core.gradients import gradient_table
+from dipy.io.gradients import read_bvals_bvecs
+from dipy.io.image import load_nifti
+from dipy.reconst.csdeconv import (auto_response_ssst,
+                                   mask_for_response_ssst,
+                                   response_from_mask_ssst)
+from dipy.reconst.csdeconv import ConstrainedSphericalDeconvModel
+
+from tqdm import trange
 
 class RLtractEnvironment(gym.Env):
-    def __init__(self, device, seeds = None, stepWidth = 0.8, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, tracking_in_RAS = True, fa_threshold = 0.1, b_val = 1000, max_angle=80., odf_state = True):
+    def __init__(self, device, seeds = None, stepWidth = 0.8, action_space=20, dataset = '100307', grid_dim = [3,3,3], maxL2dist_to_State = 0.1, tracking_in_RAS = True, fa_threshold = 0.1, b_val = 1000, max_angle=80., odf_state = True, odf_mode = "CSD"):
         print("Loading dataset # ", dataset)
         self.device = device
         if(dataset == 'ISMRM'):
@@ -39,6 +48,7 @@ class RLtractEnvironment(gym.Env):
         self.dti_fit = None
         self.odf_interpolator = None
         self.shcoeff = None
+        self.odf_mode = odf_mode
         
         np.random.seed(42)
         
@@ -79,7 +89,10 @@ class RLtractEnvironment(gym.Env):
             if(self.dti_fit is None):
                 self._init_odf()
                 
-            fa_img = self.dti_fit.fa
+            dti_model = dti.TensorModel(self.dataset.data.gtab, fit_method='LS')
+            dti_fit = dti_model.fit(self.dataset.data.dwi, mask=self.dataset.data.binarymask)
+                
+            fa_img = dti_fit.fa
             seed_mask = fa_img.copy()
             seed_mask[seed_mask >= 0.2] = 1
             seed_mask[seed_mask < 0.2] = 0
@@ -117,13 +130,24 @@ class RLtractEnvironment(gym.Env):
     def _init_odf(self):
         print("Initialising ODF")
         # fit DTI model to data
-        if(self.dti_model is None):
+        if(self.odf_mode == "DTI"):
+            print("DTI-based ODF computation")
             self.dti_model = dti.TensorModel(self.dataset.data.gtab, fit_method='LS')
-        if(self.dti_fit is None):
             self.dti_fit = self.dti_model.fit(self.dataset.data.dwi, mask=self.dataset.data.binarymask)
+            # compute ODF
+            odf = self.dti_fit.odf(self.sphere_odf)
+        elif(self.odf_mode == "CSD"):
+            print("CSD-based ODF computation")
+            response, ratio = auto_response_ssst(self.dataset.data.gtab, self.dataset.data.dwi, roi_radii=10, fa_thr=0.7)
+            mask = mask_for_response_ssst(self.dataset.data.gtab, self.dataset.data.dwi, roi_radii=10, fa_thr=0.7)
+            nvoxels = np.sum(mask)
+            print(nvoxels)
+            response, ratio = response_from_mask_ssst(self.dataset.data.gtab, self.dataset.data.dwi, mask)
+            print(response)
+            self.dti_model = ConstrainedSphericalDeconvModel(self.dataset.data.gtab, response)
+            self.dti_fit = self.dti_model.fit(self.dataset.data.dwi)
+            odf = self.dti_fit.odf(self.sphere_odf)
 
-        # compute ODF
-        odf = self.dti_fit.odf(self.sphere_odf)
         ## set up interpolator for odf evaluation
         x_range = np.arange(odf.shape[0])
         y_range = np.arange(odf.shape[1])
@@ -139,7 +163,7 @@ class RLtractEnvironment(gym.Env):
         print("Initialising spherical harmonics")
         self.dti_model = dti.TensorModel(self.dataset.data.gtab, fit_method='LS')
 
-        peaks = peaks_from_model(model=self.dti_model, data=self.dataset.data.dwi, sphere=default_sphere, \
+        peaks = peaks_from_model(model=self.dti_model, data=self.dataset.data.dwi, sphere=self.sphere, \
                                 relative_peak_threshold=.2, min_separation_angle=25, mask=self.dataset.data.binarymask, npeaks=2)
                 
         self.shcoeff = peaks.shm_coeff
@@ -150,7 +174,7 @@ class RLtractEnvironment(gym.Env):
             raise ValueError("%s is not a known basis type." % sh_basis_type)
 
         self._B, m, n = basis(sh_order, self.sphere.theta, self.sphere.phi)
-        
+ 
         
     def interpolateRawDWIatState(self, stateCoordinates):       
         #TODO: maybe stay in RAS all the time then no need to transfer to IJK
@@ -177,7 +201,9 @@ class RLtractEnvironment(gym.Env):
         interpol_odf = np.rollaxis(interpol_odf,3)
         return interpol_odf
     
-    
+    ''' 
+    @deprecated 
+    '''
     def interpolatePMFatState(self, stateCoordinates):
         if(self.shcoeff is None):
             self._init_shmcoeff()
@@ -242,66 +268,77 @@ class RLtractEnvironment(gym.Env):
         return nextState, reward, False, {}
 
     
-
-
-
-    def _get_best_action(self, current_direction, my_position):
+    def rewardForState(self, state, current_direction):
+        my_position = state.getCoordinate().double().squeeze(0)
         ## main peak from ODF
-        ##peak_dir = self._get_best_action_ODF(my_position)
-        ## cosine similarity wrt. all directions
-        #reward = abs(torch.nn.functional.cosine_similarity(peak_dir.view(1,-1), self.directions))
-        #@TODO: taken center slice (= my_position) as this resembles maximum DG more closely. Alternatively: odf should be averaged first
-        
-        
-        ##odf_cur = torch.from_numpy(self.interpolateODFatState(stateCoordinates=my_position))[:,1,1,1].view(100)
-        ##reward = odf_cur / torch.max(odf_cur)
-        # print("reward: ", reward)
-        
-        # if(current_direction is not None):
-        #     reward = reward * (torch.nn.functional.cosine_similarity(self.directions, current_direction))
-        #     print("reward x cosine_sim: ", reward)
-
-        # best_action = torch.argmax(reward)
-        # print("best action: ", best_action)
-        # print("Max reward: %.2f" % (torch.max(reward).cpu().detach().numpy()))
-        # return best_action
-        
-        
-        pmf_cur = self.interpolatePMFatState(my_position)
+        pmf_cur = self.interpolateODFatState(my_position)[:,1,1,1]
         reward = pmf_cur / np.max(pmf_cur)
         if current_direction is not None:
-            reward = reward * self._adj_matrix[tuple(current_direction)]
+            #reward = reward * self._adj_matrix[tuple(current_direction)] #@TODO: buggy
+            reward = reward * (torch.nn.functional.cosine_similarity(self.directions, torch.from_numpy(current_direction).view(1,-1)).view(1,-1)).cpu().numpy()
+        return reward
+    
+    
+    def rewardForStateActionPair(self, state, current_direction, action):
+        reward = self.rewardForState(state, current_direction)
+        return reward[action]
+    
 
+    def _get_best_action(self, state, current_direction):
+        reward = self.rewardForState(state, current_direction)
         best_action = np.argmax(reward)            
         return best_action
 
-
     
-    def _get_best_action_ODF(self, my_position):
-        '''
-        ODF computation at 3x3x3 grid
-        #coolsl0_odf = odf_interpolator(my_position).squeeze()
-        #coord, data = next_state.getCoordinate(), next_state.getValue()
-        #grid = get_grid(np.array([3,3,3]))
-        ras_points = env.dataset.to_ras(my_position)
-        ras_points = grid + ras_points
+    def track(self, withBestAction = True):
+        streamlines = []
+        for i in trange(len(self.seeds)):
+            terminal = False
+            all_states = []
+            state = self.reset(seed_index=i)
+            seed_position = state.getCoordinate().squeeze(0).numpy()
+            current_direction = None
+            all_states.append(seed_position)
+            
+            ## forward tracking
+            terminal = False
+            eval_steps = 0
+            while not terminal:        
+                # current position
+                # get best choice from environment
+                if(withBestAction):
+                    action = self._get_best_action(state, current_direction)
+                # store tangent for next time step
+                current_direction = self.directions[action].numpy()
+                # take a step
+                state, reward, terminal, _  = self.step(action)
+                if(not terminal):
+                    all_states.append(state.getCoordinate().squeeze(0).numpy())
+                eval_steps = eval_steps + 1
 
-        interpolated_dwi = env.dataset.get_interpolated_dwi(ras_points, postprocessing=None)
+            ## backward tracking
+            state = self.reset(seed_index=i, terminal_F=True)
+            current_direction = None # potentially take tangent of first step of forward tracker
+            terminal = False
+            all_states = all_states[::-1]
+            while not terminal:
+                # current position
+                my_position = state.getCoordinate().double().squeeze(0)
+                # get best choice from environment
+                if(withBestAction):
+                    action = self._get_best_action(state, current_direction)
+                # store tangent for next time step
+                current_direction = self.directions[action].numpy()
+                # take a step
+                state, reward, terminal, _  = self.step(action, direction="backward")
+                if (False in torch.eq(state.getCoordinate().squeeze(0), my_position)) & (not terminal):
+                    all_states.append(state.getCoordinate().squeeze(0).numpy())
 
-        dti_fit = dti_model.fit(interpolated_dwi)
-        coolsl0_odf = dti_fit.odf(sphere)
-        coolsl0_odf = np.mean(coolsl0_odf.reshape(-1,100), axis=0)
-        '''
-
-        # ODF interpolation
-        coolsl0_odf = self.odf_interpolator(my_position).squeeze()
-
-        # maximum direction getter
-        best_action = np.argmax(coolsl0_odf)
-        print(best_action)
-        peak_dir = self.directions_odf[best_action]
-        return peak_dir
-
+            streamlines.append(np.asarray(all_states))
+            
+        return streamlines
+    
+    
     
     def _get_multi_best_action_ODF(self, my_position, K = 3):
         my_odf = self.odf_interpolator(my_position).squeeze()
@@ -310,18 +347,6 @@ class RLtractEnvironment(gym.Env):
         rewards = torch.stack([abs(torch.nn.functional.cosine_similarity(peak_dirs_torch[k:k+1,:], self.directions.view(-1, 3))) for k in range(K)])
         return rewards
 
-    
-    def rewardForState(self, state):
-        # The reward will be close to one if the agent is 
-        # staying close to our reference streamline.
-        self.l2_distance = self.minDistToStreamline(self.line, state)
-        return 1 - self.l2_distance
- 
-
-    def rewardForTerminalState(self, state):
-        qry_pt = state.getCoordinate().view(3)
-        distance = torch.sum((self.referenceStreamline_ijk[-1,:] - qry_pt)**2)
-        return distance
 
     
     def cosineSimilarity(self, path_1, path_2):
@@ -384,6 +409,7 @@ class RLtractEnvironment(gym.Env):
     def render(self, mode="human"):
         pass
     
+
     
     '''
     deprecated: these functions were implimented via Shapely which is not applicable to 3d data.. it is basically
