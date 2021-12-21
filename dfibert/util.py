@@ -4,35 +4,34 @@ import torch
 import numpy as np
 from dipy.core.sphere import Sphere
 from dipy.core.geometry import sphere_distance
-from .config import Config
+
 
 def rotation_from_vectors_p(rot, vectors_orig, vectors_fin):
     vectors_orig = vectors_orig / np.linalg.norm(vectors_orig, axis=1)[:, None]
     vectors_fin = vectors_fin / np.linalg.norm(vectors_fin, axis=1)[:, None]
     axes = np.cross(vectors_orig, vectors_fin)
     axes_lens = np.linalg.norm(axes, axis=1)
-    
+
     axes_lens[axes_lens == 0] = 1
 
-    axes = axes/axes_lens[:,None]
+    axes = axes / axes_lens[:, None]
 
-    x = axes[:,0]
-    y = axes[:,1]
-    z = axes[:,2]
-
+    x = axes[:, 0]
+    y = axes[:, 1]
+    z = axes[:, 2]
 
     angles = np.arccos(np.sum(vectors_orig * vectors_fin, axis=1))
     sa = np.sin(angles)
-    ca = np.cos(angles) # cos
-    rot[:,0, 0] = 1.0 + (1.0 - ca)*(x**2 - 1.0)
-    rot[:,0, 1] = -z*sa + (1.0 - ca)*x*y
-    rot[:,0, 2] = y*sa + (1.0 - ca)*x*z
-    rot[:,1, 0] = z*sa+(1.0 - ca)*x*y
-    rot[:,1, 1] = 1.0 + (1.0 - ca)*(y**2 - 1.0)
-    rot[:,1, 2] = -x*sa+(1.0 - ca)*y*z
-    rot[:,2, 0] = -y*sa+(1.0 - ca)*x*z
-    rot[:,2, 1] = x*sa+(1.0 - ca)*y*z
-    rot[:,2, 2] = 1.0 + (1.0 - ca)*(z**2 - 1.0)
+    ca = np.cos(angles)  # cos
+    rot[:, 0, 0] = 1.0 + (1.0 - ca) * (x ** 2 - 1.0)
+    rot[:, 0, 1] = -z * sa + (1.0 - ca) * x * y
+    rot[:, 0, 2] = y * sa + (1.0 - ca) * x * z
+    rot[:, 1, 0] = z * sa + (1.0 - ca) * x * y
+    rot[:, 1, 1] = 1.0 + (1.0 - ca) * (y ** 2 - 1.0)
+    rot[:, 1, 2] = -x * sa + (1.0 - ca) * y * z
+    rot[:, 2, 0] = -y * sa + (1.0 - ca) * x * z
+    rot[:, 2, 1] = x * sa + (1.0 - ca) * y * z
+    rot[:, 2, 2] = 1.0 + (1.0 - ca) * (z ** 2 - 1.0)
 
 
 def rotation_from_vectors(rot, vector_orig, vector_fin):
@@ -78,17 +77,18 @@ def rotation_from_vectors(rot, vector_orig, vector_fin):
     sa = np.sin(angle)
 
     # Calculate the rotation matrix elements.
-    rot[0, 0] = 1.0 + (1.0 - ca)*(x**2 - 1.0)
-    rot[0, 1] = -z*sa + (1.0 - ca)*x*y
-    rot[0, 2] = y*sa + (1.0 - ca)*x*z
-    rot[1, 0] = z*sa+(1.0 - ca)*x*y
-    rot[1, 1] = 1.0 + (1.0 - ca)*(y**2 - 1.0)
-    rot[1, 2] = -x*sa+(1.0 - ca)*y*z
-    rot[2, 0] = -y*sa+(1.0 - ca)*x*z
-    rot[2, 1] = x*sa+(1.0 - ca)*y*z
-    rot[2, 2] = 1.0 + (1.0 - ca)*(z**2 - 1.0)
+    rot[0, 0] = 1.0 + (1.0 - ca) * (x ** 2 - 1.0)
+    rot[0, 1] = -z * sa + (1.0 - ca) * x * y
+    rot[0, 2] = y * sa + (1.0 - ca) * x * z
+    rot[1, 0] = z * sa + (1.0 - ca) * x * y
+    rot[1, 1] = 1.0 + (1.0 - ca) * (y ** 2 - 1.0)
+    rot[1, 2] = -x * sa + (1.0 - ca) * y * z
+    rot[2, 0] = -y * sa + (1.0 - ca) * x * z
+    rot[2, 1] = x * sa + (1.0 - ca) * y * z
+    rot[2, 2] = 1.0 + (1.0 - ca) * (z ** 2 - 1.0)
 
-def get_reference_orientation():
+
+def get_reference_orientation(orientation="R+"):
     """Get current reference rotation
     
     Returns
@@ -96,8 +96,7 @@ def get_reference_orientation():
     numpy.ndarray
         The reference rotation usable for rotations.
     """
-    config = Config.get_config()
-    orientation = config.get("DatasetOptions", "referenceOrientation", fallback="R+").upper()
+    orientation = orientation.upper()
     ref = None
     if orientation[0] == 'R':
         ref = np.array([1, 0, 0])
@@ -105,11 +104,12 @@ def get_reference_orientation():
         ref = np.array([0, 1, 0])
     elif orientation[0] == 'S':
         ref = np.array([0, 1, 0])
-    if orientation[1] == '-':
+    if len(orientation) > 1 and orientation[1] == '-':
         ref = ref * -1
     return ref
 
-def get_2D_sphere(no_phis=None, no_thetas=None):
+
+def get_2D_sphere(no_phis=16, no_thetas=16):
     """Retrieve evenly distributed 2D sphere out of phi and theta count.
 
 
@@ -125,18 +125,15 @@ def get_2D_sphere(no_phis=None, no_thetas=None):
     Sphere
         The 2D sphere requested
     """
-    if no_thetas is None:
-        no_thetas = Config.get_config().getint("2DSphereOptions", "noThetas", fallback="16")
-    if no_phis is None:
-        no_phis = Config.get_config().getint("2DSphereOptions", "noPhis", fallback="16")
-    xi = np.arange(0, np.pi, (np.pi) / no_thetas) # theta
-    yi = np.arange(-np.pi, np.pi, 2 * (np.pi) / no_phis) # phi
+    xi = np.arange(0, np.pi, np.pi / no_thetas)  # theta
+    yi = np.arange(-np.pi, np.pi, 2 * np.pi / no_phis)  # phi
 
     basis = np.array(np.meshgrid(yi, xi))
 
     sphere = Sphere(theta=basis[0, :], phi=basis[1, :])
 
     return sphere
+
 
 def get_grid(grid_dimension):
     """Calculates grid for given dimension
@@ -151,8 +148,9 @@ def get_grid(grid_dimension):
     numpy.ndarray
         The requested grid
     """
-    (dx, dy, dz) = (grid_dimension - 1)/2
-    return np.moveaxis(np.mgrid[-dx:dx+1, -dy:dy+1, -dz:dz+1], 0, 3)
+    (dx, dy, dz) = (grid_dimension - 1) / 2
+    return np.moveaxis(np.mgrid[-dx:dx + 1, -dy:dy + 1, -dz:dz + 1], 0, 3)
+
 
 def random_split(dataset, training_part=0.9):
     """Retrieves a dataset from given path and splits them randomly in train and test data.
@@ -169,7 +167,7 @@ def random_split(dataset, training_part=0.9):
     tuple
         A tuple containing (train_dataset, validation_dataset)
     """
-    train_len = int(training_part*len(dataset))
+    train_len = int(training_part * len(dataset))
     test_len = len(dataset) - train_len
     (train_split, test_split) = torch.utils.data.random_split(dataset, (train_len, test_len))
     return train_split, test_split
@@ -186,7 +184,8 @@ def get_mask_from_lengths(lengths):
     -------
     Tensor
         The requested mask."""
-    return (torch.arange(torch.max(lengths, device=lengths.device))[None, :] < lengths[:, None])
+    return torch.arange(torch.max(lengths), device=lengths.device)[None, :] < lengths[:, None]
+
 
 def apply_rotation_matrix_to_grid(grid, rot_matrix):
     """Applies the given list of rotation matrices to given grid
@@ -203,7 +202,10 @@ def apply_rotation_matrix_to_grid(grid, rot_matrix):
     numpy.ndarray
         The grid, rotated along the rotation_matrix; Shape: (N, ...grid_dimensions)
     """
-    return (rot_matrix.repeat(grid.size/3, axis=0) @ grid[None, ].repeat(len(rot_matrix), axis=0).reshape(-1, 3, 1)).reshape((-1, *grid.shape))
+    return (rot_matrix.repeat(grid.size / 3, axis=0) @ grid[None,].repeat(len(rot_matrix), axis=0).reshape(-1, 3,
+                                                                                                           1)).reshape(
+        (-1, *grid.shape))
+
 
 def direction_to_classification(sphere, next_dir, include_stop=False, last_is_stop=False, stop_values=None):
     # code adapted from Benou "DeepTract",exi
@@ -214,7 +216,7 @@ def direction_to_classification(sphere, next_dir, include_stop=False, last_is_st
     l = len(sphere.theta) + 1 if include_stop else len(sphere.theta)
     classification_output = np.zeros((sl_len, l))
     for i in range(loop_len):
-        if not (next_dir[i,0] == 0.0 and next_dir[i, 1] == 0.0 and next_dir[i, 2] == 0.0):
+        if not (next_dir[i, 0] == 0.0 and next_dir[i, 1] == 0.0 and next_dir[i, 2] == 0.0):
             labels_odf = np.exp(-1 * sphere_distance(next_dir[i, :], np.asarray(
                 [sphere.x, sphere.y, sphere.z]).T, radius=1, check_radius=False) * 10)
             if include_stop:
@@ -223,7 +225,7 @@ def direction_to_classification(sphere, next_dir, include_stop=False, last_is_st
             else:
                 classification_output[i] = labels_odf / np.sum(labels_odf)
     if include_stop and last_is_stop:
-        classification_output[-1, -1] = 1 # stop condition or
+        classification_output[-1, -1] = 1  # stop condition or
     if include_stop and stop_values is not None:
-        classification_output[:,-1] = stop_values # stop values
+        classification_output[:, -1] = stop_values  # stop values
     return classification_output
