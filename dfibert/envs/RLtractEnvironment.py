@@ -36,7 +36,7 @@ class RLtractEnvironment(gym.Env):
                  odf_state=True, odf_mode="CSD"):
         print("Loading dataset # ", dataset)
         self.device = device
-        preprocessor = DataPreprocessor().normalize().fa_estimate()  # .crop(b_val)
+        preprocessor = DataPreprocessor().normalize().crop(b_val).fa_estimate()
         if dataset == 'ISMRM':
             self.dataset = preprocessor.get_ismrm(f"data/ISMRM2015/")
         else:

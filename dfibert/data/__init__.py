@@ -96,15 +96,17 @@ class DataPreprocessor(object):
         """
         return _DataNormalizer(self)
 
-    def crop(self, b_value=1000.0, max_deviation=100.0) -> DataPreprocessor:
+    def crop(self, b_value=1000.0, max_deviation=100.0, b0_threshold = 10.0) -> DataPreprocessor:
         """
         Crops the dataset based on B-value.
 
         All measurements where the B-value deviates more than `max_deviation` from the `b_value`
-        are removed from the dataset.
+        are removed from the dataset, except from values less than the specified b0 threshold.
 
         Parameters
         ----------
+        b0_threshold
+            the b0 threshold - everything below will be kept as well.
         b_value
             the intended B-value
         max_deviation
@@ -114,7 +116,7 @@ class DataPreprocessor(object):
         DataPreprocessor
             A new DataPreprocessor, incorporating the previous steps plus the new crop
         """
-        return _DataCropper(self, b_value, max_deviation)
+        return _DataCropper(self, b_value, max_deviation, b0_threshold)
 
     def fa_estimate(self):
         """
@@ -197,20 +199,21 @@ class DataPreprocessor(object):
 
 
 class _DataCropper(DataPreprocessor):
-    def __init__(self, parent, b_value, max_deviation):
+    def __init__(self, parent, b_value, max_deviation, b0_threshold):
         super().__init__(parent)
         self.b_value = b_value
         self.max_deviation = max_deviation
+        self.b0_threshold = b0_threshold
 
     def _preprocess(self, data_container: DataContainer) -> DataContainer:
         dc = \
             super()._preprocess(data_container)
 
-        indices = np.where(np.abs(dc.bvals - self.b_value) < self.max_deviation)[0]
+        mask = (np.abs(dc.bvals - self.b_value) < self.max_deviation) | (dc.bvals < self.b0_threshold)
 
-        dwi = dc.dwi[..., indices]
-        bvals = dc.bvals[indices]
-        bvecs = dc.bvecs[indices]
+        dwi = dc.dwi[..., mask]
+        bvals = dc.bvals[mask]
+        bvecs = dc.bvecs[mask]
 
         return DataContainer(bvals, bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
 
