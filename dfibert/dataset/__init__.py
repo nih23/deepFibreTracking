@@ -7,13 +7,6 @@ from types import SimpleNamespace
 
 import torch
 import numpy as np
-from dipy.core.geometry import sphere_distance
-from dipy.core.sphere import Sphere
-from dipy.data import get_sphere
-
-
-from dfibert.config import Config
-from dfibert.util import get_reference_orientation, rotation_from_vectors, get_grid
 
 from .exceptions import WrongDatasetTypePassedError, FeatureShapesNotEqualError
 
