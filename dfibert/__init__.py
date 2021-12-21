@@ -1,4 +1,3 @@
-from . import config
 from . import data
 from . import dataset
 from . import envs
