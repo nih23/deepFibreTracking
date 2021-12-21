@@ -3,7 +3,6 @@
 import os
 from typing import List
 
-from dipy.core.gradients import gradient_table
 from dipy.tracking.utils import random_seeds_from_mask, seeds_from_mask
 from dipy.tracking.local_tracking import LocalTracking
 from dipy.tracking.stopping_criterion import ThresholdStoppingCriterion
@@ -62,9 +61,8 @@ def get_csd_streamlines(data_container, random_seeds=False, seeds_count=30000, s
     """
     seeds = _get_seeds(data_container, random_seeds, seeds_count, seeds_per_voxel)
 
-    gtab = gradient_table(data_container.bvals, data_container.bvecs)
-    response, _ = auto_response_ssst(gtab, data_container.dwi, roi_radii=roi_r, fa_thr=auto_response_fa_threshold)
-    csd_model = ConstrainedSphericalDeconvModel(gtab, response)
+    response, _ = auto_response_ssst(data_container.gtab, data_container.dwi, roi_radii=roi_r, fa_thr=auto_response_fa_threshold)
+    csd_model = ConstrainedSphericalDeconvModel(data_container.gtab, response)
 
     direction_getter = peaks_from_model(model=csd_model,
                                         data=data_container.dwi,
@@ -74,7 +72,7 @@ def get_csd_streamlines(data_container, random_seeds=False, seeds_count=30000, s
                                         min_separation_angle=min_separation_angle,
                                         parallel=False)
 
-    dti_fit = dti.TensorModel(gtab, fit_method='LS').fit(data_container.dwi, mask=data_container.binary_mask)
+    dti_fit = dti.TensorModel(data_container.gtab, fit_method='LS').fit(data_container.dwi, mask=data_container.binary_mask)
     classifier = ThresholdStoppingCriterion(dti_fit.fa, fa_threshold)
 
     streamlines_generator = LocalTracking(direction_getter, classifier, seeds, data_container.aff, step_size=step_width)
@@ -111,9 +109,7 @@ def get_dti_streamlines(data_container, random_seeds=False, seeds_count=30000, s
     """
     seeds = _get_seeds(data_container, random_seeds, seeds_count, seeds_per_voxel)
 
-    gtab = gradient_table(data_container.bvals, data_container.bvecs)
-
-    dti_fit = TensorModel(gtab).fit(data_container.dwi, mask=data_container.binary_mask)
+    dti_fit = TensorModel(data_container.gtab).fit(data_container.dwi, mask=data_container.binary_mask)
     dti_fit_odf = dti_fit.odf(sphere=default_sphere)
 
     direction_getter = DeterministicMaximumDirectionGetter.from_pmf(dti_fit_odf,

@@ -15,7 +15,7 @@ from typing import Optional
 import dipy.reconst.dti as dti
 import nibabel as nb
 import numpy as np
-from dipy.core.gradients import gradient_table
+from dipy.core.gradients import gradient_table, GradientTable
 from dipy.denoise.localpca import localpca
 from dipy.denoise.pca_noise_estimate import pca_noise_estimate
 from dipy.io import read_bvals_bvecs
@@ -63,7 +63,7 @@ class DataPreprocessor(object):
         """
 
         dc = data_container
-        data_container = DataContainer(dc.bvals.copy(), dc.bvecs.copy(), dc.t1.copy(), dc.dwi.copy(), dc.aff.copy(),
+        data_container = DataContainer(dc.bvals.copy(), dc.bvecs.copy(), dc.gtab.copy(), dc.t1.copy(), dc.dwi.copy(), dc.aff.copy(),
                                        dc.binary_mask.copy(), dc.b0.copy(), None if dc.fa is None else dc.fa.copy())
         return self._preprocess(data_container)
 
@@ -193,8 +193,8 @@ class DataPreprocessor(object):
 
         # Do not generate fa yet
         fa = None
-
-        data_container = DataContainer(bvals, bvecs, t1, dwi, aff, binary_mask, b0, fa)
+        gtab = gradient_table(bvals, bvecs)
+        data_container = DataContainer(bvals, bvecs, gtab, t1, dwi, aff, binary_mask, b0, fa)
         return self._preprocess(data_container)
 
 
@@ -214,8 +214,8 @@ class _DataCropper(DataPreprocessor):
         dwi = dc.dwi[..., mask]
         bvals = dc.bvals[mask]
         bvecs = dc.bvecs[mask]
-
-        return DataContainer(bvals, bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
+        gtab = gradient_table(bvals, bvecs)
+        return DataContainer(bvals, bvecs, gtab, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
 
 
 class _DataNormalizer(DataPreprocessor):
@@ -236,7 +236,7 @@ class _DataNormalizer(DataPreprocessor):
             dwi = dwi / b0
             dwi[np.logical_not(np.isfinite(dwi))] = 0.
 
-        return DataContainer(dc.bvals, dc.bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
+        return DataContainer(dc.bvals, dc.bvecs, dc.gtab, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
 
 
 class _DataDenoiser(DataPreprocessor):
@@ -247,12 +247,11 @@ class _DataDenoiser(DataPreprocessor):
 
     def _preprocess(self, data_container: DataContainer) -> DataContainer:
         dc = super()._preprocess(data_container)
-        gtab = gradient_table(dc.bvals, dc.bvecs)
-        sigma = pca_noise_estimate(dc.dwi, gtab, correct_bias=True,
+        sigma = pca_noise_estimate(dc.dwi, dc.gtab, correct_bias=True,
                                    smooth=self.smooth)
         dwi = localpca(dc.dwi, sigma=sigma,
                        patch_radius=self.patch_radius)
-        return DataContainer(dc.bvals, dc.bvecs, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
+        return DataContainer(dc.bvals, dc.bvecs, dc.gtab, dc.t1, dwi, dc.aff, dc.binary_mask, dc.b0, dc.fa)
 
 
 class _DataFAEstimator(DataPreprocessor):
@@ -264,16 +263,15 @@ class _DataFAEstimator(DataPreprocessor):
             super()._preprocess(data_container)
 
         # calculating fractional anisotropy (fa)
-        gtab = gradient_table(dc.bvals, dc.bvecs)
-        dti_model = dti.TensorModel(gtab, fit_method='LS')
+        dti_model = dti.TensorModel(dc.gtab, fit_method='LS')
         dti_fit = dti_model.fit(dc.dwi, mask=dc.binary_mask)
         fa = dti_fit.fa
-        return DataContainer(dc.bvals, dc.bvecs, dc.t1, dc.dwi, dc.aff, dc.binary_mask, dc.b0, fa)
+        return DataContainer(dc.bvals, dc.bvecs, dc.gtab, dc.t1, dc.dwi, dc.aff, dc.binary_mask, dc.b0, fa)
 
 
 class DataContainer(object):
 
-    def __init__(self, bvals: np.ndarray, bvecs: np.ndarray, t1: np.ndarray,
+    def __init__(self, bvals: np.ndarray, bvecs: np.ndarray, gtab: GradientTable, t1: np.ndarray,
                  dwi: np.ndarray, aff: np.ndarray, binary_mask: np.ndarray, b0: np.ndarray,
                  fa: Optional[np.ndarray]):
         self.bvals = bvals
@@ -284,6 +282,7 @@ class DataContainer(object):
         self.binary_mask = binary_mask
         self.b0 = b0
         self.fa = fa
+        self.gtab = gtab
         x_range = np.arange(dwi.shape[0])
         y_range = np.arange(dwi.shape[1])
         z_range = np.arange(dwi.shape[2])

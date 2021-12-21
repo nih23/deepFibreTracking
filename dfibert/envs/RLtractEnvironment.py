@@ -89,8 +89,7 @@ class RLtractEnvironment(gym.Env):
             if self.dti_fit is None:
                 self._init_odf()
 
-            gtab = gradient_table(self.dataset.bvals, self.dataset.bvecs)
-            dti_model = dti.TensorModel(gtab, fit_method='LS')
+            dti_model = dti.TensorModel(self.dataset.gtab, fit_method='LS')
             dti_fit = dti_model.fit(self.dataset.dwi, mask=self.dataset.binary_mask)
 
             fa_img = dti_fit.fa
@@ -127,23 +126,22 @@ class RLtractEnvironment(gym.Env):
 
     def _init_odf(self):
         print("Initialising ODF")
-        gtab = gradient_table(self.dataset.bvals, self.dataset.bvecs)
         # fit DTI model to data
         if self.odf_mode == "DTI":
             print("DTI-based ODF computation")
-            self.dti_model = dti.TensorModel(gtab, fit_method='LS')
+            self.dti_model = dti.TensorModel(self.dataset.gtab, fit_method='LS')
             self.dti_fit = self.dti_model.fit(self.dataset.dwi, mask=self.dataset.binary_mask)
             # compute ODF
             odf = self.dti_fit.odf(self.sphere_odf)
         elif self.odf_mode == "CSD":
             print("CSD-based ODF computation")
-            response, ratio = auto_response_ssst(gtab, self.dataset.dwi, roi_radii=10, fa_thr=0.7)
-            mask = mask_for_response_ssst(gtab, self.dataset.dwi, roi_radii=10, fa_thr=0.7)
+            response, ratio = auto_response_ssst(self.dataset.gtab, self.dataset.dwi, roi_radii=10, fa_thr=0.7)
+            mask = mask_for_response_ssst(self.dataset.gtab, self.dataset.dwi, roi_radii=10, fa_thr=0.7)
             nvoxels = np.sum(mask)
             print(nvoxels)
-            response, ratio = response_from_mask_ssst(gtab, self.dataset.dwi, mask)
+            response, ratio = response_from_mask_ssst(self.dataset.gtab, self.dataset.dwi, mask)
             print(response)
-            self.dti_model = ConstrainedSphericalDeconvModel(gtab, response)
+            self.dti_model = ConstrainedSphericalDeconvModel(self.dataset.gtab, response)
             self.dti_fit = self.dti_model.fit(self.dataset.dwi)
             odf = self.dti_fit.odf(self.sphere_odf)
 
@@ -159,8 +157,7 @@ class RLtractEnvironment(gym.Env):
 
     def _init_shmcoeff(self, sh_basis_type=None):
         print("Initialising spherical harmonics")
-        gtab = gradient_table(self.dataset.bvals, self.dataset.bvecs)
-        self.dti_model = dti.TensorModel(gtab, fit_method='LS')
+        self.dti_model = dti.TensorModel(self.dataset.gtab, fit_method='LS')
 
         peaks = peaks_from_model(model=self.dti_model, data=self.dataset.dwi, sphere=self.sphere, \
                                  relative_peak_threshold=.2, min_separation_angle=25, mask=self.dataset.binary_mask,
