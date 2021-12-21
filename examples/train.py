@@ -11,7 +11,7 @@ sys.path.insert(0,'..')
 
 from dfibert.tracker.nn.rl import Agent, Action_Scheduler, DQN
 
-import dfibert.envs.RLtractEnvironment as RLTe
+import dfibert.envs.RLTractEnvironment as RLTe
 
 
 def save_model(path_checkpoint, model, epoch, mean_reward, epsilon, n_actions, state_shape):
@@ -43,8 +43,8 @@ def train(path, eps=1.0, step_counter=0, max_steps=3000000, batch_size=32, repla
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Device..", device)
     print("Init environment..")
-    #env = RLTe.RLtractEnvironment(stepWidth=0.8, action_space=20, device = 'cpu', pReferenceStreamlines='data/HCP307200_CSD_min40.vtk')
-    env = RLTe.RLtractEnvironment(stepWidth=0.8, action_space=20, device = 'cpu', pReferenceStreamlines='data/dti_ijk_0.8_maxDirecGetter.vtk', tracking_in_RAS = False, odf_state = odf_state)
+    #env = RLTe.RLTractEnvironment(step_width=0.8, action_space=20, device = 'cpu', pReferenceStreamlines='data/HCP307200_CSD_min40.vtk')
+    env = RLTe.RLTractEnvironment(step_width=0.8, action_space=20, device ='cpu', pReferenceStreamlines='data/dti_ijk_0.8_maxDirecGetter.vtk', tracking_in_RAS = False, odf_state = odf_state)
     print("..done!")
     n_actions = env.action_space.n
     print("Init agent..")
