@@ -4,5 +4,6 @@ __pycache__/
 *.py[cod]
 /cache/
 /data/
+/examples/data/
 *.pt
 *.vtk
