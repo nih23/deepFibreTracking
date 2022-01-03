@@ -62,7 +62,7 @@ class RLTractEnvironment(gym.Env):
         sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
         sphere, potential = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
         self.sphere = sphere
-        self.sphere_odf = self.sphere#get_sphere('repulsion100')
+        self.sphere_odf = get_sphere('repulsion100')
         #self.sphere = self.sphere_odf
         # print("sphere_odf = sphere_action = repulsion100")
 
@@ -77,7 +77,7 @@ class RLTractEnvironment(gym.Env):
         self.directions_odf = torch.from_numpy(self.sphere_odf.vertices).to(device)
 
         self.action_space = Discrete(no_actions)  # spaces.Discrete(no_actions+1)
-        self.dwi_postprocessor = Resample(sphere=get_sphere('repulsion100'))  # resample(sphere=sphere)
+        self.dwi_postprocessor = Resample(sphere=self.sphere)#get_sphere('repulsion100'))  # resample(sphere=sphere)
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
         self.maxL2dist_to_State = max_l2_dist_to_state
@@ -247,9 +247,12 @@ class RLTractEnvironment(gym.Env):
         # @TODO: no. of diffusion directions hard-coded to 100
         # @TODO: taken center slice as this resembles maximum DG more closely.
         # @TODO: Alternatively: odf should be averaged first
-        odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(20)
+        odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(self.directions_odf.shape[0])
         reward = odf_cur / torch.max(odf_cur)
-        reward = reward[action]
+        
+        cos_similarities = torch.nn.functional.cosine_similarity(self.directions[action], self.directions_odf, dim=-1)
+        reward = reward[torch.argmax(cos_similarities)]
+        #reward = reward[action]
 
         # II. cosine similarity of current tangent to previous tangent 
         #     => Agent should prefer going straight
