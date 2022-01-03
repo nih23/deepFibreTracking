@@ -4,6 +4,8 @@ import dipy.reconst.dti as dti
 import gym
 import numpy as np
 import torch
+from dipy.core.sphere import HemiSphere
+from dipy.core.gradients import disperse_charges
 from dipy.core.interpolation import trilinear_interpolate4d
 from dipy.data import get_sphere
 from dipy.direction import peaks_from_model
@@ -53,14 +55,15 @@ class RLTractEnvironment(gym.Env):
         self.odf_mode = odf_mode
 
         np.random.seed(42)
+        action_space = 20
 
-        # phi = np.pi * np.random.rand(action_space)
-        # theta = 2 * np.pi * np.random.rand(action_space)
-        # sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
-        # sphere, potential = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
-        # self.sphere = sphere
-        self.sphere_odf = get_sphere('repulsion100')
-        self.sphere = self.sphere_odf
+        phi = np.pi * np.random.rand(action_space)
+        theta = 2 * np.pi * np.random.rand(action_space)
+        sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
+        sphere, potential = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
+        self.sphere = sphere
+        self.sphere_odf = self.sphere#get_sphere('repulsion100')
+        #self.sphere = self.sphere_odf
         # print("sphere_odf = sphere_action = repulsion100")
 
         # -- interpolation function of state's value --
@@ -173,7 +176,7 @@ class RLTractEnvironment(gym.Env):
         except KeyError:
             raise ValueError("%s is not a known basis type." % sh_basis_type)
 
-        self._B, m, n = basis(sh_order, self.sphere.theta, self.sphere.phi)
+        self._B, m, n = basis(sh_order, self.sphere_odf.theta, self.sphere_odf.phi)
 
     def interpolate_dwi_at_state(self, stateCoordinates):
         # TODO: maybe stay in RAS all the time then no need to transfer to IJK
@@ -244,7 +247,7 @@ class RLTractEnvironment(gym.Env):
         # @TODO: no. of diffusion directions hard-coded to 100
         # @TODO: taken center slice as this resembles maximum DG more closely.
         # @TODO: Alternatively: odf should be averaged first
-        odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(100)
+        odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(20)
         reward = odf_cur / torch.max(odf_cur)
         reward = reward[action]
 
@@ -332,7 +335,7 @@ class RLTractEnvironment(gym.Env):
                 current_direction = self.directions[action].numpy()
                 # take a step
                 _, reward, terminal, _ = self.step(action, direction="backward")
-                state = self.state
+                state = self.state # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
                 if (False in torch.eq(state.getCoordinate().squeeze(0), my_position)) & (not terminal):
                     all_states.append(state.getCoordinate().squeeze(0).numpy())
 
