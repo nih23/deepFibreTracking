@@ -278,7 +278,7 @@ class RLTractEnvironment(gym.Env):
         reward = pmf_cur / np.max(pmf_cur)
         if current_direction is not None:
             # reward = reward * self._adj_matrix[tuple(current_direction)] #@TODO: buggy
-            reward = reward * (torch.nn.functional.cosine_similarity(self.directions,
+            reward = reward * (torch.nn.functional.cosine_similarity(self.directions_odf,
                                                                      torch.from_numpy(current_direction).view(1,
                                                                                                               -1)).view(
                 1, -1)).cpu().numpy()
@@ -286,11 +286,15 @@ class RLTractEnvironment(gym.Env):
 
     def reward_for_state_action_pair(self, state, current_direction, action):
         reward = self.reward_for_state(state, current_direction)
+        cos_similarities = torch.nn.functional.cosine_similarity(self.directions[action], self.directions_odf, dim=-1)
+        action = torch.argmax(cos_similarities)
         return reward[action]
 
     def _get_best_action(self, state, current_direction):
         reward = self.reward_for_state(state, current_direction)
         best_action = np.argmax(reward)
+        cos_similarities = torch.nn.functional.cosine_similarity(self.directions_odf[best_action], self.directions, dim=-1)
+        best_action = torch.argmax(cos_similarities)
         return best_action
 
     def track(self, with_best_action=True):
