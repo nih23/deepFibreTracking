@@ -114,7 +114,7 @@ class RLTractEnvironment(gym.Env):
         obs_shape = self.get_observation_from_state(self.state).shape
         self.observation_space = Box(low=0, high=150, shape=obs_shape)
 
-        self.state = None
+        # self.state = None  <-- is defined in reset function
 
     def _set_adjacency_matrix(self, sphere, cos_similarity):
         """Creates a dictionary where each key is a direction from sphere and
@@ -218,11 +218,11 @@ class RLTractEnvironment(gym.Env):
         # -- Termination conditions --
         # I. number of steps larger than maximum
         if self.stepCounter >= self.maxSteps:
-            return self.state, 0., True, {}
+            return self.get_observation_from_state(self.state), 0., True, {}
 
         # II. fa below threshold? stop tracking
         if self.dataset.get_fa(self.state.getCoordinate()) < self.fa_threshold:
-            return self.state, 0., True, {}
+            return self.get_observation_from_state(self.state), 0., True, {}
 
         # -- Tracking --
         cur_tangent = self.directions[action].view(-1, 3)
@@ -263,7 +263,7 @@ class RLTractEnvironment(gym.Env):
         self.state_history.append(next_state)
         self.state = next_state
 
-        return next_state, reward, False, {}
+        return self.get_observation_from_state(next_state), reward, False, {}
 
     def reward_for_state(self, state, current_direction):
         my_position = state.getCoordinate().double().squeeze(0)
@@ -291,7 +291,8 @@ class RLTractEnvironment(gym.Env):
         streamlines = []
         for i in trange(len(self.seeds)):
             all_states = []
-            state = self.reset(seed_index=i)
+            self.reset(seed_index=i)
+            state = self.state  # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
             seed_position = state.getCoordinate().squeeze(0).numpy()
             current_direction = None
             all_states.append(seed_position)
@@ -309,13 +310,15 @@ class RLTractEnvironment(gym.Env):
                 # store tangent for next time step
                 current_direction = self.directions[action].numpy()
                 # take a step
-                state, reward, terminal, _ = self.step(action)
+                _, reward, terminal, _ = self.step(action)
+                state = self.state # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
                 if not terminal:
                     all_states.append(state.getCoordinate().squeeze(0).numpy())
                 eval_steps = eval_steps + 1
 
             # -- backward tracking
-            state = self.reset(seed_index=i, terminal_F=True)
+            self.reset(seed_index=i, terminal_F=True)
+            state = self.state # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
             current_direction = None  # potentially take tangent of first step of forward tracker
             terminal = False
             all_states = all_states[::-1]
@@ -328,7 +331,8 @@ class RLTractEnvironment(gym.Env):
                 # store tangent for next time step
                 current_direction = self.directions[action].numpy()
                 # take a step
-                state, reward, terminal, _ = self.step(action, direction="backward")
+                _, reward, terminal, _ = self.step(action, direction="backward")
+                state = self.state
                 if (False in torch.eq(state.getCoordinate().squeeze(0), my_position)) & (not terminal):
                     all_states.append(state.getCoordinate().squeeze(0).numpy())
 
@@ -347,8 +351,10 @@ class RLTractEnvironment(gym.Env):
 
     def get_observation_from_state(self, state):
         dwi_values = state.getValue().flatten()
-        past_coordinates = np.array(list(self.state_history)).flatten()
-        return np.concatenate((dwi_values, past_coordinates))
+        # TODO -> currently only on dwi values, not on past states
+        #past_coordinates = np.array(list(self.state_history)).flatten()
+        #return np.concatenate((dwi_values, past_coordinates))
+        return dwi_values
 
     # switch reference streamline of environment
     # @TODO: optimize runtime
@@ -388,7 +394,7 @@ class RLTractEnvironment(gym.Env):
         self.state = TractographyState(self.reference_seed_point_ijk, self.state_interpol_func)
         self.state_history = deque([self.state]*4, maxlen=4)
 
-        return self.state
+        return self.get_observation_from_state(self.state)
 
     def render(self, mode="human"):
         pass
