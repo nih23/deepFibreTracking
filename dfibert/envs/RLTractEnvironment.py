@@ -4,7 +4,7 @@ import dipy.reconst.dti as dti
 import gym
 import numpy as np
 import torch
-from dipy.core.sphere import HemiSphere
+from dipy.core.sphere import HemiSphere, Sphere
 from dipy.core.gradients import disperse_charges
 from dipy.core.interpolation import trilinear_interpolate4d
 from dipy.data import get_sphere
@@ -57,13 +57,13 @@ class RLTractEnvironment(gym.Env):
         np.random.seed(42)
         action_space = action_space
 
-        phi = np.pi * np.random.rand(action_space)
-        theta = 2 * np.pi * np.random.rand(action_space)
-        sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
-        sphere, potential = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
-        self.sphere = sphere
+        #phi = np.pi * np.random.rand(action_space)
+        #theta = 2 * np.pi * np.random.rand(action_space)
+        #sphere = HemiSphere(theta=theta, phi=phi) # Sphere(theta=theta, phi=phi
+        #sphere, potential = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
+        #self.sphere = sphere
         self.sphere_odf = get_sphere('repulsion100')
-        #self.sphere = self.sphere_odf
+        self.sphere = self.sphere_odf
         # print("sphere_odf = sphere_action = repulsion100")
 
         # -- interpolation function of state's value --
@@ -251,9 +251,9 @@ class RLTractEnvironment(gym.Env):
         if not torch.count_nonzero(odf_cur):  # if all elements in odf_cur are zero, terminate episode
             return self.get_observation_from_state(next_state), 0., True, {}
         reward = odf_cur / torch.max(odf_cur)
-        cos_similarities = torch.nn.functional.cosine_similarity(self.directions[action], self.directions_odf, dim=-1)
-        reward = reward[torch.argmax(cos_similarities)]
-        #reward = reward[action]
+        #cos_similarities = torch.nn.functional.cosine_similarity(self.directions[action], self.directions_odf, dim=-1)
+        #reward = reward[torch.argmax(cos_similarities)]
+        reward = reward[action]
 
         # II. cosine similarity of current tangent to previous tangent 
         #     => Agent should prefer going straight
@@ -287,9 +287,9 @@ class RLTractEnvironment(gym.Env):
 
     def reward_for_state_action_pair(self, state, current_direction, action):
         reward = self.reward_for_state(state, current_direction)
-        cos_similarities = torch.nn.functional.cosine_similarity(self.directions[action], self.directions_odf, dim=-1)
-        action = torch.argmax(cos_similarities)
-        return reward[action]
+        #cos_similarities = torch.nn.functional.cosine_similarity(self.directions[action], self.directions_odf, dim=-1)
+        #action = torch.argmax(cos_similarities)
+        return torch.argmax(reward)
 
     def _get_odf_peaks(self, odf, window_width=31):
         odf = torch.from_numpy(odf).squeeze(0)
