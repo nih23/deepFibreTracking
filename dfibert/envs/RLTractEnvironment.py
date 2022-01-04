@@ -27,7 +27,7 @@ from ._state import TractographyState
 class RLTractEnvironment(gym.Env):
     def __init__(self, device, seeds=None, step_width=0.8, dataset='100307', grid_dim=(3, 3, 3),
                  max_l2_dist_to_state=0.1, tracking_in_RAS=True, fa_threshold=0.1, b_val=1000, max_angle=80.,
-                 odf_state=True, odf_mode="CSD"):
+                 odf_state=True, odf_mode="CSD", action_space=50):
         self.state_history = None
         self.reference_seed_point_ijk = None
         self.points_visited = None
@@ -55,7 +55,7 @@ class RLTractEnvironment(gym.Env):
         self.odf_mode = odf_mode
 
         np.random.seed(42)
-        action_space = 20
+        action_space = action_space
 
         phi = np.pi * np.random.rand(action_space)
         theta = 2 * np.pi * np.random.rand(action_space)
@@ -114,8 +114,8 @@ class RLTractEnvironment(gym.Env):
         self._set_adjacency_matrix(self.sphere, self.cos_similarity)
 
         # -- init observation space --
-        obs_shape = self.get_observation_from_state(self.state).shape
-        self.observation_space = Box(low=0, high=150, shape=obs_shape)
+        #obs_shape = self.get_observation_from_state(self.state).shape
+        #self.observation_space = Box(low=0, high=150, shape=obs_shape)
 
         # self.state = None  <-- is defined in reset function
 
@@ -248,8 +248,9 @@ class RLTractEnvironment(gym.Env):
         # @TODO: taken center slice as this resembles maximum DG more closely.
         # @TODO: Alternatively: odf should be averaged first
         odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(self.directions_odf.shape[0])
+        if not torch.count_nonzero(odf_cur):  # if all elements in odf_cur are zero, terminate episode
+            return self.get_observation_from_state(next_state), 0., True, {}
         reward = odf_cur / torch.max(odf_cur)
-        
         cos_similarities = torch.nn.functional.cosine_similarity(self.directions[action], self.directions_odf, dim=-1)
         reward = reward[torch.argmax(cos_similarities)]
         #reward = reward[action]
@@ -263,7 +264,7 @@ class RLTractEnvironment(gym.Env):
             cos_similarity = torch.nn.functional.cosine_similarity(prev_tangent, cur_tangent)
             reward = (reward * cos_similarity).squeeze()
             if cos_similarity <= 0.:
-                return next_state, reward, True, {}
+                return self.get_observation_from_state(next_state), reward, True, {}
 
         # -- book keeping --
         self.state_history.append(next_state)
@@ -290,11 +291,22 @@ class RLTractEnvironment(gym.Env):
         action = torch.argmax(cos_similarities)
         return reward[action]
 
+    def _get_odf_peaks(self, odf, window_width=31):
+        odf = torch.from_numpy(odf).squeeze(0)
+        peak_mask = torch.cat([torch.zeros(1, dtype=torch.uint8), (odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1]), torch.zeros(1, dtype=torch.uint8)], dim=0)
+        peaks = torch.nn.functional.max_pool1d_with_indices(odf.view(1,1,-1), window_width, 1, padding=window_width//2)[1].unique()
+        peak_indices = peaks[peak_mask[peaks].nonzero()]
+        return peak_indices
+
     def _get_best_action(self, state, current_direction):
         reward = self.reward_for_state(state, current_direction)
-        best_action = np.argmax(reward)
-        cos_similarities = torch.nn.functional.cosine_similarity(self.directions_odf[best_action], self.directions, dim=-1)
-        best_action = torch.argmax(cos_similarities)
+        peak_indices = self._get_odf_peaks(reward)
+        cos_similarities = torch.nn.functional.cosine_similarity(self.directions_odf[peak_indices], self.directions, dim=-1)
+        try:
+            max_sim = torch.max(cos_similarities, dim=0)[0]
+        except RuntimeError:
+            return np.random.randint(self.directions.shape[0])
+        best_action = np.argmax(max_sim)
         return best_action
 
     def track(self, with_best_action=True):
@@ -360,7 +372,7 @@ class RLTractEnvironment(gym.Env):
         return rewards
 
     def get_observation_from_state(self, state):
-        dwi_values = state.getValue().flatten()
+        dwi_values = state#.getValue().flatten()
         # TODO -> currently only on dwi values, not on past states
         #past_coordinates = np.array(list(self.state_history)).flatten()
         #return np.concatenate((dwi_values, past_coordinates))
