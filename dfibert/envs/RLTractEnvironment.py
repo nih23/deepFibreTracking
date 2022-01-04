@@ -4,8 +4,6 @@ import dipy.reconst.dti as dti
 import gym
 import numpy as np
 import torch
-from dipy.core.sphere import HemiSphere, Sphere
-from dipy.core.gradients import disperse_charges
 from dipy.core.interpolation import trilinear_interpolate4d
 from dipy.data import get_sphere
 from dipy.direction import peaks_from_model
@@ -27,7 +25,7 @@ from ._state import TractographyState
 class RLTractEnvironment(gym.Env):
     def __init__(self, device, seeds=None, step_width=0.8, dataset='100307', grid_dim=(3, 3, 3),
                  max_l2_dist_to_state=0.1, tracking_in_RAS=True, fa_threshold=0.1, b_val=1000, max_angle=80.,
-                 odf_state=True, odf_mode="CSD", action_space=50):
+                 odf_state=True, odf_mode="CSD"):
         self.state_history = None
         self.reference_seed_point_ijk = None
         self.points_visited = None
@@ -55,13 +53,12 @@ class RLTractEnvironment(gym.Env):
         self.odf_mode = odf_mode
 
         np.random.seed(42)
-        action_space = action_space
 
-        #phi = np.pi * np.random.rand(action_space)
-        #theta = 2 * np.pi * np.random.rand(action_space)
-        #sphere = HemiSphere(theta=theta, phi=phi) # Sphere(theta=theta, phi=phi
-        #sphere, potential = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
-        #self.sphere = sphere
+        # phi = np.pi * np.random.rand(action_space)
+        # theta = 2 * np.pi * np.random.rand(action_space)
+        # sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
+        # sphere, potential = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
+        # self.sphere = sphere
         self.sphere_odf = get_sphere('repulsion100')
         self.sphere = self.sphere_odf
         # print("sphere_odf = sphere_action = repulsion100")
@@ -77,7 +74,7 @@ class RLTractEnvironment(gym.Env):
         self.directions_odf = torch.from_numpy(self.sphere_odf.vertices).to(device)
 
         self.action_space = Discrete(no_actions)  # spaces.Discrete(no_actions+1)
-        self.dwi_postprocessor = Resample(sphere=self.sphere)#get_sphere('repulsion100'))  # resample(sphere=sphere)
+        self.dwi_postprocessor = Resample(sphere=get_sphere('repulsion100'))  # resample(sphere=sphere)
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
         self.maxL2dist_to_State = max_l2_dist_to_state
@@ -114,7 +111,7 @@ class RLTractEnvironment(gym.Env):
         self._set_adjacency_matrix(self.sphere, self.cos_similarity)
 
         # -- init observation space --
-        #obs_shape = self.get_observation_from_state(self.state).shape
+        #obs_shape = self.get_observation_from_state(self.state).shape  ### <- TODO comment back in after debugging env
         #self.observation_space = Box(low=0, high=150, shape=obs_shape)
 
         # self.state = None  <-- is defined in reset function
@@ -176,7 +173,7 @@ class RLTractEnvironment(gym.Env):
         except KeyError:
             raise ValueError("%s is not a known basis type." % sh_basis_type)
 
-        self._B, m, n = basis(sh_order, self.sphere_odf.theta, self.sphere_odf.phi)
+        self._B, m, n = basis(sh_order, self.sphere.theta, self.sphere.phi)
 
     def interpolate_dwi_at_state(self, stateCoordinates):
         # TODO: maybe stay in RAS all the time then no need to transfer to IJK
@@ -247,12 +244,8 @@ class RLTractEnvironment(gym.Env):
         # @TODO: no. of diffusion directions hard-coded to 100
         # @TODO: taken center slice as this resembles maximum DG more closely.
         # @TODO: Alternatively: odf should be averaged first
-        odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(self.directions_odf.shape[0])
-        if not torch.count_nonzero(odf_cur):  # if all elements in odf_cur are zero, terminate episode
-            return self.get_observation_from_state(next_state), 0., True, {}
+        odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(100)
         reward = odf_cur / torch.max(odf_cur)
-        #cos_similarities = torch.nn.functional.cosine_similarity(self.directions[action], self.directions_odf, dim=-1)
-        #reward = reward[torch.argmax(cos_similarities)]
         reward = reward[action]
 
         # II. cosine similarity of current tangent to previous tangent 
@@ -264,7 +257,7 @@ class RLTractEnvironment(gym.Env):
             cos_similarity = torch.nn.functional.cosine_similarity(prev_tangent, cur_tangent)
             reward = (reward * cos_similarity).squeeze()
             if cos_similarity <= 0.:
-                return self.get_observation_from_state(next_state), reward, True, {}
+                return next_state, reward, True, {}
 
         # -- book keeping --
         self.state_history.append(next_state)
@@ -277,19 +270,29 @@ class RLTractEnvironment(gym.Env):
         # -- main peak from ODF --
         pmf_cur = self.interpolate_odf_at_state(my_position)[:, 1, 1, 1]
         reward = pmf_cur / np.max(pmf_cur)
-        if current_direction is not None:
+        #if current_direction is not None:
             # reward = reward * self._adj_matrix[tuple(current_direction)] #@TODO: buggy
-            reward = reward * (torch.nn.functional.cosine_similarity(self.directions_odf,
-                                                                     torch.from_numpy(current_direction).view(1,
-                                                                                                              -1)).view(
-                1, -1)).cpu().numpy()
+        #    reward = reward * (torch.nn.functional.cosine_similarity(self.directions,
+        #                                                             torch.from_numpy(current_direction).view(1,
+        #                                                                                                      -1)).view(
+        #        1, -1)).cpu().numpy()
+        peak_indices = self._get_odf_peaks(reward)
+        mask = np.zeros_like(reward)
+        mask[peak_indices] = 1
+        reward *= mask
+        if current_direction is not None:
+            reward= reward * torch.nn.functional.cosine_similarity(self.directions, torch.from_numpy(current_direction).view(1,-1)).view(1,-1).cpu().numpy()
+        
         return reward
 
     def reward_for_state_action_pair(self, state, current_direction, action):
         reward = self.reward_for_state(state, current_direction)
-        #cos_similarities = torch.nn.functional.cosine_similarity(self.directions[action], self.directions_odf, dim=-1)
-        #action = torch.argmax(cos_similarities)
-        return torch.argmax(reward)
+        return reward[action]
+
+    def _get_best_action(self, state, current_direction):
+        reward = self.reward_for_state(state, current_direction)
+        best_action = np.argmax(reward)
+        return best_action
 
     def _get_odf_peaks(self, odf, window_width=31):
         odf = torch.from_numpy(odf).squeeze(0)
@@ -297,17 +300,6 @@ class RLTractEnvironment(gym.Env):
         peaks = torch.nn.functional.max_pool1d_with_indices(odf.view(1,1,-1), window_width, 1, padding=window_width//2)[1].unique()
         peak_indices = peaks[peak_mask[peaks].nonzero()]
         return peak_indices
-
-    def _get_best_action(self, state, current_direction):
-        reward = self.reward_for_state(state, current_direction)
-        peak_indices = self._get_odf_peaks(reward)
-        cos_similarities = torch.nn.functional.cosine_similarity(self.directions_odf[peak_indices], self.directions, dim=-1)
-        try:
-            max_sim = torch.max(cos_similarities, dim=0)[0]
-        except RuntimeError:
-            return np.random.randint(self.directions.shape[0])
-        best_action = np.argmax(max_sim)
-        return best_action
 
     def track(self, with_best_action=True):
         streamlines = []
@@ -354,7 +346,7 @@ class RLTractEnvironment(gym.Env):
                 current_direction = self.directions[action].numpy()
                 # take a step
                 _, reward, terminal, _ = self.step(action, direction="backward")
-                state = self.state # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
+                state = self.state
                 if (False in torch.eq(state.getCoordinate().squeeze(0), my_position)) & (not terminal):
                     all_states.append(state.getCoordinate().squeeze(0).numpy())
 
