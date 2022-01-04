@@ -5,6 +5,8 @@ import gym
 import numpy as np
 import torch
 from dipy.core.interpolation import trilinear_interpolate4d
+from dipy.core.sphere import HemiSphere, Sphere
+from dipy.core.sphere import disperse_charges
 from dipy.data import get_sphere
 from dipy.direction import peaks_from_model
 from dipy.reconst.csdeconv import ConstrainedSphericalDeconvModel
@@ -25,7 +27,7 @@ from ._state import TractographyState
 class RLTractEnvironment(gym.Env):
     def __init__(self, device, seeds=None, step_width=0.8, dataset='100307', grid_dim=(3, 3, 3),
                  max_l2_dist_to_state=0.1, tracking_in_RAS=True, fa_threshold=0.1, b_val=1000, max_angle=80.,
-                 odf_state=True, odf_mode="CSD"):
+                 odf_state=True, odf_mode="CSD", action_space=100):
         self.state_history = None
         self.reference_seed_point_ijk = None
         self.points_visited = None
@@ -53,14 +55,18 @@ class RLTractEnvironment(gym.Env):
         self.odf_mode = odf_mode
 
         np.random.seed(42)
-
-        # phi = np.pi * np.random.rand(action_space)
-        # theta = 2 * np.pi * np.random.rand(action_space)
-        # sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
-        # sphere, potential = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
-        # self.sphere = sphere
-        self.sphere_odf = get_sphere('repulsion100')
-        self.sphere = self.sphere_odf
+        action_space = action_space 
+        phi = np.pi * np.random.rand(int(action_space / 2))
+        theta = 2 * np.pi * np.random.rand(int(action_space / 2))
+        sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
+        sphere, _ = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
+        self.sphere = Sphere(xyz=np.vstack((sphere.vertices, -sphere.vertices)))
+        #self.sphere = get_sphere('repulsion100')
+        #self.sphere_odf = get_sphere('repulsion100')
+        self.sphere_odf = self.sphere
+        #random_indices = np.random.sample(range(0, 100), action_space)
+        #self.sphere = self.sphere_odf[random_indices]
+        # self.sphere = self.sphere_odf
         # print("sphere_odf = sphere_action = repulsion100")
 
         # -- interpolation function of state's value --
@@ -244,7 +250,7 @@ class RLTractEnvironment(gym.Env):
         # @TODO: no. of diffusion directions hard-coded to 100
         # @TODO: taken center slice as this resembles maximum DG more closely.
         # @TODO: Alternatively: odf should be averaged first
-        odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(100)
+        odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(self.directions_odf.shape[0])
         reward = odf_cur / torch.max(odf_cur)
         reward = reward[action]
 
@@ -276,7 +282,7 @@ class RLTractEnvironment(gym.Env):
         #                                                             torch.from_numpy(current_direction).view(1,
         #                                                                                                      -1)).view(
         #        1, -1)).cpu().numpy()
-        peak_indices = self._get_odf_peaks(reward)
+        peak_indices = self._get_odf_peaks(reward, window_width=int(self.action_space.n/3))
         mask = np.zeros_like(reward)
         mask[peak_indices] = 1
         reward *= mask
@@ -291,11 +297,14 @@ class RLTractEnvironment(gym.Env):
 
     def _get_best_action(self, state, current_direction):
         reward = self.reward_for_state(state, current_direction)
-        best_action = np.argmax(reward)
-        return best_action
+        #best_direction_odf = self.directions_odf[np.argmax(reward)]
+        #best_action_d = np.argmax(torch.nn.functional.cosine_similarity(self.directions, best_direction_odf, dim=-1))
+        return np.argmax(reward)#best_action_d
 
     def _get_odf_peaks(self, odf, window_width=31):
         odf = torch.from_numpy(odf).squeeze(0)
+        if window_width % 2 == 0.:
+            window_width += 1
         peak_mask = torch.cat([torch.zeros(1, dtype=torch.uint8), (odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1]), torch.zeros(1, dtype=torch.uint8)], dim=0)
         peaks = torch.nn.functional.max_pool1d_with_indices(odf.view(1,1,-1), window_width, 1, padding=window_width//2)[1].unique()
         peak_indices = peaks[peak_mask[peaks].nonzero()]
