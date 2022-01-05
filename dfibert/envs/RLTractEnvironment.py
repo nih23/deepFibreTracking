@@ -60,7 +60,7 @@ class RLTractEnvironment(gym.Env):
         theta = 2 * np.pi * np.random.rand(int(action_space / 2))
         sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
         sphere, _ = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
-        self.sphere = Sphere(xyz=np.vstack((sphere.vertices, -sphere.vertices)))
+        self.sphere = sphere#Sphere(xyz=np.vstack((sphere.vertices, -sphere.vertices)))
         #self.sphere = get_sphere('repulsion100')
         #self.sphere_odf = get_sphere('repulsion100')
         self.sphere_odf = self.sphere
@@ -251,6 +251,8 @@ class RLTractEnvironment(gym.Env):
         # @TODO: taken center slice as this resembles maximum DG more closely.
         # @TODO: Alternatively: odf should be averaged first
         odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(self.directions_odf.shape[0])
+        if not torch.count_nonzero(odf_cur):  # if all elements in odf_cur are zero, terminate episode
+            return self.get_observation_from_state(next_state), 0., True, {}
         reward = odf_cur / torch.max(odf_cur)
         reward = reward[action]
 
@@ -305,7 +307,8 @@ class RLTractEnvironment(gym.Env):
         odf = torch.from_numpy(odf).squeeze(0)
         if window_width % 2 == 0.:
             window_width += 1
-        peak_mask = torch.cat([torch.zeros(1, dtype=torch.uint8), (odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1]), torch.zeros(1, dtype=torch.uint8)], dim=0)
+        odf_diff = ((odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1])).type(torch.uint8) 
+        peak_mask =  torch.cat([torch.zeros(1, dtype=torch.uint8), odf_diff, torch.zeros(1, dtype=torch.uint8)], dim=0)
         peaks = torch.nn.functional.max_pool1d_with_indices(odf.view(1,1,-1), window_width, 1, padding=window_width//2)[1].unique()
         peak_indices = peaks[peak_mask[peaks].nonzero()]
         return peak_indices
