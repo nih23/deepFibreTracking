@@ -22,6 +22,12 @@ from dfibert.util import get_grid
 from ._state import TractographyState
 
 
+from .neuroanatomical_utils import FiberBundleDataset, interpolate3dAt
+
+
+
+
+
 class RLTractEnvironment(gym.Env):
     def __init__(self, device, seeds=None, step_width=0.8, dataset='100307', grid_dim=(3, 3, 3),
                  max_l2_dist_to_state=0.1, tracking_in_RAS=True, fa_threshold=0.1, b_val=1000, max_angle=80.,
@@ -115,6 +121,12 @@ class RLTractEnvironment(gym.Env):
         self.observation_space = Box(low=0, high=150, shape=obs_shape)
 
         self.state = None
+        
+        # -- init bundles for neuroanatomical loss --
+        self.fibers_CST_left = FiberBundleDataset(path_to_files="data/ISMRM2015/gt_bundles/CST_left.fib")
+        self.fibers_CST_right = FiberBundleDataset(path_to_files="data/ISMRM2015/gt_bundles/CST_right.fib")
+        self.fibers_Fornix = FiberBundleDataset(path_to_files="data/ISMRM2015/gt_bundles/Fornix.fib")
+
 
     def _set_adjacency_matrix(self, sphere, cos_similarity):
         """Creates a dictionary where each key is a direction from sphere and
@@ -189,6 +201,7 @@ class RLTractEnvironment(gym.Env):
         interpolated_dwi = np.rollaxis(interpolated_dwi, 3)  # CxWxHxD
         # interpolated_dwi = self.dtype(interpolated_dwi).to(self.device)
         return interpolated_dwi
+
 
     def interpolate_odf_at_state(self, stateCoordinates):
         if self.odf_interpolator is None:
@@ -274,9 +287,12 @@ class RLTractEnvironment(gym.Env):
             # reward = reward * self._adj_matrix[tuple(current_direction)] #@TODO: buggy
             reward = reward * (torch.nn.functional.cosine_similarity(self.directions,
                                                                      torch.from_numpy(current_direction).view(1,
-                                                                                                              -1)).view(
-                1, -1)).cpu().numpy()
-        return reward
+                                                                                      -1)).view(1, -1)).cpu().numpy()
+        # neuroanatomical reward
+        next_pos = my_position.view(1,-1) + self.directions
+        reward_na = interpolate3dAt(self.fibers_Fornix.tractMask, next_pos) + interpolate3dAt(self.fibers_CST_left.tractMask, next_pos) + interpolate3dAt(self.fibers_CST_right.tractMask, next_pos)
+        reward_na = reward_na.view(1, -1).cpu().numpy()
+        return reward + reward_na
 
     def reward_for_state_action_pair(self, state, current_direction, action):
         reward = self.reward_for_state(state, current_direction)
