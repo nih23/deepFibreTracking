@@ -56,18 +56,12 @@ class RLTractEnvironment(gym.Env):
 
         np.random.seed(42)
         action_space = action_space 
-        phi = np.pi * np.random.rand(int(action_space / 2))
-        theta = 2 * np.pi * np.random.rand(int(action_space / 2))
+        phi = np.pi * np.random.rand(action_space)
+        theta = 2 * np.pi * np.random.rand(action_space)
         sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
         sphere, _ = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
-        self.sphere = Sphere(xyz=np.vstack((sphere.vertices, -sphere.vertices)))
-        #self.sphere = get_sphere('repulsion100')
-        #self.sphere_odf = get_sphere('repulsion100')
+        self.sphere = sphere
         self.sphere_odf = self.sphere
-        #random_indices = np.random.sample(range(0, 100), action_space)
-        #self.sphere = self.sphere_odf[random_indices]
-        # self.sphere = self.sphere_odf
-        # print("sphere_odf = sphere_action = repulsion100")
 
         # -- interpolation function of state's value --
         self.state_interpol_func = self.interpolate_dwi_at_state
@@ -229,83 +223,77 @@ class RLTractEnvironment(gym.Env):
         # II. fa below threshold? stop tracking
         if self.dataset.get_fa(self.state.getCoordinate()) < self.fa_threshold:
             return self.get_observation_from_state(self.state), 0., True, {}
+        
+        #@todo: III. leaving brain mask
+        #if self.dataset.get_fa(self.state.getCoordinate()) < self.fa_threshold:
+        #    return self.get_observation_from_state(self.state), 0., True, {}
 
         # -- Tracking --
-        cur_tangent = self.directions[action].view(-1, 3)
+        cur_tangent = self.directions[action].view(-1, 3) # action space = Hemisphere
         cur_position = self.state.getCoordinate().view(-1, 3)
-        if self.stepCounter == 1. and direction == "backward":
+        if(direction == "backward"):
             cur_tangent = cur_tangent * -1
         next_position = cur_position + self.step_width * cur_tangent
         next_state = TractographyState(next_position, self.state_interpol_func)
 
         # -- REWARD --
         # compute reward based on
-        # I. cosine similarity to peak direction of ODF (=> imitate maximum direction getter)
-        # odf_peak_dir = self._get_best_action_ODF(cur_position).view(-1,3)
-        # reward = abs(torch.nn.functional.cosine_similarity(odf_peak_dir, cur_tangent))
-
-        # I new. We basically take the normalized odf value corresponding to the encoded (action) tangent as reward
+        # I. We basically take the normalized odf value corresponding to the encoded (action) tangent as reward
         # It is normalized in a way such that its maximum equals 1 Crucial assumption is that self.directions ==
         # self.directions_odf
-        # @TODO: no. of diffusion directions hard-coded to 100
-        # @TODO: taken center slice as this resembles maximum DG more closely.
-        # @TODO: Alternatively: odf should be averaged first
         odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(self.directions_odf.shape[0])
         reward = odf_cur / torch.max(odf_cur)
         reward = reward[action]
 
         # II. cosine similarity of current tangent to previous tangent 
         #     => Agent should prefer going straight
+        prev_tangent = None
         if self.stepCounter > 1:
             prev_tangent = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
             prev_tangent = prev_tangent.view(-1, 3)
             prev_tangent = prev_tangent / torch.sqrt(torch.sum(prev_tangent ** 2, dim=1))  # normalize to unit vector
-            cos_similarity = torch.nn.functional.cosine_similarity(prev_tangent, cur_tangent)
+            cos_similarity = abs(torch.nn.functional.cosine_similarity(prev_tangent, cur_tangent))
             reward = (reward * cos_similarity).squeeze()
             if cos_similarity <= 0.:
                 return next_state, reward, True, {}
 
+        #@todo: replace the following lines by a call to reward_for_state_action_pair(-)
+        #reward_sap = self.reward_for_state_action_pair(self.state, prev_tangent, action)
+            
         # -- book keeping --
         self.state_history.append(next_state)
         self.state = next_state
 
         return self.get_observation_from_state(next_state), reward, False, {}
 
-    def reward_for_state(self, state, current_direction):
+    def reward_for_state(self, state, prev_direction):
         my_position = state.getCoordinate().double().squeeze(0)
         # -- main peak from ODF --
         pmf_cur = self.interpolate_odf_at_state(my_position)[:, 1, 1, 1]
         reward = pmf_cur / np.max(pmf_cur)
-        #if current_direction is not None:
-            # reward = reward * self._adj_matrix[tuple(current_direction)] #@TODO: buggy
-        #    reward = reward * (torch.nn.functional.cosine_similarity(self.directions,
-        #                                                             torch.from_numpy(current_direction).view(1,
-        #                                                                                                      -1)).view(
-        #        1, -1)).cpu().numpy()
         peak_indices = self._get_odf_peaks(reward, window_width=int(self.action_space.n/3))
         mask = np.zeros_like(reward)
         mask[peak_indices] = 1
         reward *= mask
         if current_direction is not None:
-            reward= reward * torch.nn.functional.cosine_similarity(self.directions, torch.from_numpy(current_direction).view(1,-1)).view(1,-1).cpu().numpy()
+            reward= reward * abs(torch.nn.functional.cosine_similarity(self.directions, torch.from_numpy(prev_direction).view(1,-1))).view(1,-1).cpu().numpy()
         
         return reward
 
-    def reward_for_state_action_pair(self, state, current_direction, action):
-        reward = self.reward_for_state(state, current_direction)
+    def reward_for_state_action_pair(self, state, prev_direction, action):
+        reward = self.reward_for_state(state, prev_direction)
         return reward[action]
 
-    def _get_best_action(self, state, current_direction):
-        reward = self.reward_for_state(state, current_direction)
-        #best_direction_odf = self.directions_odf[np.argmax(reward)]
-        #best_action_d = np.argmax(torch.nn.functional.cosine_similarity(self.directions, best_direction_odf, dim=-1))
+    def _get_best_action(self, state, prev_direction):
+        reward = self.reward_for_state(state, prev_direction)
         return np.argmax(reward)#best_action_d
 
     def _get_odf_peaks(self, odf, window_width=31):
         odf = torch.from_numpy(odf).squeeze(0)
+        odf_diff = ((odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1])).type(torch.uint8)
         if window_width % 2 == 0.:
             window_width += 1
-        peak_mask = torch.cat([torch.zeros(1, dtype=torch.uint8), (odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1]), torch.zeros(1, dtype=torch.uint8)], dim=0)
+        peak_mask = torch.cat([torch.zeros(1, dtype=torch.uint8), odf_diff, torch.zeros(1, dtype=torch.uint8)], dim=0)
         peaks = torch.nn.functional.max_pool1d_with_indices(odf.view(1,1,-1), window_width, 1, padding=window_width//2)[1].unique()
         peak_indices = peaks[peak_mask[peaks].nonzero()]
         return peak_indices
