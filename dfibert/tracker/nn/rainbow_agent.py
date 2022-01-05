@@ -419,6 +419,7 @@ class DQNAgent:
         atom_size: int = 51,
         # N-step Learning
         n_step: int = 3,
+        path: str = './training'
     ):
         """Initialization.
         
@@ -573,7 +574,7 @@ class DQNAgent:
 
         return loss.item()
         
-    def train(self, num_frames: int, plotting_interval: int = 200, checkpoint_interval: int = 200, path: str = "./checkpoints/"):
+    def train(self, num_frames: int, plotting_interval: int = 200, checkpoint_interval: int = 2000, path: str = "./"):
         """Train the agent."""
         self.is_test = False
         
@@ -617,7 +618,8 @@ class DQNAgent:
                 self._plot(frame_idx, scores, losses)
 
             if frame_idx % checkpoint_interval == 0:
-                self._save_model(self, path, frame_idx, np.mean(scores[-100:]), num_frames)
+                print("Step number: ", frame_idx, "Avg. reward: ", np.mean(scores[-100:]))
+                self._save_model(path, frame_idx, scores, num_frames)
                 
         self.env.close()
                 
@@ -711,11 +713,14 @@ class DQNAgent:
         plt.plot(losses)
         plt.show()
 
-    def _save_model(self, path_checkpoint, num_frames, mean_reward, max_steps):
-        print("Writing checkpoint to %s" % (path_checkpoint))
+    def _save_model(self, path, num_frames, rewards, max_steps):
+        path = path + '/checkpoints/'
+        os.makedirs(path, exist_ok=True)
+        path = path + 'rainbow_' + str(num_frames) + '_' + str(np.mean(rewards[-100:])) + '.pth'
+        print("Writing checkpoint to %s" % (path))
         checkpoint = {}
         checkpoint["num_frames"] = num_frames
-        checkpoint["mean_reward"] = mean_reward
+        checkpoint["rewards"] = rewards
         checkpoint["max_steps"] = max_steps
         checkpoint["network_update_every"] = self.target_update
         checkpoint["network"] = self.dqn.state_dict()
@@ -733,4 +738,4 @@ class DQNAgent:
         #checkpoint["learning_rate"] = self.learning_rate
         #checkpoint["state_shape"] = self.inp_size
         #checkpoint["n_actions"] = self.n_actions
-        torch.save(checkpoint, path_checkpoint)
+        torch.save(checkpoint, path)

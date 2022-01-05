@@ -117,8 +117,8 @@ class RLTractEnvironment(gym.Env):
         self._set_adjacency_matrix(self.sphere, self.cos_similarity)
 
         # -- init observation space --
-        #obs_shape = self.get_observation_from_state(self.state).shape  ### <- TODO comment back in after debugging env
-        #self.observation_space = Box(low=0, high=150, shape=obs_shape)
+        obs_shape = self.get_observation_from_state(self.state).shape  ### <- TODO comment back in after debugging env
+        self.observation_space = Box(low=0, high=150, shape=obs_shape)
 
         # self.state = None  <-- is defined in reset function
 
@@ -265,7 +265,7 @@ class RLTractEnvironment(gym.Env):
             cos_similarity = torch.nn.functional.cosine_similarity(prev_tangent, cur_tangent)
             reward = (reward * cos_similarity).squeeze()
             if cos_similarity <= 0.:
-                return next_state, reward, True, {}
+                return self.get_observation_from_state(next_state), reward, True, {}
 
         # -- book keeping --
         self.state_history.append(next_state)
@@ -376,7 +376,7 @@ class RLTractEnvironment(gym.Env):
         return rewards
 
     def get_observation_from_state(self, state):
-        dwi_values = state#.getValue().flatten()
+        dwi_values = state.getValue().flatten()
         # TODO -> currently only on dwi values, not on past states
         #past_coordinates = np.array(list(self.state_history)).flatten()
         #return np.concatenate((dwi_values, past_coordinates))
