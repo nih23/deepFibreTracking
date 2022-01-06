@@ -1,9 +1,9 @@
 from collections import deque
-
-import dipy.reconst.dti as dti
+import os
 import gym
 import numpy as np
 import torch
+import dipy.reconst.dti as dti
 from dipy.core.interpolation import trilinear_interpolate4d
 from dipy.core.sphere import HemiSphere, Sphere
 from dipy.core.sphere import disperse_charges
@@ -27,13 +27,10 @@ from ._state import TractographyState
 from .neuroanatomical_utils import FiberBundleDataset, interpolate3dAt
 
 
-
-
-
 class RLTractEnvironment(gym.Env):
     def __init__(self, device, seeds=None, step_width=0.8, dataset='100307', grid_dim=(3, 3, 3),
-                 max_l2_dist_to_state=0.1, tracking_in_RAS=True, fa_threshold=0.1, b_val=1000, max_angle=80.,
-                 odf_state=True, odf_mode="CSD", action_space=100):
+                 max_l2_dist_to_state=0.1, tracking_in_RAS=True, fa_threshold=0.1, b_val=1000, 
+                 odf_state=True, odf_mode="CSD", action_space=100, pFolderBundles = "data/gt_bundles/"):
         self.state_history = None
         self.reference_seed_point_ijk = None
         self.points_visited = None
@@ -44,6 +41,9 @@ class RLTractEnvironment(gym.Env):
         self.seed_index = None
         self.step_angles = None
         self.line = None
+        self.na_reward_history = None
+        self.av_na_reward = None
+        self.past_bundle = None
         print("Loading dataset # ", dataset)
         self.device = device
         preprocessor = DataPreprocessor().normalize().crop(b_val).fa_estimate()
@@ -67,7 +67,7 @@ class RLTractEnvironment(gym.Env):
         sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
         sphere, _ = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
         self.sphere = sphere
-        self.sphere_odf = self.sphere
+        self.sphere_odf = sphere
 
         # -- interpolation function of state's value --
         self.state_interpol_func = self.interpolate_dwi_at_state
@@ -87,7 +87,6 @@ class RLTractEnvironment(gym.Env):
         self.tracking_in_RAS = tracking_in_RAS
 
         # -- load streamlines --
-        # self.changeReferenceStreamlinesFile(pReferenceStreamlines)
         self.fa_threshold = fa_threshold
         self.maxSteps = 2000
 
@@ -108,36 +107,20 @@ class RLTractEnvironment(gym.Env):
             seeds = utils.seeds_from_mask(seed_mask, affine=np.eye(4), density=1)  # tracking in IJK
             self.seeds = torch.from_numpy(seeds)
 
+        # -- init bundles for neuroanatomical reward --
+        print("Init tract masks for neuroanatomical reward")
+        fibers = []
+        self.bundleNames = os.listdir(pFolderBundles)
+        for fibFile in self.bundleNames:
+            pFibre = pFolderBundles + fibFile
+            #print(" @ " + pFibre)
+            fibers.append(FiberBundleDataset(path_to_files=pFibre, dataset = self.dataset).tractMask)
+
+        self.tractMasksAllBundles = torch.stack(fibers, dim = 0)
+        
+        # -- set default values --
         self.reset()
 
-        # -- init adjacency matrix --
-        self.max_angle = max_angle  # the maximum angle between two direction vectors
-        self.cos_similarity = np.cos(
-            np.deg2rad(max_angle))  # set cosine similarity threshold for initialization of adjacency matrix
-        self._set_adjacency_matrix(self.sphere, self.cos_similarity)
-
-        # -- init observation space --
-        #obs_shape = self.get_observation_from_state(self.state).shape  ### <- TODO comment back in after debugging env
-        #self.observation_space = Box(low=0, high=150, shape=obs_shape)
-
-        # self.state = None  <-- is defined in reset function
-        # -- init bundles for neuroanatomical loss --
-        self.fibers_CST_left = FiberBundleDataset(path_to_files="data/ISMRM2015/gt_bundles/CST_left.fib")
-        self.fibers_CST_right = FiberBundleDataset(path_to_files="data/ISMRM2015/gt_bundles/CST_right.fib")
-        self.fibers_Fornix = FiberBundleDataset(path_to_files="data/ISMRM2015/gt_bundles/Fornix.fib")
-
-
-    def _set_adjacency_matrix(self, sphere, cos_similarity):
-        """Creates a dictionary where each key is a direction from sphere and
-        each value is a boolean array indicating which directions are less than
-        max_angle degrees from the key"""
-        matrix = np.dot(sphere.vertices, sphere.vertices.T)
-        matrix = abs(matrix) >= cos_similarity
-        keys = [tuple(v) for v in sphere.vertices]
-        adj_matrix = dict(zip(keys, matrix))
-        keys = [tuple(-v) for v in sphere.vertices]
-        adj_matrix.update(zip(keys, matrix))
-        self._adj_matrix = adj_matrix
 
     def _init_odf(self):
         print("Initialising ODF")
@@ -169,22 +152,8 @@ class RLTractEnvironment(gym.Env):
         # print("Computing pmf")
         # self.pmf = odf.clip(min=0)
 
-    def _init_shm_coefficient(self, sh_basis_type=None):
-        print("Initialising spherical harmonics")
-        self.dti_model = dti.TensorModel(self.dataset.gtab, fit_method='LS')
 
-        peaks = peaks_from_model(model=self.dti_model, data=self.dataset.dwi, sphere=self.sphere,
-                                 relative_peak_threshold=.2, min_separation_angle=25, mask=self.dataset.binary_mask,
-                                 npeaks=2)
 
-        self.sh_coefficient = peaks.shm_coeff
-        sh_order = order_from_ncoef(self.sh_coefficient.shape[-1])
-        try:
-            basis = sph_harm_lookup[sh_basis_type]
-        except KeyError:
-            raise ValueError("%s is not a known basis type." % sh_basis_type)
-
-        self._B, m, n = basis(sh_order, self.sphere.theta, self.sphere.phi)
 
     def interpolate_dwi_at_state(self, stateCoordinates):
         # TODO: maybe stay in RAS all the time then no need to transfer to IJK
@@ -195,7 +164,6 @@ class RLTractEnvironment(gym.Env):
         try:
             interpolated_dwi = self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor)
         except PointOutsideOfDWIError:
-            # print("Point outside of brain mask :(")
             return None
         interpolated_dwi = np.rollaxis(interpolated_dwi, 3)  # CxWxHxD
         # interpolated_dwi = self.dtype(interpolated_dwi).to(self.device)
@@ -211,18 +179,6 @@ class RLTractEnvironment(gym.Env):
         interpol_odf = np.rollaxis(interpol_odf, 3)
         return interpol_odf
 
-    ''' 
-    @deprecated 
-    '''
-
-    def interpolate_pmf_at_state(self, stateCoordinates):
-        if self.sh_coefficient is None:
-            self._init_shm_coefficient()
-
-        coefficient = trilinear_interpolate4d(self.sh_coefficient, stateCoordinates)
-        pmf = np.dot(self._B, coefficient)
-        pmf.clip(0, out=pmf)
-        return pmf
 
     def step(self, action, direction="forward"):
         self.stepCounter += 1
@@ -247,6 +203,11 @@ class RLTractEnvironment(gym.Env):
             cur_tangent = cur_tangent * -1
         next_position = cur_position + self.step_width * cur_tangent
         next_state = TractographyState(next_position, self.state_interpol_func)
+
+        local_reward_na = interpolate3dAt(self.tractMasksAllBundles, cur_position.view(1,-1)).squeeze() 
+        
+        self.na_reward_history[self.stepCounter-1, :] = local_reward_na
+        #print("mu hist", self.stepCounter, torch.mean(self.na_reward_history[0:self.stepCounter-1, :], dim = 0))
 
         # -- REWARD --
         # compute reward based on
@@ -278,34 +239,52 @@ class RLTractEnvironment(gym.Env):
 
         return self.get_observation_from_state(next_state), reward, False, {}
 
+
     def reward_for_state(self, state, prev_direction):
         my_position = state.getCoordinate().double().squeeze(0)
         # -- main peak from ODF --
         pmf_cur = self.interpolate_odf_at_state(my_position)[:, 1, 1, 1]
-        reward = pmf_cur / np.max(pmf_cur)
+        pmf_cur = torch.from_numpy(pmf_cur)
+        reward = pmf_cur / torch.max(pmf_cur)
         peak_indices = self._get_odf_peaks(reward, window_width=int(self.action_space.n/3))
-        mask = np.zeros_like(reward)
+        mask = torch.zeros_like(reward)
         mask[peak_indices] = 1
         reward *= mask
-        if current_direction is not None:
-            reward = reward * abs(torch.nn.functional.cosine_similarity(self.directions, torch.from_numpy(prev_direction).view(1,-1))).view(1,-1).cpu().numpy()
+        if prev_direction is not None:
+            reward = reward * abs(torch.nn.functional.cosine_similarity(self.directions, torch.from_numpy(prev_direction).view(1,-1))).view(1,-1)
         
         # neuroanatomical reward
-        next_pos = my_position.view(1,-1) + self.directions
-        reward_na = interpolate3dAt(self.fibers_Fornix.tractMask, next_pos) + interpolate3dAt(self.fibers_CST_left.tractMask, next_pos) + interpolate3dAt(self.fibers_CST_right.tractMask, next_pos)
-        reward_na = reward_na.view(1, -1).cpu().numpy()
-        return reward + reward_na
+        next_pos = my_position.view(1,-1) + self.directions # gets next positions for all directions actions X 3
+        
+        local_reward_na = interpolate3dAt(self.tractMasksAllBundles, next_pos).squeeze()  # no_tracts X actions
+        #self.na_reward_history[self.stepCounter, :] = local_reward_na
+        #reward_na = torch.mean(self.na_reward_history[0:self.stepCounter, :], dim = 0)
+        #reward_na = torch.max(reward_na)
+        #reward_na_idx = torch.argmax(reward_na)
+        #print("[%d] dominant bundle: %s" % (self.stepCounter, self.bundleNames[reward_na_idx]))
+        
+        reward_na_mu_hist = torch.mean(self.na_reward_history[0:self.stepCounter-1, :], dim = 0).view(-1, 1) # no_tracts X 1
+        
+        local_reward_na = local_reward_na + reward_na_mu_hist
+        
+        reward_na, _ = torch.max(local_reward_na, dim = 0)
+        reward_na = reward_na.view(1,-1) # maginalize tracts, to get na_reward vs. next action
+        reward_na_arg = torch.argmax(local_reward_na, dim = 0) # get dominant tract per action
+        return (reward + reward_na).cpu().numpy()
 
+    
     def reward_for_state_action_pair(self, state, prev_direction, action):
         reward = self.reward_for_state(state, prev_direction)
         return reward[action]
 
+    
     def _get_best_action(self, state, prev_direction):
         reward = self.reward_for_state(state, prev_direction)
         return np.argmax(reward)#best_action_d
 
+    
     def _get_odf_peaks(self, odf, window_width=31):
-        odf = torch.from_numpy(odf).squeeze(0)
+        odf = odf.squeeze(0)
         odf_diff = ((odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1])).type(torch.uint8)
         if window_width % 2 == 0.:
             window_width += 1
@@ -314,6 +293,7 @@ class RLTractEnvironment(gym.Env):
         peak_indices = peaks[peak_mask[peaks].nonzero()]
         return peak_indices
 
+    
     def track(self, with_best_action=True):
         streamlines = []
         for i in trange(len(self.seeds)):
@@ -324,7 +304,7 @@ class RLTractEnvironment(gym.Env):
             current_direction = None
             all_states.append(seed_position)
 
-            # -- forward tracking
+            # -- forward tracking --
             terminal = False
             eval_steps = 0
             while not terminal:
@@ -343,7 +323,7 @@ class RLTractEnvironment(gym.Env):
                     all_states.append(state.getCoordinate().squeeze(0).numpy())
                 eval_steps = eval_steps + 1
 
-            # -- backward tracking
+            # -- backward tracking --
             self.reset(seed_index=i, terminal_F=True)
             state = self.state # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
             current_direction = None  # potentially take tangent of first step of forward tracker
@@ -355,6 +335,8 @@ class RLTractEnvironment(gym.Env):
                 # get the best choice from environment
                 if with_best_action:
                     action = self._get_best_action(state, current_direction)
+                else:
+                    raise NotImplementedError
                 # store tangent for next time step
                 current_direction = self.directions[action].numpy()
                 # take a step
@@ -367,14 +349,6 @@ class RLTractEnvironment(gym.Env):
 
         return streamlines
 
-    def _get_multi_best_action_odf(self, my_position, K=3):
-        my_odf = self.odf_interpolator(my_position).squeeze()
-        k_largest = np.argpartition(my_odf.squeeze(), -K)[-K:]
-        peak_dirs_torch = self.directions_odf[k_largest].view(K, 3)
-        rewards = torch.stack(
-            [abs(torch.nn.functional.cosine_similarity(peak_dirs_torch[k:k + 1, :], self.directions.view(-1, 3))) for k
-             in range(K)])
-        return rewards
 
     def get_observation_from_state(self, state):
         dwi_values = state#.getValue().flatten()
@@ -383,12 +357,6 @@ class RLTractEnvironment(gym.Env):
         #return np.concatenate((dwi_values, past_coordinates))
         return dwi_values
 
-    # switch reference streamline of environment
-    # @TODO: optimize runtime
-    def switch_streamline(self, streamline):
-        self.line = streamline
-        self.referenceStreamline_ijk = self.dtype(np.array(streamline.coords[:])).to(self.device)
-        self.step_angles = []
 
     # reset the game and returns the observed data from the last episode
     def reset(self, seed_index=None, terminal_F=False, terminal_B=False):
@@ -405,23 +373,78 @@ class RLTractEnvironment(gym.Env):
         else:
             reference_seed_point_ijk = self.seeds[self.seed_index]
 
-        # self.switch_streamline(geom.LineString(referenceStreamline_ijk))
-
         self.done = False
         self.stepCounter = 0
         self.reward = 0
         self.past_reward = 0
         self.points_visited = 1  # position_index
 
-        # tracking_start_index = start_index
-        # if(start_middle_of_streamline):
-        #    tracking_start_index = len(self.referenceStreamline_ijk) // 2
-
         self.reference_seed_point_ijk = reference_seed_point_ijk
         self.state = TractographyState(self.reference_seed_point_ijk, self.state_interpol_func)
         self.state_history = deque([self.state]*4, maxlen=4)
+        self.na_reward_history = torch.zeros((self.maxSteps, self.tractMasksAllBundles.shape[0]))
 
         return self.get_observation_from_state(self.state)
 
     def render(self, mode="human"):
         pass
+    
+    
+    '''@deprecated
+    def _set_adjacency_matrix(self, sphere, cos_similarity):
+        """Creates a dictionary where each key is a direction from sphere and
+        each value is a boolean array indicating which directions are less than
+        max_angle degrees from the key"""
+        matrix = np.dot(sphere.vertices, sphere.vertices.T)
+        matrix = abs(matrix) >= cos_similarity
+        keys = [tuple(v) for v in sphere.vertices]
+        adj_matrix = dict(zip(keys, matrix))
+        keys = [tuple(-v) for v in sphere.vertices]
+        adj_matrix.update(zip(keys, matrix))
+        self._adj_matrix = adj_matrix
+    
+    
+    # switch reference streamline of environment
+    # @TODO: optimize runtime
+    def switch_streamline(self, streamline):
+        self.line = streamline
+        self.referenceStreamline_ijk = self.dtype(np.array(streamline.coords[:])).to(self.device)
+        self.step_angles = []
+    
+    
+    def _get_multi_best_action_odf(self, my_position, K=3):
+        my_odf = self.odf_interpolator(my_position).squeeze()
+        k_largest = np.argpartition(my_odf.squeeze(), -K)[-K:]
+        peak_dirs_torch = self.directions_odf[k_largest].view(K, 3)
+        rewards = torch.stack(
+            [abs(torch.nn.functional.cosine_similarity(peak_dirs_torch[k:k + 1, :], self.directions.view(-1, 3))) for k
+             in range(K)])
+        return rewards
+        
+        def interpolate_pmf_at_state(self, stateCoordinates):
+        if self.sh_coefficient is None:
+            self._init_shm_coefficient()
+
+        coefficient = trilinear_interpolate4d(self.sh_coefficient, stateCoordinates)
+        pmf = np.dot(self._B, coefficient)
+        pmf.clip(0, out=pmf)
+        return pmf
+        
+   
+   def _init_shm_coefficient(self, sh_basis_type=None):
+        print("Initialising spherical harmonics")
+        self.dti_model = dti.TensorModel(self.dataset.gtab, fit_method='LS')
+
+        peaks = peaks_from_model(model=self.dti_model, data=self.dataset.dwi, sphere=self.sphere,
+                                 relative_peak_threshold=.2, min_separation_angle=25, mask=self.dataset.binary_mask,
+                                 npeaks=2)
+
+        self.sh_coefficient = peaks.shm_coeff
+        sh_order = order_from_ncoef(self.sh_coefficient.shape[-1])
+        try:
+            basis = sph_harm_lookup[sh_basis_type]
+        except KeyError:
+            raise ValueError("%s is not a known basis type." % sh_basis_type)
+
+        self._B, m, n = basis(sh_order, self.sphere.theta, self.sphere.phi)
+    '''
