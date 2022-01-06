@@ -574,17 +574,15 @@ class DQNAgent:
 
         return loss.item()
         
-    def train(self, num_frames: int, plotting_interval: int = 200, checkpoint_interval: int = 2000, path: str = "./"):
+    def train(self, num_steps: int, plotting_interval: int = 200, checkpoint_interval: int = 20000, path: str = "./", losses: list = [], scores: list = [], plot: bool = False):
         """Train the agent."""
         self.is_test = False
         
         state = self.env.reset()
         update_cnt = 0
-        losses = []
-        scores = []
         score = 0
 
-        for frame_idx in range(1, num_frames + 1):
+        for step_idx in range(1, num_steps + 1):
             action = self.select_action(state)
             next_state, reward, done = self.step(action)
 
@@ -594,7 +592,7 @@ class DQNAgent:
             # NoisyNet: removed decrease of epsilon
             
             # PER: increase beta
-            fraction = min(frame_idx / num_frames, 1.0)
+            fraction = min(step_idx / num_steps, 1.0)
             self.beta = self.beta + fraction * (1.0 - self.beta)
 
             # if episode ends
@@ -614,14 +612,14 @@ class DQNAgent:
                     self._target_hard_update()
 
             # plotting
-            if frame_idx % plotting_interval == 0:
-                self._plot(frame_idx, scores, losses)
+            if plot and step_idx % plotting_interval == 0:
+                self._plot(step_idx, scores, losses)
 
-            if frame_idx % checkpoint_interval == 0:
-                print("Step number: ", frame_idx, "Avg. reward: ", np.mean(scores[-100:]))
-                self._save_model(path, frame_idx, scores, num_frames)
+            if step_idx % checkpoint_interval == 0:
+                print("Step number: ", step_idx, "Avg. reward: ", np.mean(scores[-100:]))
+                self._save_model(path, step_idx, scores, losses, num_steps)
                 
-        self.env.close()
+        #self.env.close()
                 
     def test(self) -> List[np.ndarray]:
         """Test the agent."""
@@ -631,9 +629,9 @@ class DQNAgent:
         done = False
         score = 0
         
-        frames = []
+        steps = []
         while not done:
-            frames.append(self.env.render(mode="rgb_array"))
+            steps.append(self.env.render(mode="rgb_array"))
             action = self.select_action(state)
             next_state, reward, done = self.step(action)
 
@@ -643,7 +641,7 @@ class DQNAgent:
         print("score: ", score)
         self.env.close()
         
-        return frames
+        return steps
 
     def _compute_dqn_loss(self, samples: Dict[str, np.ndarray], gamma: float) -> torch.Tensor:
         """Return categorical dqn loss."""
@@ -698,7 +696,7 @@ class DQNAgent:
                 
     def _plot(
         self, 
-        frame_idx: int, 
+        step_idx: int, 
         scores: List[float], 
         losses: List[float],
     ):
@@ -706,21 +704,22 @@ class DQNAgent:
         clear_output(True)
         plt.figure(figsize=(20, 5))
         plt.subplot(131)
-        plt.title('frame %s. score: %s' % (frame_idx, np.mean(scores[-10:])))
+        plt.title('step %s. score: %s' % (step_idx, np.mean(scores[-10:])))
         plt.plot(scores)
         plt.subplot(132)
         plt.title('loss')
         plt.plot(losses)
         plt.show()
 
-    def _save_model(self, path, num_frames, rewards, max_steps):
+    def _save_model(self, path, num_steps, rewards, losses, max_steps):
         path = path + '/checkpoints/'
         os.makedirs(path, exist_ok=True)
-        path = path + 'rainbow_' + str(num_frames) + '_' + str(np.mean(rewards[-100:])) + '.pth'
+        path = path + 'rainbow_%d_%.2f.pth' % (num_steps, np.mean(rewards[-100:]))
         print("Writing checkpoint to %s" % (path))
         checkpoint = {}
-        checkpoint["num_frames"] = num_frames
+        checkpoint["num_steps"] = num_steps
         checkpoint["rewards"] = rewards
+        checkpoint["losses"] = losses
         checkpoint["max_steps"] = max_steps
         checkpoint["network_update_every"] = self.target_update
         checkpoint["network"] = self.dqn.state_dict()
@@ -735,7 +734,34 @@ class DQNAgent:
         checkpoint["n_step"] = self.n_step
         checkpoint["support"] = self.support
         checkpoint["memory_size"] = self.memory_size
-        #checkpoint["learning_rate"] = self.learning_rate
-        #checkpoint["state_shape"] = self.inp_size
-        #checkpoint["n_actions"] = self.n_actions
         torch.save(checkpoint, path)
+
+    def resume_training(self, path, plot: bool = False):
+        print("Loading checkpoint file %s" % (path))
+        checkpoint = torch.load(path)
+        num_steps = checkpoint["num_steps"]
+        rewards = checkpoint["rewards"]
+        losses = checkpoint["losses"]
+        max_steps = checkpoint["max_steps"]
+        self.target_update = checkpoint["network_update_every"]
+        self.dqn.load_state_dict(checkpoint["network"])
+        self.dqn_target.load_state_dict(checkpoint["network"])
+        self.prior_eps = checkpoint["prior_epsilon"] 
+        self.batch_size = checkpoint["batch_size"] 
+        self.gamma = checkpoint["gamma"]
+        self.alpha = checkpoint["alpha"]
+        self.beta = checkpoint["beta"]
+        self.v_min = checkpoint["v_min"]
+        self.v_max = checkpoint["v_max"]
+        self.atom_size = checkpoint["atom_size"]
+        self.n_step = checkpoint["n_step"]
+        self.support = checkpoint["support"]
+        self.memory_size = checkpoint["memory_size"]
+
+        remaining_steps = max_steps - num_steps
+
+        path_dir = os.path.dirname(path)
+        path_dir = os.path.split(path_dir)[0]
+
+        print("Resume training at %d / %d steps." % (num_steps, max_steps) )
+        self.train(num_steps=remaining_steps, losses = losses, scores = rewards, path=path_dir, plot=plot)
