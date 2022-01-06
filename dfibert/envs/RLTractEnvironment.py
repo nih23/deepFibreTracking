@@ -121,6 +121,10 @@ class RLTractEnvironment(gym.Env):
         # -- set default values --
         self.reset()
 
+        # -- init observation space --
+        obs_shape = self.get_observation_from_state(self.state).shape
+        self.observation_space = Box(low=0, high=150, shape=obs_shape)
+
 
     def _init_odf(self):
         print("Initialising ODF")
@@ -354,7 +358,6 @@ class RLTractEnvironment(gym.Env):
 
     def get_observation_from_state(self, state):
         dwi_values = state.getValue().flatten()
-        # TODO -> currently only on dwi values, not on past states
         #past_coordinates = np.array(list(self.state_history)).flatten()
         #return np.concatenate((dwi_values, past_coordinates))
         return dwi_values
