@@ -300,7 +300,7 @@ class RLTractEnvironment(gym.Env):
         return peak_indices
 
     
-    def track(self, with_best_action=True):
+    def track(self, action_function=None):
         streamlines = []
         for i in trange(len(self.seeds)):
             all_states = []
@@ -316,10 +316,10 @@ class RLTractEnvironment(gym.Env):
             while not terminal:
                 # current position
                 # get the best choice from environment
-                if with_best_action:
+                if action_function is None:
                     action = self._get_best_action(state, current_direction)
                 else:
-                    raise NotImplementedError
+                    action = action_function(self.get_observation_from_state(state))
                 # store tangent for next time step
                 current_direction = self.directions[action].numpy()
                 # take a step
@@ -339,10 +339,10 @@ class RLTractEnvironment(gym.Env):
                 # current position
                 my_position = state.getCoordinate().double().squeeze(0)
                 # get the best choice from environment
-                if with_best_action:
+                if action_function is None:
                     action = self._get_best_action(state, current_direction)
                 else:
-                    raise NotImplementedError
+                    action = action_function(self.get_observation_from_state(state))
                 # store tangent for next time step
                 current_direction = self.directions[action].numpy()
                 # take a step

@@ -1,3 +1,4 @@
+# Source: https://github.com/Curt-Park/rainbow-is-all-you-need
 import math
 import os
 import random
@@ -14,6 +15,7 @@ import torch.optim as optim
 from IPython.display import clear_output
 from torch.nn.utils import clip_grad_norm_
 
+from dfibert.tracker import save_streamlines
 from dfibert.tracker.nn._segment_tree import MinSegmentTree, SumSegmentTree
 
 class ReplayBuffer:
@@ -736,7 +738,7 @@ class DQNAgent:
         checkpoint["memory_size"] = self.memory_size
         torch.save(checkpoint, path)
 
-    def resume_training(self, path, plot: bool = False):
+    def _load_model(self, path):
         print("Loading checkpoint file %s" % (path))
         checkpoint = torch.load(path)
         num_steps = checkpoint["num_steps"]
@@ -758,10 +760,23 @@ class DQNAgent:
         self.support = checkpoint["support"]
         self.memory_size = checkpoint["memory_size"]
 
-        remaining_steps = max_steps - num_steps
+        return num_steps, rewards, losses, max_steps
 
-        path_dir = os.path.dirname(path)
+    def resume_training(self, path, plot: bool = False):
+        num_steps, rewards, losses, max_steps = self._load_model(path)
+        remaining_steps = max_steps - num_steps   # set max_steps to remaining amount of steps
+
+        path_dir = os.path.dirname(path)        # get the base directory 
         path_dir = os.path.split(path_dir)[0]
 
         print("Resume training at %d / %d steps." % (num_steps, max_steps) )
         self.train(num_steps=remaining_steps, losses = losses, scores = rewards, path=path_dir, plot=plot)
+
+    def create_tractogram(self, ras: bool = True, path: str = './'):
+        self.is_test = True                                                 
+
+        streamlines = self.env.track(self.select_action)
+        if ras:
+            streamlines = [self.env.dataset.to_ras(sl) for sl in streamlines]
+    
+        save_streamlines(streamlines=streamlines, path=path)
