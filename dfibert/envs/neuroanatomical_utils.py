@@ -30,8 +30,8 @@ def convPoint(p, dims):
 def interpolate3dAt(data, positions):
     # Warning: data is supposed to be CxHxWxD
     # normalise coordinates into range [-1,1]
-    pts = positions.to(torch.float)
-    pts = convPoint(pts, torch.tensor(data.shape[1:4]))
+    pts = positions.float()
+    pts = convPoint(pts, torch.tensor(data.shape[1:4]).to(data.device))
     # reverse pts
     pts = pts[:,(2,1,0)]
     # trilinear interpolation
