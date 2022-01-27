@@ -148,7 +148,7 @@ class NARLTractEnvironment(gym.Env):
         self.odf_interpolator = RegularGridInterpolator((x_range, y_range, z_range), odf)
 
     def step(self, action, backwards=False):
-        ijk_coordinate = self.dataset.to_ijk(self.state.get_coordinate())
+        ijk_coordinate = self.state.get_coordinate()
         odf_cur = self.odf_interpolator(ijk_coordinate).squeeze()
 
         if np.max(odf_cur) > 0:
@@ -182,7 +182,7 @@ class NARLTractEnvironment(gym.Env):
         self.no_steps += 1
         self.state_history[self.no_steps] = self.state.get_coordinate()
 
-        ijk_coordinate = self.dataset.to_ijk(self.state.get_coordinate())
+        ijk_coordinate = self.state.get_coordinate()
 
         local_na_reward = self.na_interpolator(ijk_coordinate)
 
@@ -197,7 +197,7 @@ class NARLTractEnvironment(gym.Env):
         return self.state.get_value(), reward, False, {}
 
     def interpolate_dwi_at_state(self, coords):
-        ras_points = self.grid + coords
+        ras_points = self.grid + self.dataset.to_ras(coords)
         try:
             return self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor)
         except PointOutsideOfDWIError:
@@ -221,8 +221,7 @@ class NARLTractEnvironment(gym.Env):
 
     def _get_reward_for_move(self, actions, next_directions):
 
-        cur_pos = self.state.get_coordinate()
-        cur_pos_ijk = self.dataset.to_ijk(cur_pos)
+        cur_pos_ijk = self.state.get_coordinate()
 
         odf_cur = self.odf_interpolator(cur_pos_ijk).squeeze()  # [L]
         if np.max(odf_cur) > 0:
@@ -230,8 +229,8 @@ class NARLTractEnvironment(gym.Env):
         # actions : [N], next_directions: [N ,3]
         step_width = self.step_width if self.no_steps > 0 else 0.5 * self.step_width
 
-        next_positions = cur_pos + next_directions * step_width
-        ijk_coordinates = self.dataset.to_ijk(next_positions)  # [N, 3]
+        next_positions = cur_pos_ijk + next_directions * step_width
+        ijk_coordinates = next_positions  # [N, 3]
         local_na_reward = self.na_interpolator(ijk_coordinates)  # [N, K]
 
         if self.no_steps > 0:
@@ -264,7 +263,7 @@ class NARLTractEnvironment(gym.Env):
                 _, reward, terminal, _ = self.step(action)
                 # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
                 if not terminal:
-                    streamline.append(self.state.get_coordinate())
+                    streamline.append(self.dataset.to_ras(self.state.get_coordinate()))
 
             # -- backward tracking --
             self.reset(seed_index=i)
@@ -282,7 +281,7 @@ class NARLTractEnvironment(gym.Env):
                 _, reward, terminal, _ = self.step(action, backwards=True)
                 # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
                 if not terminal:
-                    streamline.append(self.state.get_coordinate())
+                    streamline.append(self.dataset.to_ras(self.state.get_coordinate()))
 
             streamlines.append(streamline)
 
@@ -297,7 +296,7 @@ class NARLTractEnvironment(gym.Env):
         self.state_history[:] = 0
         self.na_reward_history[:] = 0
 
-        self.state_history[0] = self.seeds[seed_index]
+        self.state_history[0] = self.dataset.to_ijk(self.seeds[seed_index])
         self.state = TractographyState(self.state_history[0], self.interpolate_dwi_at_state)
 
         return self.state.get_value()
