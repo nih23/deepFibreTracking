@@ -513,9 +513,9 @@ class DQNAgent:
         
         return selected_action
 
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, np.float64, bool]:
+    def step(self, action: np.ndarray, backwards: bool) -> Tuple[np.ndarray, np.float64, bool]:
         """Take an action and return the response of the env."""
-        next_state, reward, done, _ = self.env.step(action)
+        next_state, reward, done, _ = self.env.step(action, backwards)
 
         if not self.is_test:
             self.transition += [reward, next_state, done]
@@ -581,12 +581,14 @@ class DQNAgent:
         self.is_test = False
         
         state = self.env.reset()
+        backwards = False
         update_cnt = 0
         score = 0
 
+
         for step_idx in range(1, num_steps + 1):
             action = self.select_action(state)
-            next_state, reward, done = self.step(action)
+            next_state, reward, done = self.step(action, backwards)
 
             state = next_state
             score += reward
@@ -599,7 +601,12 @@ class DQNAgent:
 
             # if episode ends
             if done:
-                state = self.env.reset()
+                backwards = not backwards
+                if backwards:
+                    seed_index = self.env.seed_index
+                else:
+                    seed_index = None
+                state = self.env.reset(seed_index)
                 scores.append(score)
                 score = 0
 
@@ -706,11 +713,15 @@ class DQNAgent:
         clear_output(True)
         plt.figure(figsize=(20, 5))
         plt.subplot(131)
-        plt.title('step %s. score: %s' % (step_idx, np.mean(scores[-10:])))
+        plt.title('step %s. avg. score: %s' % (step_idx, np.mean(scores[-100:])))
         plt.plot(scores)
+        plt.ylabel('Episode reward')
+        plt.xlabel("No. episodes")
         plt.subplot(132)
         plt.title('loss')
         plt.plot(losses)
+        plt.ylabel('Loss')
+        plt.xlabel("No. updates")
         plt.show()
 
     def _save_model(self, path, num_steps, rewards, losses, max_steps):

@@ -292,6 +292,7 @@ class NARLTractEnvironment(gym.Env):
         if seed_index is None:
             seed_index = np.random.randint(len(self.seeds))
 
+        self.seed_index = seed_index
         self.no_steps = 0
         self.state_history[:] = 0
         self.na_reward_history[:] = 0
