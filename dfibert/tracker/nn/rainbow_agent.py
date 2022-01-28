@@ -440,7 +440,7 @@ class DQNAgent:
             atom_size (int): the unit number of support
             n_step (int): step number to calculate n-step td error
         """
-        obs_dim = env.observation_space.shape[0]
+        obs_dim = env.reset().shape[0]
         action_dim = env.action_space.n
         
         self.env = env

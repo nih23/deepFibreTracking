@@ -199,7 +199,7 @@ class NARLTractEnvironment(gym.Env):
     def interpolate_dwi_at_state(self, coords):
         ras_points = self.grid + self.dataset.to_ras(coords)
         try:
-            return self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor)
+            return self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor).flatten()
         except PointOutsideOfDWIError:
             return None
 
