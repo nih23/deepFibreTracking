@@ -63,7 +63,8 @@ class DataPreprocessor(object):
         """
 
         dc = data_container
-        data_container = DataContainer(dc.bvals.copy(), dc.bvecs.copy(), dc.gtab.copy(), dc.t1.copy(), dc.dwi.copy(), dc.aff.copy(),
+        data_container = DataContainer(dc.bvals.copy(), dc.bvecs.copy(), dc.gtab.copy(), dc.t1.copy(), dc.dwi.copy(),
+                                       dc.aff.copy(),
                                        dc.binary_mask.copy(), dc.b0.copy(), None if dc.fa is None else dc.fa.copy())
         return self._preprocess(data_container)
 
@@ -96,7 +97,7 @@ class DataPreprocessor(object):
         """
         return _DataNormalizer(self)
 
-    def crop(self, b_value=1000.0, max_deviation=100.0, b0_threshold = 10.0) -> DataPreprocessor:
+    def crop(self, b_value=1000.0, max_deviation=100.0, b0_threshold=10.0) -> DataPreprocessor:
         """
         Crops the dataset based on B-value.
 

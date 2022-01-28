@@ -116,7 +116,7 @@ class RLTractEnvironment(gym.Env):
             #print(" @ " + pFibre)
             fibers.append(FiberBundleDataset(path_to_files=pFibre, dataset = self.dataset).tractMask)
 
-        self.tractMasksAllBundles = torch.stack(fibers, dim = 0)
+        self.tractMasksAllBundles = torch.stack(fibers, dim = 0).to(self.device)
         
         # -- set default values --
         self.reset()
@@ -193,7 +193,7 @@ class RLTractEnvironment(gym.Env):
             return self.get_observation_from_state(self.state), 0., True, {}
 
         # II. fa below threshold? stop tracking
-        if self.dataset.get_fa(self.state.getCoordinate()) < self.fa_threshold:
+        if self.dataset.get_fa(self.state.getCoordinate().cpu()) < self.fa_threshold:
             return self.get_observation_from_state(self.state), 0., True, {}
         
         #@todo: III. leaving brain mask
@@ -202,7 +202,7 @@ class RLTractEnvironment(gym.Env):
 
         # -- Tracking --
         cur_tangent = self.directions[action].view(-1, 3) # action space = Hemisphere
-        cur_position = self.state.getCoordinate().view(-1, 3)
+        cur_position = self.state.getCoordinate().view(-1, 3).to(self.device)
         if(direction == "backward"):
             cur_tangent = cur_tangent * -1
         next_position = cur_position + self.step_width * cur_tangent
@@ -228,7 +228,8 @@ class RLTractEnvironment(gym.Env):
         #     => Agent should prefer going straight
         prev_tangent = None
         if self.stepCounter > 1:
-            prev_tangent = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
+            # DIRTY: .to(self.device) in next line... one element in history is not on device 
+            prev_tangent = self.state_history[-1].getCoordinate().to(self.device) - self.state_history[-2].getCoordinate().to(self.device)
             prev_tangent = prev_tangent.view(-1, 3)
             prev_tangent = prev_tangent / torch.sqrt(torch.sum(prev_tangent ** 2, dim=1))  # normalize to unit vector
             cos_similarity = abs(torch.nn.functional.cosine_similarity(prev_tangent, cur_tangent))
@@ -247,21 +248,20 @@ class RLTractEnvironment(gym.Env):
 
 
     def reward_for_state(self, state, prev_direction):
-        my_position = state.getCoordinate().double().squeeze(0)
+        my_position = state.getCoordinate().squeeze(0).to(self.device)
         # -- main peak from ODF --
         pmf_cur = self.interpolate_odf_at_state(my_position)[:, 1, 1, 1]
-        pmf_cur = torch.from_numpy(pmf_cur)
+        pmf_cur = torch.from_numpy(pmf_cur).to(self.device)
         reward = pmf_cur / torch.max(pmf_cur)
         peak_indices = self._get_odf_peaks(reward, window_width=int(self.action_space.n/3))
-        mask = torch.zeros_like(reward)
+        mask = torch.zeros_like(reward).to(self.device)
         mask[peak_indices] = 1
         reward *= mask
         if prev_direction is not None:
-            reward = reward * abs(torch.nn.functional.cosine_similarity(self.directions, torch.from_numpy(prev_direction).view(1,-1))).view(1,-1)
+            reward = reward * abs(torch.nn.functional.cosine_similarity(self.directions, prev_direction.view(1,-1))).view(1,-1)
         
         # neuroanatomical reward
         next_pos = my_position.view(1,-1) + self.directions # gets next positions for all directions actions X 3
-        
         local_reward_na = interpolate3dAt(self.tractMasksAllBundles, next_pos).squeeze()  # no_tracts X actions
         #self.na_reward_history[self.stepCounter, :] = local_reward_na
         #reward_na = torch.mean(self.na_reward_history[0:self.stepCounter, :], dim = 0)
@@ -291,10 +291,10 @@ class RLTractEnvironment(gym.Env):
     
     def _get_odf_peaks(self, odf, window_width=31):
         odf = odf.squeeze(0)
-        odf_diff = ((odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1])).type(torch.uint8)
+        odf_diff = ((odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1])).type(torch.uint8).to(self.device)
         if window_width % 2 == 0.:
             window_width += 1
-        peak_mask = torch.cat([torch.zeros(1, dtype=torch.uint8), odf_diff, torch.zeros(1, dtype=torch.uint8)], dim=0)
+        peak_mask = torch.cat([torch.zeros(1, dtype=torch.uint8).to(self.device), odf_diff, torch.zeros(1, dtype=torch.uint8).to(self.device)], dim=0)
         peaks = torch.nn.functional.max_pool1d_with_indices(odf.view(1,1,-1), window_width, 1, padding=window_width//2)[1].unique()
         peak_indices = peaks[peak_mask[peaks].nonzero()]
         return peak_indices
@@ -321,12 +321,12 @@ class RLTractEnvironment(gym.Env):
                 else:
                     action = action_function(self.get_observation_from_state(state))
                 # store tangent for next time step
-                current_direction = self.directions[action].numpy()
+                current_direction = self.directions[action] #.numpy()
                 # take a step
                 _, reward, terminal, _ = self.step(action)
                 state = self.state # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
                 if not terminal:
-                    all_states.append(state.getCoordinate().squeeze(0).numpy())
+                    all_states.append(state.getCoordinate().squeeze(0))
                 eval_steps = eval_steps + 1
 
             # -- backward tracking --
@@ -344,14 +344,16 @@ class RLTractEnvironment(gym.Env):
                 else:
                     action = action_function(self.get_observation_from_state(state))
                 # store tangent for next time step
-                current_direction = self.directions[action].numpy()
+                current_direction = self.directions[action]#.numpy()
                 # take a step
                 _, reward, terminal, _ = self.step(action, direction="backward")
                 state = self.state
-                if (False in torch.eq(state.getCoordinate().squeeze(0), my_position)) & (not terminal):
-                    all_states.append(state.getCoordinate().squeeze(0).numpy())
+                my_position = my_position.to(self.device) # DIRTY!!!
+                my_coord = state.getCoordinate().squeeze(0).to(self.device)
+                if (False in torch.eq(my_coord, my_position)) & (not terminal):
+                    all_states.append(my_coord)
 
-            streamlines.append(np.asarray(all_states))
+            streamlines.append((all_states))
 
         return streamlines
 
@@ -387,7 +389,7 @@ class RLTractEnvironment(gym.Env):
         self.reference_seed_point_ijk = reference_seed_point_ijk
         self.state = TractographyState(self.reference_seed_point_ijk, self.state_interpol_func)
         self.state_history = deque([self.state]*4, maxlen=4)
-        self.na_reward_history = torch.zeros((self.maxSteps, self.tractMasksAllBundles.shape[0]))
+        self.na_reward_history = torch.zeros((self.maxSteps, self.tractMasksAllBundles.shape[0])).to(self.device)
 
         return self.get_observation_from_state(self.state)
 
