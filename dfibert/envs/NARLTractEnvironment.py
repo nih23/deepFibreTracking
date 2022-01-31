@@ -12,14 +12,34 @@ from dipy.reconst.csdeconv import (mask_for_response_ssst,
                                    response_from_mask_ssst)
 from dipy.tracking import utils
 from gym.spaces import Discrete
-from scipy.interpolate import RegularGridInterpolator
 from tqdm import trange
 
-from dfibert.data import DataPreprocessor, PointOutsideOfDWIError
+from dfibert.data import DataPreprocessor
 from dfibert.data.postprocessing import Resample, Resample100
 from dfibert.util import get_grid
 from ..tracker import load_streamlines
 
+import torch
+
+class TorchGridInterpolator:
+    def __init__(self, data) -> None:
+        self.data = data.float() # [X,Y,Z,C]
+        
+        self.data = self.data.moveaxis(3,0).unsqueeze(0) # [1, C, X, Y, Z]
+        self.interpol_transform = (torch.tensor(data.shape[:3], device=self.data.device) - 1) / 2
+    
+    def _convert_points(self, pts):
+        return (pts[:, (2,1,0)] / self.interpol_transform) - 1
+
+    def __call__(self, pts) -> None:
+        new_shape = (*pts.shape[:-1], -1)
+        pts = pts.reshape(-1, 3)
+        pts = self._convert_points(pts.float())
+        pts = pts.unsqueeze(0).unsqueeze(0).unsqueeze(0)
+        #print(pts.dtype, pts.shape)
+        interpolated =  torch.nn.functional.grid_sample(self.data, pts, align_corners=True, mode="bilinear")
+        # [1 , C, 1, 1, N]
+        return interpolated.reshape((self.data.shape[1], -1)).moveaxis(1,0).reshape(new_shape)
 
 def get_uniform_hemisphere_with_points(action_space: int, seed=42) -> HemiSphere:
     if seed is not None:
@@ -65,7 +85,7 @@ class TractographyState:
         return self.interpol_dwi
 
     def __add__(self, other):
-        if isinstance(other, np.ndarray):
+        if isinstance(other, torch.Tensor):
             return TractographyState(self.get_coordinate() + other, self.interpol_func)
         elif isinstance(other, TractographyState):
             return TractographyState(self.get_coordinate() + other.get_coordinate(), self.interpol_func)
@@ -73,7 +93,7 @@ class TractographyState:
             raise NotImplementedError()
 
     def __sub__(self, other):
-        if isinstance(other, np.ndarray):
+        if isinstance(other, torch.Tensor):
             return TractographyState(self.get_coordinate() - other, self.interpol_func)
         elif isinstance(other, TractographyState):
             return TractographyState(self.get_coordinate() - other.get_coordinate(), self.interpol_func)
@@ -87,40 +107,42 @@ class NARLTractEnvironment(gym.Env):
                  max_steps=2000, fa_threshold=0.2, bundles_path="data/gt_bundles/", odf_mode="CSD"):
 
         print("Loading dataset # ", dataset)
+        self.device = device
         preprocessor = DataPreprocessor().normalize().crop(b_val).fa_estimate()
         if dataset == 'ISMRM':
             self.dataset = preprocessor.get_ismrm(f"data/ISMRM2015/")
         else:
             self.dataset = preprocessor.get_hcp(f"data/HCP/{dataset}/")
         self.sphere = get_uniform_hemisphere_with_points(action_space=action_space)
-        self.directions = self.sphere.vertices
-        self.grid = get_grid(np.array(grid_dim))
+        self.directions = torch.from_numpy(self.sphere.vertices).to(device=device)
+        self.grid = torch.from_numpy(get_grid(np.array(grid_dim))).to(device=device)
         self.action_space = Discrete(action_space)
 
         if seeds is None:
             seeds = utils.seeds_from_mask(self.dataset.binary_mask, self.dataset.aff)
-        self.seeds = seeds  # RAS
-
+        self.seeds = torch.from_numpy(seeds).to(device=device).float()  # RAS
         self.max_steps = max_steps
         self.step_width = step_width
 
-        self.dwi_postprocessor = Resample100()
+        self.dwi = torch.from_numpy(Resample100().process(self.dataset, None, self.dataset.dwi)).to(device=device)
+        self.dwi_processor = TorchGridInterpolator(self.dwi)
+        self.binary_mask = torch.from_numpy(self.dataset.binary_mask).to(device=device)
+        self.fa_interpolator = TorchGridInterpolator(torch.from_numpy(self.dataset.fa).to(device=device).unsqueeze(-1))
         self.fa_threshold = fa_threshold
 
         self._init_na(Path(bundles_path))
         self._init_odf(odf_mode=odf_mode)
+        self.ras_aff = torch.from_numpy(self.dataset.aff).to(device=device).float()
+        self.ijk_aff = self.ras_aff.inverse().float()
         self.state: Optional[TractographyState] = None
         self.no_steps = 0
-        self.state_history = np.zeros((self.max_steps + 1, 3))
-        self.na_reward_history = np.zeros((self.max_steps, self.na_interpolator.values.shape[-1]))
+        self.state_history = torch.zeros((self.max_steps + 1, 3))
+        self.na_reward_history = torch.zeros((self.max_steps, self.tract_masks.shape[-1]))
         self.reset()
 
     def _init_na(self, bundles_path):
-        tract_masks = get_all_tract_mask(bundles_path, self.dataset)
-        x = np.arange(tract_masks.shape[0])
-        y = np.arange(tract_masks.shape[1])
-        z = np.arange(tract_masks.shape[2])
-        self.na_interpolator = RegularGridInterpolator((x, y, z), tract_masks)
+        self.tract_masks = torch.from_numpy(get_all_tract_mask(bundles_path, self.dataset)).to(device=self.device)
+        self.na_interpolator = TorchGridInterpolator(self.tract_masks)
 
     def _init_odf(self, odf_mode):
         print("Initialising ODF")
@@ -141,36 +163,33 @@ class NARLTractEnvironment(gym.Env):
         else:
             raise NotImplementedError("ODF Mode not found")
         # -- set up interpolator for odf evaluation
-        x_range = np.arange(odf.shape[0])
-        y_range = np.arange(odf.shape[1])
-        z_range = np.arange(odf.shape[2])
+        odf = torch.from_numpy(odf).to(device=self.device)
 
-        self.odf_interpolator = RegularGridInterpolator((x_range, y_range, z_range), odf)
+        self.odf_interpolator = TorchGridInterpolator(odf)
 
     def step(self, action, backwards=False):
         ijk_coordinate = self.state.get_coordinate()
         odf_cur = self.odf_interpolator(ijk_coordinate).squeeze()
 
-        if np.max(odf_cur) > 0:
-            odf_cur = odf_cur / np.max(odf_cur)
+        if torch.max(odf_cur) > 0:
+            odf_cur = odf_cur / torch.max(odf_cur)
 
         if self.no_steps >= self.max_steps:
             return self.state.get_value(), 0., True, {}
-        if self.dataset.get_fa(ijk_coordinate) < self.fa_threshold:
+        if self.fa_interpolator(ijk_coordinate) < self.fa_threshold:
             return self.state.get_value(), 0., True, {}
 
-        if self.dataset.binary_mask[int(ijk_coordinate[0]), int(ijk_coordinate[1]), int(ijk_coordinate[2])] == 0:
+        if self.binary_mask[int(ijk_coordinate[0]), int(ijk_coordinate[1]), int(ijk_coordinate[2])] == 0:
             return self.state.get_value(), 0., True, {}
 
-        next_dir = np.copy(self.directions[action])
-
+        next_dir = self.directions[action].clone().detach().float()
         if self.no_steps > 0:
             prev_dir = self.state_history[self.no_steps] - self.state_history[self.no_steps - 1]
-            prev_dir = prev_dir / np.linalg.norm(prev_dir)
-            if np.dot(next_dir, prev_dir) < 0:
+            prev_dir = prev_dir / torch.linalg.norm(prev_dir)
+            if torch.dot(next_dir, prev_dir) < 0:
                 next_dir = next_dir * -1
 
-            if np.dot(next_dir, prev_dir) < 0.5:
+            if torch.dot(next_dir, prev_dir) < 0.5:
                 return self.state.get_value(), 0., True, {}
         else:
             if backwards:
@@ -189,33 +208,58 @@ class NARLTractEnvironment(gym.Env):
         self.na_reward_history[self.no_steps - 1, :] = local_na_reward
 
         if self.no_steps > 1:
-            mean_na_reward = np.mean(self.na_reward_history[0: self.no_steps - 1], axis=0)
+            mean_na_reward = torch.mean(self.na_reward_history[0: self.no_steps - 1], dim=0)
             na_reward = mean_na_reward + local_na_reward
         else:
             na_reward = local_na_reward
-        reward = odf_cur[action] * np.dot(next_dir, prev_dir) + np.max(na_reward)
+        reward = odf_cur[action] * torch.dot(next_dir, prev_dir) + torch.max(na_reward)
         return self.state.get_value(), reward, False, {}
 
-    def interpolate_dwi_at_state(self, coords):
-        ras_points = self.grid + self.dataset.to_ras(coords)
-        try:
-            return self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor)
-        except PointOutsideOfDWIError:
+    def to_ras(self, points):
+        new_shape = (points.shape)
+        points = points.reshape(-1, 3)
+        return (torch.mm(self.ras_aff[:3,:3],points.T) + self.ras_aff[:3,3:4]).T.reshape(new_shape)
+
+    def to_ijk(self, points):
+        new_shape = (points.shape)
+        points = points.reshape(-1, 3)
+        return (torch.mm(self.ijk_aff[:3,:3],points.T) + self.ijk_aff[:3,3:4]).T.reshape(new_shape)
+    
+    
+    def interpolate_dwi_at_state(self, points):
+        ras_points = self.grid + self.to_ras(points.float())
+
+
+        new_shape = (*points.shape[:-1], -1)
+
+        points = self.to_ijk(ras_points.float()).reshape(-1, 3)
+
+        is_outside = ((points[:, 0] < 0) + (points[:, 0] >= self.dwi.shape[0]) +  # OR
+                      (points[:, 1] < 0) + (points[:, 1] >= self.dwi.shape[1]) +
+                      (points[:, 2] < 0) + (points[:, 2] >= self.dwi.shape[2])) > 0
+
+        if torch.sum(is_outside) > 0:
             return None
 
+        result = self.dwi_processor(points)
+
+        
+        result = result.reshape(new_shape)
+        return result
+
     def _next_pos_and_reward(self, backwards=False):
-        next_dirs = np.copy(self.directions)
+        next_dirs = self.directions.clone().detach()
         if self.no_steps > 0:
             prev_dir = self.state_history[self.no_steps] - self.state_history[self.no_steps - 1]
-            prev_dir = prev_dir / np.linalg.norm(prev_dir)
+            prev_dir = prev_dir / torch.linalg.norm(prev_dir)
 
-            should_be_inverted = np.sum(next_dirs * prev_dir, axis=1) < 0
+            should_be_inverted = torch.sum(next_dirs * prev_dir, dim=1) < 0
             next_dirs[should_be_inverted] = -next_dirs[should_be_inverted]
         elif backwards:
             next_dirs = -next_dirs
-        rewards = self._get_reward_for_move(np.arange(0, self.directions.shape[0]), next_dirs)
+        rewards = self._get_reward_for_move(torch.arange(0, self.directions.shape[0]), next_dirs)
         if self.no_steps > 0:
-            angle_to_sharp = np.sum(next_dirs * prev_dir, axis=1) < 0.5
+            angle_to_sharp = torch.sum(next_dirs * prev_dir, dim=1) < 0.5
             rewards[angle_to_sharp] = 0
         return next_dirs, rewards
 
@@ -223,25 +267,25 @@ class NARLTractEnvironment(gym.Env):
 
         cur_pos_ijk = self.state.get_coordinate()
 
-        odf_cur = self.odf_interpolator(cur_pos_ijk).squeeze()  # [L]
-        if np.max(odf_cur) > 0:
-            odf_cur = odf_cur / np.max(odf_cur)
+        odf_cur = self.odf_interpolator(cur_pos_ijk.unsqueeze(0)).squeeze()  # [L]
+        if torch.max(odf_cur) > 0:
+            odf_cur = odf_cur / torch.max(odf_cur)
         # actions : [N], next_directions: [N ,3]
         step_width = self.step_width if self.no_steps > 0 else 0.5 * self.step_width
 
         next_positions = cur_pos_ijk + next_directions * step_width
         ijk_coordinates = next_positions  # [N, 3]
-        local_na_reward = self.na_interpolator(ijk_coordinates)  # [N, K]
+        local_na_reward = self.na_interpolator(ijk_coordinates.unsqueeze(0))  # [N, K]
 
         if self.no_steps > 0:
-            mean_na_reward = np.mean(self.na_reward_history[0: self.no_steps], axis=0)  # [K]
+            mean_na_reward = torch.mean(self.na_reward_history[0: self.no_steps], dim=0)  # [K]
             na_reward = mean_na_reward + local_na_reward  # [N, K]
 
             prev_dir = self.state_history[self.no_steps] - self.state_history[self.no_steps - 1]
-            prev_dir = prev_dir / np.linalg.norm(prev_dir)
-            return odf_cur[actions] * np.dot(next_directions, prev_dir) + np.max(na_reward)
+            prev_dir = prev_dir / torch.linalg.norm(prev_dir)
+            return odf_cur[actions] * torch.sum(next_directions* prev_dir, dim=1) + torch.max(na_reward)
         else:
-            return odf_cur[actions] + np.max(local_na_reward)
+            return odf_cur[actions] + torch.max(local_na_reward)
 
     def track(self, with_best_action=True):
         streamlines = []
@@ -256,14 +300,14 @@ class NARLTractEnvironment(gym.Env):
                 # get the best choice from environment
                 if with_best_action:
                     _, reward = self._next_pos_and_reward()
-                    action = np.argmax(reward)
+                    action = torch.argmax(reward)
                 else:
                     raise NotImplementedError
                 # take a step
                 _, reward, terminal, _ = self.step(action)
                 # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
                 if not terminal:
-                    streamline.append(self.dataset.to_ras(self.state.get_coordinate()))
+                    streamline.append(self.to_ras(self.state.get_coordinate().float()).cpu().detach().numpy())
 
             # -- backward tracking --
             self.reset(seed_index=i)
@@ -274,14 +318,14 @@ class NARLTractEnvironment(gym.Env):
             while not terminal:
                 if with_best_action:
                     _, reward = self._next_pos_and_reward(backwards=True)
-                    action = np.argmax(reward)
+                    action = torch.argmax(reward)
                 else:
                     raise NotImplementedError
                 # take a step
                 _, reward, terminal, _ = self.step(action, backwards=True)
                 # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
                 if not terminal:
-                    streamline.append(self.dataset.to_ras(self.state.get_coordinate()))
+                    streamline.append(self.to_ras(self.state.get_coordinate().float()).cpu().detach().numpy())
 
             streamlines.append(streamline)
 
@@ -290,13 +334,13 @@ class NARLTractEnvironment(gym.Env):
     # reset the game and returns the observed data from the last episode
     def reset(self, seed_index=None):
         if seed_index is None:
-            seed_index = np.random.randint(len(self.seeds))
+            seed_index = torch.randint(len(self.seeds), size=(1,1))[0][0]
 
+        self.seed_index = seed_index
         self.no_steps = 0
         self.state_history[:] = 0
         self.na_reward_history[:] = 0
-
-        self.state_history[0] = self.dataset.to_ijk(self.seeds[seed_index])
+        self.state_history[0] = self.to_ijk(self.seeds[seed_index].float())
         self.state = TractographyState(self.state_history[0], self.interpolate_dwi_at_state)
 
         return self.state.get_value()
