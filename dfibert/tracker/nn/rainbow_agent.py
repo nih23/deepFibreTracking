@@ -14,6 +14,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from IPython.display import clear_output
 from torch.nn.utils import clip_grad_norm_
+from zmq import device
 
 from dfibert.tracker import save_streamlines
 from dfibert.tracker.nn._segment_tree import MinSegmentTree, SumSegmentTree
@@ -27,13 +28,15 @@ class ReplayBuffer:
         size: int, 
         batch_size: int = 32, 
         n_step: int = 1, 
-        gamma: float = 0.99
+        gamma: float = 0.99,
+        device: torch.device = torch.device('cpu')
     ):
-        self.obs_buf = np.zeros([size, obs_dim], dtype=np.float32)
-        self.next_obs_buf = np.zeros([size, obs_dim], dtype=np.float32)
-        self.acts_buf = np.zeros([size], dtype=np.float32)
-        self.rews_buf = np.zeros([size], dtype=np.float32)
-        self.done_buf = np.zeros(size, dtype=np.float32)
+        self.obs_buf = torch.zeros([size, obs_dim], dtype=torch.float32, device=device)
+        self.next_obs_buf = torch.zeros([size, obs_dim], dtype=torch.float32, device=device)
+        self.acts_buf = torch.zeros([size], dtype=torch.long, device=device)
+        self.rews_buf = torch.zeros([size], dtype=torch.float32, device=device)
+        self.done_buf = torch.zeros(size, dtype=torch.float32, device=device)
+        
         self.max_size, self.batch_size = size, batch_size
         self.ptr, self.size, = 0, 0
         
@@ -44,12 +47,12 @@ class ReplayBuffer:
 
     def store(
         self, 
-        obs: np.ndarray, 
-        act: np.ndarray, 
-        rew: float, 
-        next_obs: np.ndarray, 
-        done: bool,
-    ) -> Tuple[np.ndarray, np.ndarray, float, np.ndarray, bool]:
+        obs: torch.Tensor,
+        act: torch.Tensor,
+        rew: torch.float32,
+        next_obs: torch.Tensor,
+        done: torch.bool,
+     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         transition = (obs, act, rew, next_obs, done)
         self.n_step_buffer.append(transition)
 
@@ -61,8 +64,7 @@ class ReplayBuffer:
         rew, next_obs, done = self._get_n_step_info(
             self.n_step_buffer, self.gamma
         )
-        obs, act = self.n_step_buffer[0][:2]
-        
+        obs, act = self.n_step_buffer[0][:2]        
         self.obs_buf[self.ptr] = obs
         self.next_obs_buf[self.ptr] = next_obs
         self.acts_buf[self.ptr] = act
@@ -73,7 +75,8 @@ class ReplayBuffer:
         
         return self.n_step_buffer[0]
 
-    def sample_batch(self) -> Dict[str, np.ndarray]:
+   # def sample_batch(self) -> Dict[str, np.ndarray]:
+    def sample_batch(self) -> Dict[str, torch.Tensor]:
         idxs = np.random.choice(self.size, size=self.batch_size, replace=False)
 
         return dict(
@@ -88,7 +91,7 @@ class ReplayBuffer:
     
     def sample_batch_from_idxs(
         self, idxs: np.ndarray
-    ) -> Dict[str, np.ndarray]:
+    ) -> Dict[str, torch.Tensor]:
         # for N-step Learning
         return dict(
             obs=self.obs_buf[idxs],
@@ -100,7 +103,7 @@ class ReplayBuffer:
     
     def _get_n_step_info(
         self, n_step_buffer: Deque, gamma: float
-    ) -> Tuple[np.int64, np.ndarray, bool]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return n step rew, next_obs, and done."""
         # info of the last transition
         rew, next_obs, done = n_step_buffer[-1][-3:]
@@ -108,7 +111,7 @@ class ReplayBuffer:
         for transition in reversed(list(n_step_buffer)[:-1]):
             r, n_o, d = transition[-3:]
 
-            rew = r + gamma * rew * (1 - d)
+            rew = r + gamma * rew * ~d
             next_obs, done = (n_o, d) if d else (next_obs, done)
 
         return rew, next_obs, done
@@ -136,15 +139,17 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         alpha: float = 0.6,
         n_step: int = 1, 
         gamma: float = 0.99,
+        device: torch.device = torch.device('cuda')
     ):
         """Initialization."""
         assert alpha >= 0
         
         super(PrioritizedReplayBuffer, self).__init__(
-            obs_dim, size, batch_size, n_step, gamma
+            obs_dim, size, batch_size, n_step, gamma, device
         )
         self.max_priority, self.tree_ptr = 1.0, 0
         self.alpha = alpha
+        self.device = device
         
         # capacity must be positive and a power of 2.
         tree_capacity = 1
@@ -155,13 +160,13 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self.min_tree = MinSegmentTree(tree_capacity)
         
     def store(
-        self, 
-        obs: np.ndarray, 
-        act: int, 
-        rew: float, 
-        next_obs: np.ndarray, 
-        done: bool,
-    ) -> Tuple[np.ndarray, np.ndarray, float, np.ndarray, bool]:
+        self,
+        obs: torch.Tensor,
+        act: torch.Tensor,
+        rew: torch.float32,
+        next_obs: torch.Tensor,
+        done: torch.bool,
+     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Store experience and priority."""
         transition = super().store(obs, act, rew, next_obs, done)
         
@@ -171,8 +176,8 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             self.tree_ptr = (self.tree_ptr + 1) % self.max_size
         
         return transition
-
-    def sample_batch(self, beta: float = 0.4) -> Dict[str, np.ndarray]:
+   
+    def sample_batch(self, beta: float = 0.4) -> Dict[str, torch.Tensor]:
         """Sample a batch of experiences."""
         assert len(self) >= self.batch_size
         assert beta > 0
@@ -184,7 +189,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         acts = self.acts_buf[indices]
         rews = self.rews_buf[indices]
         done = self.done_buf[indices]
-        weights = np.array([self._calculate_weight(i, beta) for i in indices])
+        weights = torch.tensor([self._calculate_weight(i, beta) for i in indices], dtype=torch.float32, device=self.device)
         
         return dict(
             obs=obs,
@@ -196,7 +201,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             indices=indices,
         )
         
-    def update_priorities(self, indices: List[int], priorities: np.ndarray):
+    def update_priorities(self, indices: List[int], priorities: torch.Tensor):    
         """Update priorities of sampled transitions."""
         assert len(indices) == len(priorities)
 
@@ -421,6 +426,7 @@ class DQNAgent:
         atom_size: int = 51,
         # N-step Learning
         n_step: int = 3,
+        device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         path: str = './training'
     ):
         """Initialization.
@@ -452,17 +458,14 @@ class DQNAgent:
         # NoisyNet: All attributes related to epsilon are removed
         
         # device: cpu / gpu
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
-        print(self.device)
+        self.device = device
         
         # PER
         # memory for 1-step Learning
         self.beta = beta
         self.prior_eps = prior_eps
         self.memory = PrioritizedReplayBuffer(
-            obs_dim, memory_size, batch_size, alpha=self.alpha
+            obs_dim, memory_size, batch_size, alpha=self.alpha, device=self.device
         )
         
         # memory for N-step Learning
@@ -470,7 +473,7 @@ class DQNAgent:
         if self.use_n_step:
             self.n_step = n_step
             self.memory_n = ReplayBuffer(
-                obs_dim, memory_size, batch_size, n_step=n_step, gamma=gamma
+                obs_dim, memory_size, batch_size, n_step=n_step, gamma=gamma, device=self.device
             )
             
         # Categorical DQN parameters
@@ -500,22 +503,23 @@ class DQNAgent:
         # mode: train / test
         self.is_test = False
 
-    def select_action(self, state: np.ndarray) -> np.ndarray:
+    def select_action(self, state: torch.Tensor) -> torch.Tensor:
         """Select an action from the input state."""
         # NoisyNet: no epsilon greedy action selection
-        selected_action = self.dqn(
-            torch.FloatTensor(state).to(self.device)
-        ).argmax()
-        selected_action = selected_action.detach().cpu().numpy()
+        selected_action = torch.argmax(self.dqn(state))
         
         if not self.is_test:
             self.transition = [state, selected_action]
         
         return selected_action
 
-    def step(self, action: np.ndarray, backwards: bool) -> Tuple[np.ndarray, np.float64, bool]:
+    def step(self, action: torch.Tensor, backwards: torch.bool) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Take an action and return the response of the env."""
         next_state, reward, done, _ = self.env.step(action, backwards)
+        #### not needed if environment is moved to gpu
+        next_state = torch.tensor(next_state, dtype=torch.float32, device=self.device)
+        reward = torch.tensor(reward, dtype=torch.int64, device=self.device)
+        done = torch.tensor(done, dtype=torch.bool, device=self.device)
 
         if not self.is_test:
             self.transition += [reward, next_state, done]
@@ -537,9 +541,7 @@ class DQNAgent:
         """Update the model by gradient descent."""
         # PER needs beta to calculate weights
         samples = self.memory.sample_batch(self.beta)
-        weights = torch.FloatTensor(
-            samples["weights"].reshape(-1, 1)
-        ).to(self.device)
+        weights = samples["weights"].reshape(-1, 1)
         indices = samples["indices"]
         
         # 1-step Learning loss
@@ -566,7 +568,7 @@ class DQNAgent:
         self.optimizer.step()
         
         # PER: update priorities
-        loss_for_prior = elementwise_loss.detach().cpu().numpy()
+        loss_for_prior = elementwise_loss
         new_priorities = loss_for_prior + self.prior_eps
         self.memory.update_priorities(indices, new_priorities)
         
@@ -580,7 +582,9 @@ class DQNAgent:
         """Train the agent."""
         self.is_test = False
         
-        state = self.env.reset()
+        # TODO: If env is moved to GPU, the following line can be changed to
+        # state = self.env.reset()
+        state = torch.tensor(self.env.reset(), dtype=torch.float32, device=self.device)
         backwards = False
         update_cnt = 0
         score = 0
@@ -606,7 +610,9 @@ class DQNAgent:
                     seed_index = self.env.seed_index
                 else:
                     seed_index = None
-                state = self.env.reset(seed_index)
+                # TODO: If env is moved to GPU, the following line can be changed to
+                # state = self.env.reset(seed_index)
+                state = torch.tensor(self.env.reset(seed_index), dtype=torch.float32, device=self.device)
                 scores.append(score)
                 score = 0
 
@@ -631,35 +637,42 @@ class DQNAgent:
         #self.env.close()
                 
     def test(self) -> List[np.ndarray]:
-        """Test the agent."""
-        self.is_test = True
+        raise NotImplementedError
+        # """Test the agent."""
+        # self.is_test = True
         
-        state = self.env.reset()
-        done = False
-        score = 0
+        # state = self.env.reset()
+        # done = False
+        # score = 0
         
-        steps = []
-        while not done:
-            steps.append(self.env.render(mode="rgb_array"))
-            action = self.select_action(state)
-            next_state, reward, done = self.step(action)
+        # steps = []
+        # while not done:
+        #     steps.append(self.env.render(mode="rgb_array"))
+        #     action = self.select_action(state)
+        #     next_state, reward, done = self.step(action)
 
-            state = next_state
-            score += reward
+        #     state = next_state
+        #     score += reward
         
-        print("score: ", score)
-        self.env.close()
+        # print("score: ", score)
+        # self.env.close()
         
-        return steps
+        # return steps
 
-    def _compute_dqn_loss(self, samples: Dict[str, np.ndarray], gamma: float) -> torch.Tensor:
+    # def _compute_dqn_loss(self, samples: Dict[str, np.ndarray], gamma: float) -> torch.Tensor:
+    def _compute_dqn_loss(self, samples: Dict[str, torch.Tensor], gamma: float) -> torch.Tensor:
         """Return categorical dqn loss."""
-        device = self.device  # for shortening the following lines
-        state = torch.FloatTensor(samples["obs"]).to(device)
-        next_state = torch.FloatTensor(samples["next_obs"]).to(device)
-        action = torch.LongTensor(samples["acts"]).to(device)
-        reward = torch.FloatTensor(samples["rews"].reshape(-1, 1)).to(device)
-        done = torch.FloatTensor(samples["done"].reshape(-1, 1)).to(device)
+        #device = self.device  # for shortening the following lines
+        # state = torch.Tensor(samples["obs"]).to(device)
+        # next_state = torch.Tensor(samples["next_obs"]).to(device)
+        # action = torch.LongTensor(samples["acts"]).to(device)
+        # reward = torch.Tensor(samples["rews"].reshape(-1, 1)).to(device)
+        # done = torch.Tensor(samples["done"].reshape(-1, 1)).to(device)
+        state = samples["obs"]
+        next_state = samples["next_obs"]
+        action = samples["acts"]
+        reward = samples["rews"].reshape(-1,1)
+        done = samples["done"].reshape(-1, 1)
         
         # Categorical DQN algorithm
         delta_z = float(self.v_max - self.v_min) / (self.atom_size - 1)
@@ -669,8 +682,8 @@ class DQNAgent:
             next_action = self.dqn(next_state).argmax(1)
             next_dist = self.dqn_target.dist(next_state)
             next_dist = next_dist[range(self.batch_size), next_action]
+            t_z = reward + (1 - done) * gamma * self.support.unsqueeze(0)
 
-            t_z = reward + (1 - done) * gamma * self.support
             t_z = t_z.clamp(min=self.v_min, max=self.v_max)
             b = (t_z - self.v_min) / delta_z
             l = b.floor().long()
@@ -783,11 +796,12 @@ class DQNAgent:
         print("Resume training at %d / %d steps." % (num_steps, max_steps) )
         self.train(num_steps=remaining_steps, losses = losses, scores = rewards, path=path_dir, plot=plot)
 
-    def create_tractogram(self, ras: bool = True, path: str = './'):
+    def create_tractogram(self, path: str = './'):
         self.is_test = True                                                 
 
-        streamlines = self.env.track(self.select_action)
-        if ras:
-            streamlines = [self.env.dataset.to_ras(sl) for sl in streamlines]
-    
+        streamlines = self.env.track(with_best_action=False, agent=self.select_action)
+        # if ras:
+        #      streamlines = [self.env.dataset.to_ras(sl) for sl in streamlines if len(sl)>10]
+
         save_streamlines(streamlines=streamlines, path=path)
+        return streamlines

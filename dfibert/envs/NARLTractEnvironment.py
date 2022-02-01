@@ -243,7 +243,7 @@ class NARLTractEnvironment(gym.Env):
         else:
             return odf_cur[actions] + np.max(local_na_reward)
 
-    def track(self, with_best_action=True):
+    def track(self, with_best_action=True, agent=None):
         streamlines = []
         for i in trange(len(self.seeds)):
             streamline = []
@@ -258,7 +258,8 @@ class NARLTractEnvironment(gym.Env):
                     _, reward = self._next_pos_and_reward()
                     action = np.argmax(reward)
                 else:
-                    raise NotImplementedError
+                    action = agent(self.state.get_value())
+                    #raise NotImplementedError
                 # take a step
                 _, reward, terminal, _ = self.step(action)
                 # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
@@ -276,7 +277,7 @@ class NARLTractEnvironment(gym.Env):
                     _, reward = self._next_pos_and_reward(backwards=True)
                     action = np.argmax(reward)
                 else:
-                    raise NotImplementedError
+                    action = agent(self.state.get_value())
                 # take a step
                 _, reward, terminal, _ = self.step(action, backwards=True)
                 # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
