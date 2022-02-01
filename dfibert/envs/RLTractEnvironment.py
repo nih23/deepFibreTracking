@@ -31,6 +31,7 @@ class RLTractEnvironment(gym.Env):
     def __init__(self, device, seeds=None, step_width=0.8, dataset='100307', grid_dim=(3, 3, 3),
                  max_l2_dist_to_state=0.1, tracking_in_RAS=True, fa_threshold=0.1, b_val=1000, 
                  odf_state=True, odf_mode="CSD", action_space=100, pFolderBundles = "data/gt_bundles/"):
+        print("DEPRECATED! Dont use anymore.")
         self.state_history = None
         self.reference_seed_point_ijk = None
         self.points_visited = None
