@@ -275,7 +275,7 @@ class NARLTractEnvironment(gym.Env):
 
         next_positions = cur_pos_ijk + next_directions * step_width
         ijk_coordinates = next_positions  # [N, 3]
-        local_na_reward = self.na_interpolator(ijk_coordinates.unsqueeze(0))  # [N, K]
+        local_na_reward = self.na_interpolator(ijk_coordinates)  # [N, K]
 
         if self.no_steps > 0:
             mean_na_reward = torch.mean(self.na_reward_history[0: self.no_steps], dim=0)  # [K]
@@ -326,7 +326,7 @@ class NARLTractEnvironment(gym.Env):
                 # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
                 if not terminal:
                     streamline.append(self.to_ras(self.state.get_coordinate().float()).cpu().detach().numpy())
-
+            streamline = np.array(streamline)
             streamlines.append(streamline)
 
         return streamlines
