@@ -301,7 +301,7 @@ class RLTractEnvironment(gym.Env):
             all_states = []
             self.reset(seed_index=i)
             state = self.state  # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
-            seed_position = state.getCoordinate().squeeze(0).numpy()
+            seed_position = state.getCoordinate().squeeze().numpy()
             current_direction = None
             all_states.append(seed_position)
 
@@ -321,7 +321,7 @@ class RLTractEnvironment(gym.Env):
                 _, reward, terminal, _ = self.step(action)
                 state = self.state # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
                 if not terminal:
-                    all_states.append(state.getCoordinate().squeeze(0))
+                    all_states.append(state.getCoordinate().squeeze(0).numpy())
                 eval_steps = eval_steps + 1
 
             # -- backward tracking --
@@ -346,7 +346,7 @@ class RLTractEnvironment(gym.Env):
                 my_position = my_position.to(self.device) # DIRTY!!!
                 my_coord = state.getCoordinate().squeeze(0).to(self.device)
                 if (False in torch.eq(my_coord, my_position)) & (not terminal):
-                    all_states.append(my_coord)
+                    all_states.append(my_coord.numpy())
 
             streamlines.append((all_states))
 
