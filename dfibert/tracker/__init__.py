@@ -4,6 +4,7 @@ import os
 from typing import List
 
 from dipy.tracking.utils import random_seeds_from_mask, seeds_from_mask
+from dipy.tracking.life import transform_streamlines
 from dipy.tracking.local_tracking import LocalTracking
 from dipy.tracking.stopping_criterion import ThresholdStoppingCriterion
 from dipy.tracking.streamline import Streamlines
@@ -15,6 +16,9 @@ from dipy.data import get_sphere, default_sphere
 from dipy.direction import peaks_from_model, DeterministicMaximumDirectionGetter
 import dipy.reconst.dti as dti
 
+import fury
+import vtk
+import numpy as np
 
 def _get_seeds(data_container, random_seeds=False, seeds_count=30000, seeds_per_voxel=False):
     if not random_seeds:
@@ -125,7 +129,8 @@ def get_dti_streamlines(data_container, random_seeds=False, seeds_count=30000, s
 
 def save_streamlines(streamlines: list, path: str, to_lps=True, binary=False):
     """
-    Saves the given streamlines to a file
+    Saves the given streamlines to a file in VTK 4.2 file format due to 3dslicer compatability.
+    
     Parameters
     ----------
     streamlines
@@ -140,7 +145,25 @@ def save_streamlines(streamlines: list, path: str, to_lps=True, binary=False):
     -------
 
     """
-    save_vtk_streamlines(streamlines, path, to_lps=to_lps, binary=binary)
+    if to_lps:
+        # ras (mm) to lps (mm)
+        to_lps = np.eye(4)
+        to_lps[0, 0] = -1
+        to_lps[1, 1] = -1
+        streamlines = transform_streamlines(streamlines, to_lps)
+
+    polydata, _ = fury.utils.lines_to_vtk_polydata(streamlines)
+
+    file_extension = path.split(".")[-1].lower()
+
+    writer = vtk.vtkPolyDataWriter()
+    writer.SetFileName(path)
+    writer.SetFileVersion(42)
+    writer = fury.io.set_input(writer, polydata)
+
+    writer.Update()
+    writer.Write()
+    
 
 
 def load_streamlines(path: str, to_lps=True) -> list:

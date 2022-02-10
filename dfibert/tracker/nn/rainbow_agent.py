@@ -415,6 +415,8 @@ class DQNAgent:
         memory_size: int,
         batch_size: int,
         target_update: int,
+        lr: float = 1e-3,
+        adam_eps: float = 1.5e-4,
         gamma: float = 0.99,
         # PER parameters
         alpha: float = 0.2,
@@ -452,9 +454,11 @@ class DQNAgent:
         self.env = env
         self.batch_size = batch_size
         self.target_update = target_update
+        self.lr = lr
         self.gamma = gamma
         self.alpha = alpha
         self.memory_size = memory_size
+        self.adam_eps = adam_eps
         # NoisyNet: All attributes related to epsilon are removed
         
         # device: cpu / gpu
@@ -495,7 +499,7 @@ class DQNAgent:
         self.dqn_target.eval()
         
         # optimizer
-        self.optimizer = optim.Adam(self.dqn.parameters())
+        self.optimizer = optim.Adam(self.dqn.parameters(), self.lr, eps=self.adam_eps)
 
         # transition to store in memory
         self.transition = list()
@@ -506,6 +510,8 @@ class DQNAgent:
     def select_action(self, state: torch.Tensor) -> torch.Tensor:
         """Select an action from the input state."""
         # NoisyNet: no epsilon greedy action selection
+        if not torch.is_tensor(state):
+            state = torch.tensor(state, dtype=torch.float32, device=self.device)
         selected_action = torch.argmax(self.dqn(state))
         
         if not self.is_test:
@@ -517,9 +523,12 @@ class DQNAgent:
         """Take an action and return the response of the env."""
         next_state, reward, done, _ = self.env.step(action, backwards)
         #### not needed if environment is moved to gpu
-        next_state = torch.tensor(next_state, dtype=torch.float32, device=self.device)
-        reward = torch.tensor(reward, dtype=torch.int64, device=self.device)
-        done = torch.tensor(done, dtype=torch.bool, device=self.device)
+        if not torch.is_tensor(next_state):
+            next_state = torch.tensor(next_state, dtype=torch.float32, device=self.device)
+        if not torch.is_tensor(reward):
+            reward = torch.tensor(reward, dtype=torch.int64, device=self.device)
+        if not torch.is_tensor(done):
+            done = torch.tensor(done, dtype=torch.bool, device=self.device)
 
         if not self.is_test:
             self.transition += [reward, next_state, done]
@@ -583,8 +592,8 @@ class DQNAgent:
         self.is_test = False
         
         # TODO: If env is moved to GPU, the following line can be changed to
-        # state = self.env.reset()
-        state = torch.tensor(self.env.reset(), dtype=torch.float32, device=self.device)
+        state = self.env.reset()
+        #state = torch.tensor(self.env.reset(), dtype=torch.float32, device=self.device)
         backwards = False
         update_cnt = 0
         score = 0
@@ -595,7 +604,7 @@ class DQNAgent:
             next_state, reward, done = self.step(action, backwards)
 
             state = next_state
-            score += reward
+            score += reward.detach().cpu().numpy()
             
             # NoisyNet: removed decrease of epsilon
             
@@ -611,8 +620,8 @@ class DQNAgent:
                 else:
                     seed_index = None
                 # TODO: If env is moved to GPU, the following line can be changed to
-                # state = self.env.reset(seed_index)
-                state = torch.tensor(self.env.reset(seed_index), dtype=torch.float32, device=self.device)
+                state = self.env.reset(seed_index)
+                #state = torch.tensor(self.env.reset(seed_index), dtype=torch.float32, device=self.device)
                 scores.append(score)
                 score = 0
 
@@ -631,7 +640,8 @@ class DQNAgent:
                 self._plot(step_idx, scores, losses)
 
             if step_idx % checkpoint_interval == 0:
-                print("Step number: ", step_idx, "Avg. reward: ", np.mean(scores[-100:]))
+                #print("Step number: ", step_idx, "Avg. reward: ", np.mean(scores[-1000:]))
+                print("Step number: ", step_idx, "Median reward: ", np.median(scores[-1000:]))
                 self._save_model(path, step_idx, scores, losses, num_steps)
                 
         #self.env.close()
@@ -726,7 +736,7 @@ class DQNAgent:
         clear_output(True)
         plt.figure(figsize=(20, 5))
         plt.subplot(131)
-        plt.title('step %s. avg. score: %s' % (step_idx, np.mean(scores[-100:])))
+        plt.title('step %s. avg. score: %s' % (step_idx, np.median(scores[-1000:])))
         plt.plot(scores)
         plt.ylabel('Episode reward')
         plt.xlabel("No. episodes")
@@ -740,7 +750,7 @@ class DQNAgent:
     def _save_model(self, path, num_steps, rewards, losses, max_steps):
         path = path + '/checkpoints/'
         os.makedirs(path, exist_ok=True)
-        path = path + 'rainbow_%d_%.2f.pth' % (num_steps, np.mean(rewards[-100:]))
+        path = path + 'rainbow_%d_%.2f.pth' % (num_steps, np.median(rewards[-1000:]))
         print("Writing checkpoint to %s" % (path))
         checkpoint = {}
         checkpoint["num_steps"] = num_steps
@@ -802,6 +812,6 @@ class DQNAgent:
         streamlines = self.env.track(with_best_action=False, agent=self.select_action)
         # if ras:
         #      streamlines = [self.env.dataset.to_ras(sl) for sl in streamlines if len(sl)>10]
-
+        streamlines = list(filter(None, streamlines))
         save_streamlines(streamlines=streamlines, path=path)
         return streamlines
