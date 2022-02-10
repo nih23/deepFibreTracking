@@ -19,19 +19,20 @@ from scipy.interpolate import RegularGridInterpolator
 from tqdm import trange
 
 from dfibert.data import DataPreprocessor, PointOutsideOfDWIError
-from dfibert.data.postprocessing import Resample
+from dfibert.data.postprocessing import Resample, Resample100
 from dfibert.util import get_grid
 from ._state import TractographyState
 
 
 from .neuroanatomical_utils import FiberBundleDataset, interpolate3dAt
+from .NARLTractEnvironment import TorchGridInterpolator
 
 
 class RLTractEnvironment(gym.Env):
     def __init__(self, device, seeds=None, step_width=0.8, dataset='100307', grid_dim=(3, 3, 3),
                  max_l2_dist_to_state=0.1, tracking_in_RAS=True, fa_threshold=0.1, b_val=1000, 
                  odf_state=True, odf_mode="CSD", action_space=100, pFolderBundles = "data/gt_bundles/"):
-        print("DEPRECATED! Dont use anymore.")
+        print("Will be deprecated by NARLTractEnvironment as soon as Jos fixes all bugs in the reward function.")
         self.state_history = None
         self.reference_seed_point_ijk = None
         self.points_visited = None
@@ -60,6 +61,12 @@ class RLTractEnvironment(gym.Env):
         self.odf_interpolator = None
         self.sh_coefficient = None
         self.odf_mode = odf_mode
+
+        # build DWI object by interpolating at all IJK coordinates
+        interpol_pts = None
+        # permute into CxHxWxD
+        self.dwi = torch.from_numpy(Resample100().process(self.dataset, None, self.dataset.dwi)).to(device=device).float()
+        
 
         np.random.seed(42)
         action_space = action_space 
@@ -117,8 +124,15 @@ class RLTractEnvironment(gym.Env):
             #print(" @ " + pFibre)
             fibers.append(FiberBundleDataset(path_to_files=pFibre, dataset = self.dataset).tractMask)
 
-        self.tractMasksAllBundles = torch.stack(fibers, dim = 0).to(self.device)
-        
+        ## Define our interpolators
+        self.tractMasks = torch.stack(fibers, dim = 0).to(self.device).permute((1,2,3,0)) # [X,Y,Z,C]
+        print(self.tractMasks.shape)
+        self.tractMask_interpolator = TorchGridInterpolator(self.tractMasks)
+        self.binary_mask = torch.from_numpy(self.dataset.binary_mask).to(device=device)
+        self.fa_interpolator = TorchGridInterpolator(torch.from_numpy(self.dataset.fa).to(device=device).unsqueeze(-1).float())
+        self.dwi_interpolator = TorchGridInterpolator(self.dwi)
+
+
         # -- set default values --
         self.reset()
 
@@ -144,40 +158,32 @@ class RLTractEnvironment(gym.Env):
             odf = self.dti_fit.odf(self.sphere_odf)
 
         # -- set up interpolator for odf evaluation
-        x_range = np.arange(odf.shape[0])
-        y_range = np.arange(odf.shape[1])
-        z_range = np.arange(odf.shape[2])
-
-        self.odf_interpolator = RegularGridInterpolator((x_range, y_range, z_range), odf)
-
-        # print("Computing pmf")
-        # self.pmf = odf.clip(min=0)
+        odf = torch.from_numpy(odf).to(device=self.device).float()
+        self.odf_interpolator = TorchGridInterpolator(odf)
 
 
 
 
     def interpolate_dwi_at_state(self, stateCoordinates):
-        # TODO: maybe stay in RAS all the time then no need to transfer to IJK
-        ras_points = self.dataset.to_ras(stateCoordinates)  # Transform state to World RAS+ coordinate system
+        # torch
+        ijk_pts = self.grid + stateCoordinates
+        new_shape = (*ijk_pts.shape[:-1], -1)
 
-        ras_points = self.grid + ras_points
+        interpolated_dwi = self.dwi_interpolator(ijk_pts)
+        interpolated_dwi = interpolated_dwi.reshape(new_shape)
 
-        try:
-            interpolated_dwi = self.dataset.get_interpolated_dwi(ras_points, postprocessing=self.dwi_postprocessor)
-        except PointOutsideOfDWIError:
-            return None
-        interpolated_dwi = np.rollaxis(interpolated_dwi, 3)  # CxWxHxD
-        # interpolated_dwi = self.dtype(interpolated_dwi).to(self.device)
         return interpolated_dwi
 
 
     def interpolate_odf_at_state(self, stateCoordinates):
+        # torch
         if self.odf_interpolator is None:
             self._init_odf()
 
-        ijk_pts = self.grid + stateCoordinates.cpu().detach().numpy()
-        interpol_odf = self.odf_interpolator(ijk_pts)
-        interpol_odf = np.rollaxis(interpol_odf, 3)
+        new_shape = (*stateCoordinates.shape[:-1], -1)
+
+        interpol_odf = self.odf_interpolator(stateCoordinates)
+        interpol_odf = interpol_odf.reshape(new_shape)
         return interpol_odf
 
 
@@ -205,35 +211,15 @@ class RLTractEnvironment(gym.Env):
         next_position = cur_position + self.step_width * cur_tangent
         next_state = TractographyState(next_position, self.state_interpol_func)
 
-        local_reward_na = interpolate3dAt(self.tractMasksAllBundles, cur_position.view(1,-1)).squeeze() 
-        
-        self.na_reward_history[self.stepCounter-1, :] = local_reward_na
-        #print("mu hist", self.stepCounter, torch.mean(self.na_reward_history[0:self.stepCounter-1, :], dim = 0))
-
         # -- REWARD --
-        # compute reward based on
-        # I. We basically take the normalized odf value corresponding to the encoded (action) tangent as reward
-        # It is normalized in a way such that its maximum equals 1 Crucial assumption is that self.directions ==
-        # self.directions_odf
-        odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(self.directions_odf.shape[0])
-        reward = odf_cur / torch.max(odf_cur)
-        reward = reward[action]
-
-        # II. cosine similarity of current tangent to previous tangent 
-        #     => Agent should prefer going straight
         prev_tangent = None
         if self.stepCounter > 1:
             # DIRTY: .to(self.device) in next line... one element in history is not on device 
             prev_tangent = self.state_history[-1].getCoordinate().to(self.device) - self.state_history[-2].getCoordinate().to(self.device)
             prev_tangent = prev_tangent.view(-1, 3)
             prev_tangent = prev_tangent / torch.sqrt(torch.sum(prev_tangent ** 2, dim=1))  # normalize to unit vector
-            cos_similarity = abs(torch.nn.functional.cosine_similarity(prev_tangent, cur_tangent))
-            reward = (reward * cos_similarity).squeeze()
-            if cos_similarity <= 0.:
-                return next_state, reward, True, {}
-
-        #@todo: replace the following lines by a call to reward_for_state_action_pair(-)
-        #reward_sap = self.reward_for_state_action_pair(self.state, prev_tangent, action)
+        
+        reward = self.reward_for_state_action_pair(self.state, prev_tangent, action)
             
         # -- book keeping --
         self.state_history.append(next_state)
@@ -245,32 +231,39 @@ class RLTractEnvironment(gym.Env):
     def reward_for_state(self, state, prev_direction):
         my_position = state.getCoordinate().squeeze(0).to(self.device)
         # -- main peak from ODF --
-        pmf_cur = self.interpolate_odf_at_state(my_position)[:, 1, 1, 1]
-        pmf_cur = torch.from_numpy(pmf_cur).to(self.device)
+        #pmf_cur = self.interpolate_odf_at_state(my_position)[:, 1, 1, 1]
+        #TODO: check if shape of @my_position matches the expected shape
+        pmf_cur = self.interpolate_odf_at_state(my_position)
         reward = pmf_cur / torch.max(pmf_cur)
         peak_indices = self._get_odf_peaks(reward, window_width=int(self.action_space.n/3))
         mask = torch.zeros_like(reward).to(self.device)
         mask[peak_indices] = 1
         reward *= mask
         if prev_direction is not None:
-            reward = reward * abs(torch.nn.functional.cosine_similarity(self.directions, prev_direction.view(1,-1))).view(1,-1)
-        
+            reward = reward * abs(torch.nn.functional.cosine_similarity(self.directions, prev_direction.view(1,-1))).view(-1) # noActions
         # neuroanatomical reward
         next_pos = my_position.view(1,-1) + self.directions # gets next positions for all directions actions X 3
-        local_reward_na = interpolate3dAt(self.tractMasksAllBundles, next_pos).squeeze()  # no_tracts X actions
-        self.na_reward_history[self.stepCounter-1, :] = torch.max(local_reward_na, dim = 0) # store local reward
+        #local_reward_na = interpolate3dAt(self.tractMasksAllBundles, next_pos).squeeze()  # no_tracts X actions
         #self.na_reward_history[self.stepCounter, :] = local_reward_na
         #reward_na = torch.mean(self.na_reward_history[0:self.stepCounter, :], dim = 0)
         #reward_na = torch.max(reward_na)
         #reward_na_idx = torch.argmax(reward_na)
         #print("[%d] dominant bundle: %s" % (self.stepCounter, self.bundleNames[reward_na_idx]))
-        
-        reward_na_mu_hist = torch.mean(self.na_reward_history[0:self.stepCounter-1, :], dim = 0).view(-1, 1) # no_tracts X 1
-        local_reward_na = local_reward_na + reward_na_mu_hist
-        reward_na, _ = torch.max(local_reward_na, dim = 0)       
-        reward_na = reward_na.view(1,-1) # marginalize tracts, to get 1 x noActions
-        reward_na_arg = torch.argmax(local_reward_na, dim = 0) # get dominant tract per action
-        return (reward + reward_na).cpu().numpy()
+
+        #TODO: check if shape of @next_pos matches the expected shape
+        #print(next_pos.shape)
+        local_reward_na = self.tractMask_interpolator(next_pos) # noActions x noTracts
+        #print("local_reward_na", local_reward_na.shape)
+        #print("self.na_reward_history", self.na_reward_history.shape)
+        reward_na_mu_hist = torch.mean(self.na_reward_history[0:self.stepCounter-1, :], dim = 0).view(1,-1) # 1 x no_tracts
+        #print("reward_na_mu_hist", reward_na_mu_hist.shape)
+        local_reward_na = local_reward_na + reward_na_mu_hist # noActions x noTracts
+        #print("local_reward_na", local_reward_na.shape)
+        reward_na, _ = torch.max(local_reward_na, dim = 1) # # marginalize tracts
+        reward_na = reward_na.view(-1) # noActions 
+        # reward_na_arg = torch.argmax(local_reward_na, dim = 0) # get dominant tract per action        
+        reward = reward + reward_na
+        return reward
 
     
     def reward_for_state_action_pair(self, state, prev_direction, action):
@@ -280,9 +273,10 @@ class RLTractEnvironment(gym.Env):
     
     def _get_best_action(self, state, prev_direction):
         reward = self.reward_for_state(state, prev_direction)
-        return np.argmax(reward)#best_action_d
+        return torch.argmax(reward)
 
     
+    #@TODO: improve documentation
     def _get_odf_peaks(self, odf, window_width=31):
         odf = odf.squeeze(0)
         odf_diff = ((odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1])).type(torch.uint8).to(self.device)
@@ -300,9 +294,9 @@ class RLTractEnvironment(gym.Env):
             all_states = []
             self.reset(seed_index=i)
             state = self.state  # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
-            seed_position = state.getCoordinate().squeeze().to(self.device)
+            seed_position = state.getCoordinate().to(self.device)
             current_direction = None
-            all_states.append(seed_position)
+            all_states.append(seed_position.squeeze(0))
 
             # -- forward tracking --
             terminal = False
@@ -384,69 +378,9 @@ class RLTractEnvironment(gym.Env):
         self.reference_seed_point_ijk = reference_seed_point_ijk
         self.state = TractographyState(self.reference_seed_point_ijk, self.state_interpol_func)
         self.state_history = deque([self.state]*4, maxlen=4)
-        self.na_reward_history = torch.zeros((self.maxSteps, self.tractMasksAllBundles.shape[0])).to(self.device)
+        self.na_reward_history = torch.zeros((self.maxSteps, self.tractMasks.shape[-1])).to(self.device)
 
         return self.get_observation_from_state(self.state)
 
     def render(self, mode="human"):
         pass
-    
-    
-    '''@deprecated
-    def _set_adjacency_matrix(self, sphere, cos_similarity):
-        """Creates a dictionary where each key is a direction from sphere and
-        each value is a boolean array indicating which directions are less than
-        max_angle degrees from the key"""
-        matrix = np.dot(sphere.vertices, sphere.vertices.T)
-        matrix = abs(matrix) >= cos_similarity
-        keys = [tuple(v) for v in sphere.vertices]
-        adj_matrix = dict(zip(keys, matrix))
-        keys = [tuple(-v) for v in sphere.vertices]
-        adj_matrix.update(zip(keys, matrix))
-        self._adj_matrix = adj_matrix
-    
-    
-    # switch reference streamline of environment
-    # @TODO: optimize runtime
-    def switch_streamline(self, streamline):
-        self.line = streamline
-        self.referenceStreamline_ijk = self.dtype(np.array(streamline.coords[:])).to(self.device)
-        self.step_angles = []
-    
-    
-    def _get_multi_best_action_odf(self, my_position, K=3):
-        my_odf = self.odf_interpolator(my_position).squeeze()
-        k_largest = np.argpartition(my_odf.squeeze(), -K)[-K:]
-        peak_dirs_torch = self.directions_odf[k_largest].view(K, 3)
-        rewards = torch.stack(
-            [abs(torch.nn.functional.cosine_similarity(peak_dirs_torch[k:k + 1, :], self.directions.view(-1, 3))) for k
-             in range(K)])
-        return rewards
-        
-        def interpolate_pmf_at_state(self, stateCoordinates):
-        if self.sh_coefficient is None:
-            self._init_shm_coefficient()
-
-        coefficient = trilinear_interpolate4d(self.sh_coefficient, stateCoordinates)
-        pmf = np.dot(self._B, coefficient)
-        pmf.clip(0, out=pmf)
-        return pmf
-        
-   
-   def _init_shm_coefficient(self, sh_basis_type=None):
-        print("Initialising spherical harmonics")
-        self.dti_model = dti.TensorModel(self.dataset.gtab, fit_method='LS')
-
-        peaks = peaks_from_model(model=self.dti_model, data=self.dataset.dwi, sphere=self.sphere,
-                                 relative_peak_threshold=.2, min_separation_angle=25, mask=self.dataset.binary_mask,
-                                 npeaks=2)
-
-        self.sh_coefficient = peaks.shm_coeff
-        sh_order = order_from_ncoef(self.sh_coefficient.shape[-1])
-        try:
-            basis = sph_harm_lookup[sh_basis_type]
-        except KeyError:
-            raise ValueError("%s is not a known basis type." % sh_basis_type)
-
-        self._B, m, n = basis(sh_order, self.sphere.theta, self.sphere.phi)
-    '''

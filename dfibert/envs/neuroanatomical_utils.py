@@ -14,7 +14,6 @@ sys.path.insert(0, '..')
 from collections import deque
 
 from dfibert.tracker.nn.rl import Agent, DQN
-import dfibert.envs.RLTractEnvironment as RLTe
 from dfibert.tracker import save_streamlines, load_streamlines
 from dfibert.envs._state import TractographyState
 from tqdm import trange
