@@ -11,7 +11,7 @@ sys.path.insert(0,'..')
 
 from dfibert.tracker.nn.rainbow_agent import DQNAgent
 
-import dfibert.envs.RLTractEnvironment as RLTe
+import dfibert.envs.RLTractEnvironment_fast as RLTe
 
 
 def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamma=0.99, network_update_every=10000, learning_rate=0.0000625, checkpoint_every=200000):
@@ -24,8 +24,8 @@ def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamm
     seeds_CST = torch.from_numpy(seeds_CST)
 
     env = RLTe.RLTractEnvironment(dataset = 'ISMRM', step_width=0.2,
-                                  device = 'cpu', seeds = seeds_CST, action_space=20,
-                                  tracking_in_RAS = False, odf_state = False, odf_mode = "CSD")
+                                  device = device, seeds = seeds_CST, action_space=20,
+                                  tracking_in_RAS = False, odf_state = False, odf_mode = "DTI")
 
     print("..done!")
     print("Init agent..")
@@ -54,8 +54,8 @@ def resume(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gam
     seeds_CST = torch.from_numpy(seeds_CST)
 
     env = RLTe.RLTractEnvironment(dataset = 'ISMRM', step_width=0.2,
-                                  device = 'cpu', seeds = seeds_CST, action_space=20,
-                                  tracking_in_RAS = False, odf_state = False, odf_mode = "CSD")
+                                  device = device, seeds = seeds_CST, action_space=20,
+                                  tracking_in_RAS = False, odf_state = False, odf_mode = "DTI")
 
     print("..done!")
     print("Init agent..")

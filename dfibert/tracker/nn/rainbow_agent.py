@@ -524,8 +524,10 @@ class DQNAgent:
         next_state, reward, done, _ = self.env.step(action, backwards)
         #### not needed if environment is moved to gpu
         if not torch.is_tensor(next_state):
+            print("needed to tensor() next_state")
             next_state = torch.tensor(next_state, dtype=torch.float32, device=self.device)
         if not torch.is_tensor(reward):
+            print("needed to tensor() reward")
             reward = torch.tensor(reward, dtype=torch.int64, device=self.device)
         if not torch.is_tensor(done):
             done = torch.tensor(done, dtype=torch.bool, device=self.device)
@@ -554,6 +556,8 @@ class DQNAgent:
         indices = samples["indices"]
         
         # 1-step Learning loss
+        print("-- update model --")
+        print(samples)
         elementwise_loss = self._compute_dqn_loss(samples, self.gamma)
         
         # PER: importance sampling before average
@@ -577,8 +581,10 @@ class DQNAgent:
         self.optimizer.step()
         
         # PER: update priorities
+        print("element wise loss: ", elementwise_loss)
         loss_for_prior = elementwise_loss
         new_priorities = loss_for_prior + self.prior_eps
+        print("new priorities: ", elementwise_loss)
         self.memory.update_priorities(indices, new_priorities)
         
         # NoisyNet: reset noise
@@ -591,9 +597,8 @@ class DQNAgent:
         """Train the agent."""
         self.is_test = False
         
-        # TODO: If env is moved to GPU, the following line can be changed to
+
         state = self.env.reset()
-        #state = torch.tensor(self.env.reset(), dtype=torch.float32, device=self.device)
         backwards = False
         update_cnt = 0
         score = 0
@@ -627,6 +632,7 @@ class DQNAgent:
 
             # if training is ready
             if len(self.memory) >= self.batch_size:
+                print(step_idx)
                 loss = self.update_model()
                 losses.append(loss)
                 update_cnt += 1
