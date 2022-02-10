@@ -30,7 +30,7 @@ from .NARLTractEnvironment import TorchGridInterpolator
 
 class RLTractEnvironment(gym.Env):
     def __init__(self, device, seeds=None, step_width=0.8, dataset='100307', grid_dim=(3, 3, 3),
-                 max_l2_dist_to_state=0.1, tracking_in_RAS=True, fa_threshold=0.1, b_val=1000, 
+                 max_l2_dist_to_state=0.1, tracking_in_RAS=False, fa_threshold=0.1, b_val=1000, 
                  odf_state=True, odf_mode="CSD", action_space=100, pFolderBundles = "data/gt_bundles/"):
         print("Will be deprecated by NARLTractEnvironment as soon as Jos fixes all bugs in the reward function.")
         self.state_history = None
@@ -66,7 +66,6 @@ class RLTractEnvironment(gym.Env):
         interpol_pts = None
         # permute into CxHxWxD
         self.dwi = torch.from_numpy(Resample100().process(self.dataset, None, self.dataset.dwi)).to(device=device).float()
-        
 
         np.random.seed(42)
         action_space = action_space 
@@ -130,8 +129,8 @@ class RLTractEnvironment(gym.Env):
         self.tractMask_interpolator = TorchGridInterpolator(self.tractMasks)
         self.binary_mask = torch.from_numpy(self.dataset.binary_mask).to(device=device)
         self.fa_interpolator = TorchGridInterpolator(torch.from_numpy(self.dataset.fa).to(device=device).unsqueeze(-1).float())
-        self.dwi_interpolator = TorchGridInterpolator(self.dwi)
-
+        self.dwi_interpolator = TorchGridInterpolator(self.dwi.to(self.device))
+        self.brainMask_interpolator = TorchGridInterpolator(torch.from_numpy(self.dataset.binary_mask).to(self.device).unsqueeze(-1).float())
 
         # -- set default values --
         self.reset()
@@ -162,8 +161,6 @@ class RLTractEnvironment(gym.Env):
         self.odf_interpolator = TorchGridInterpolator(odf)
 
 
-
-
     def interpolate_dwi_at_state(self, stateCoordinates):
         # torch
         ijk_pts = self.grid + stateCoordinates
@@ -189,6 +186,8 @@ class RLTractEnvironment(gym.Env):
 
     def step(self, action, direction="forward"):
         self.stepCounter += 1
+        cur_position = self.state.getCoordinate().view(-1, 3).to(self.device)
+
 
         # -- Termination conditions --
         # I. number of steps larger than maximum
@@ -196,16 +195,16 @@ class RLTractEnvironment(gym.Env):
             return self.get_observation_from_state(self.state), 0., True, {}
 
         # II. fa below threshold? stop tracking
-        if self.dataset.get_fa(self.state.getCoordinate().cpu()) < self.fa_threshold:
+        if(self.fa_interpolator(cur_position) < self.fa_threshold):
+        #if self.dataset.get_fa(self.state.getCoordinate().cpu()) < self.fa_threshold:
             return self.get_observation_from_state(self.state), 0., True, {}
         
-        #@todo: III. leaving brain mask
-        #if self.dataset.get_fa(self.state.getCoordinate()) < self.fa_threshold:
-        #    return self.get_observation_from_state(self.state), 0., True, {}
+        # III. leaving brain mask
+        if(self.brainMask_interpolator(cur_position) == 0):
+            return self.get_observation_from_state(self.state), 0., True, {}
 
         # -- Tracking --
-        cur_tangent = self.directions[action].view(-1, 3) # action space = Hemisphere
-        cur_position = self.state.getCoordinate().view(-1, 3).to(self.device)
+        cur_tangent = self.directions[action].view(-1, 3) # get direction from action (action = vertex id on (half)sphere)
         if(direction == "backward"):
             cur_tangent = cur_tangent * -1
         next_position = cur_position + self.step_width * cur_tangent
@@ -214,13 +213,14 @@ class RLTractEnvironment(gym.Env):
         # -- REWARD --
         prev_tangent = None
         if self.stepCounter > 1:
-            # DIRTY: .to(self.device) in next line... one element in history is not on device 
-            prev_tangent = self.state_history[-1].getCoordinate().to(self.device) - self.state_history[-2].getCoordinate().to(self.device)
+            # The following ops are done in CPU. The performance shouldnt suffer from that and we save 1 host-device copy.
+            prev_tangent = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
             prev_tangent = prev_tangent.view(-1, 3)
             prev_tangent = prev_tangent / torch.sqrt(torch.sum(prev_tangent ** 2, dim=1))  # normalize to unit vector
+            prev_tangent = prev_tangent.to(self.device)
         
         reward = self.reward_for_state_action_pair(self.state, prev_tangent, action)
-            
+
         # -- book keeping --
         self.state_history.append(next_state)
         self.state = next_state
@@ -230,26 +230,23 @@ class RLTractEnvironment(gym.Env):
 
     def reward_for_state(self, state, prev_direction):
         my_position = state.getCoordinate().squeeze(0).to(self.device)
-        # -- main peak from ODF --
-        #pmf_cur = self.interpolate_odf_at_state(my_position)[:, 1, 1, 1]
-        #TODO: check if shape of @my_position matches the expected shape
+        # -- main peaks from ODF --
         pmf_cur = self.interpolate_odf_at_state(my_position)
         reward = pmf_cur / torch.max(pmf_cur)
-        peak_indices = self._get_odf_peaks(reward, window_width=int(self.action_space.n/3))
-        mask = torch.zeros_like(reward).to(self.device)
-        mask[peak_indices] = 1
-        reward *= mask
+        
+        ## ablation study found that peak finding not required
+        #peak_indices = self._get_odf_peaks(reward, window_width=int(self.action_space.n/3))
+        #mask = torch.zeros_like(reward, device = self.device)
+        #mask[peak_indices] = 1
+        #reward *= mask
+        
+        # -- limit angular deviation --
         if prev_direction is not None:
             reward = reward * abs(torch.nn.functional.cosine_similarity(self.directions, prev_direction.view(1,-1))).view(-1) # noActions
         # neuroanatomical reward
         next_pos = my_position.view(1,-1) + self.directions # gets next positions for all directions actions X 3
-        #local_reward_na = interpolate3dAt(self.tractMasksAllBundles, next_pos).squeeze()  # no_tracts X actions
-        #self.na_reward_history[self.stepCounter, :] = local_reward_na
-        #reward_na = torch.mean(self.na_reward_history[0:self.stepCounter, :], dim = 0)
-        #reward_na = torch.max(reward_na)
-        #reward_na_idx = torch.argmax(reward_na)
-        #print("[%d] dominant bundle: %s" % (self.stepCounter, self.bundleNames[reward_na_idx]))
 
+        # -- neuroanatomical reward --
         #TODO: check if shape of @next_pos matches the expected shape
         #print(next_pos.shape)
         local_reward_na = self.tractMask_interpolator(next_pos) # noActions x noTracts
@@ -279,10 +276,10 @@ class RLTractEnvironment(gym.Env):
     #@TODO: improve documentation
     def _get_odf_peaks(self, odf, window_width=31):
         odf = odf.squeeze(0)
-        odf_diff = ((odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1])).type(torch.uint8).to(self.device)
+        odf_diff = ((odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1])).type(torch.uint8) #.to(self.device)
         if window_width % 2 == 0.:
             window_width += 1
-        peak_mask = torch.cat([torch.zeros(1, dtype=torch.uint8).to(self.device), odf_diff, torch.zeros(1, dtype=torch.uint8).to(self.device)], dim=0)
+        peak_mask = torch.cat([torch.zeros(1, dtype=torch.uint8, device = self.device), odf_diff, torch.zeros(1, dtype=torch.uint8, device = self.device)], dim=0)
         peaks = torch.nn.functional.max_pool1d_with_indices(odf.view(1,1,-1), window_width, 1, padding=window_width//2)[1].unique()
         peak_indices = peaks[peak_mask[peaks].nonzero()]
         return peak_indices
@@ -375,10 +372,10 @@ class RLTractEnvironment(gym.Env):
         self.past_reward = 0
         self.points_visited = 1  # position_index
 
-        self.reference_seed_point_ijk = reference_seed_point_ijk
+        self.reference_seed_point_ijk = reference_seed_point_ijk.to(self.device)
         self.state = TractographyState(self.reference_seed_point_ijk, self.state_interpol_func)
         self.state_history = deque([self.state]*4, maxlen=4)
-        self.na_reward_history = torch.zeros((self.maxSteps, self.tractMasks.shape[-1])).to(self.device)
+        self.na_reward_history = torch.zeros((self.maxSteps, self.tractMasks.shape[-1]), device = self.device) 
 
         return self.get_observation_from_state(self.state)
 
