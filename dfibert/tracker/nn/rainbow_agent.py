@@ -343,17 +343,23 @@ class Network(nn.Module):
 
         # set common feature layer
         self.feature_layer = nn.Sequential(
-            nn.Linear(in_dim, 128), 
+            nn.Linear(in_dim, 512), 
+            nn.ReLU(),
+            nn.Linear(512, 512), 
+            nn.ReLU(),
+            nn.Linear(512, 512), 
+            nn.ReLU(),
+            nn.Linear(512, 512), 
             nn.ReLU(),
         )
         
         # set advantage layer
-        self.advantage_hidden_layer = NoisyLinear(128, 128)
-        self.advantage_layer = NoisyLinear(128, out_dim * atom_size)
+        self.advantage_hidden_layer = NoisyLinear(512, 512)
+        self.advantage_layer = NoisyLinear(512, out_dim * atom_size)
 
         # set value layer
-        self.value_hidden_layer = NoisyLinear(128, 128)
-        self.value_layer = NoisyLinear(128, atom_size)
+        self.value_hidden_layer = NoisyLinear(512, 512)
+        self.value_layer = NoisyLinear(512, atom_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward method implementation."""
@@ -556,8 +562,8 @@ class DQNAgent:
         indices = samples["indices"]
         
         # 1-step Learning loss
-        print("-- update model --")
-        print(samples)
+        #print("-- update model --")
+        #print(samples)
         elementwise_loss = self._compute_dqn_loss(samples, self.gamma)
         
         # PER: importance sampling before average
@@ -581,10 +587,10 @@ class DQNAgent:
         self.optimizer.step()
         
         # PER: update priorities
-        print("element wise loss: ", elementwise_loss)
+        #print("element wise loss: ", elementwise_loss)
         loss_for_prior = elementwise_loss
         new_priorities = loss_for_prior + self.prior_eps
-        print("new priorities: ", elementwise_loss)
+        #print("new priorities: ", elementwise_loss)
         self.memory.update_priorities(indices, new_priorities)
         
         # NoisyNet: reset noise

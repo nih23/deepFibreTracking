@@ -90,6 +90,7 @@ class RLTractEnvironment(gym.Env):
         self.dwi_postprocessor = Resample(sphere=get_sphere('repulsion100'))  # resample(sphere=sphere)
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
+        self.grid = torch.from_numpy(self.grid).to(self.device)
         self.maxL2dist_to_State = max_l2_dist_to_state
         self.tracking_in_RAS = tracking_in_RAS
 
@@ -220,6 +221,7 @@ class RLTractEnvironment(gym.Env):
             prev_tangent = prev_tangent.to(self.device)
         
         reward = self.reward_for_state_action_pair(self.state, prev_tangent, action)
+        #print("reward for state action pair: ", reward)
 
         # -- book keeping --
         self.state_history.append(next_state)
@@ -249,16 +251,25 @@ class RLTractEnvironment(gym.Env):
         # -- neuroanatomical reward --
         #TODO: check if shape of @next_pos matches the expected shape
         #print(next_pos.shape)
+        print(self.seed_index)
+        print(my_position.view(1,-1))
         local_reward_na = self.tractMask_interpolator(next_pos) # noActions x noTracts
         #print("local_reward_na", local_reward_na.shape)
         #print("self.na_reward_history", self.na_reward_history.shape)
         reward_na_mu_hist = torch.mean(self.na_reward_history[0:self.stepCounter-1, :], dim = 0).view(1,-1) # 1 x no_tracts
+        
+
+        #print("reward na mu hist: ", reward_na_mu_hist)
         #print("reward_na_mu_hist", reward_na_mu_hist.shape)
         local_reward_na = local_reward_na + reward_na_mu_hist # noActions x noTracts
+        #print("local reward + mu hist: ", local_reward_na)
         #print("local_reward_na", local_reward_na.shape)
         reward_na, _ = torch.max(local_reward_na, dim = 1) # # marginalize tracts
+        #print("reward na: ", reward_na)
         reward_na = reward_na.view(-1) # noActions 
-        # reward_na_arg = torch.argmax(local_reward_na, dim = 0) # get dominant tract per action        
+        print("reward na after view: ", reward_na)
+        # reward_na_arg = torch.argmax(local_reward_na, dim = 0) # get dominant tract per action
+        #print("local reward: ", reward, "na reward: ", reward_na)    
         reward = reward + reward_na
         return reward
 
@@ -344,7 +355,7 @@ class RLTractEnvironment(gym.Env):
 
 
     def get_observation_from_state(self, state):
-        dwi_values = state#.getValue().flatten()
+        dwi_values = state.getValue().flatten()
         # TODO -> currently only on dwi values, not on past states
         #past_coordinates = np.array(list(self.state_history)).flatten()
         #return np.concatenate((dwi_values, past_coordinates))
