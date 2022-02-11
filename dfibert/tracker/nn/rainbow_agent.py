@@ -533,7 +533,6 @@ class DQNAgent:
             print("needed to tensor() next_state")
             next_state = torch.tensor(next_state, dtype=torch.float32, device=self.device)
         if not torch.is_tensor(reward):
-            print("needed to tensor() reward")
             reward = torch.tensor(reward, dtype=torch.int64, device=self.device)
         if not torch.is_tensor(done):
             done = torch.tensor(done, dtype=torch.bool, device=self.device)
@@ -638,7 +637,6 @@ class DQNAgent:
 
             # if training is ready
             if len(self.memory) >= self.batch_size:
-                print(step_idx)
                 loss = self.update_model()
                 losses.append(loss)
                 update_cnt += 1

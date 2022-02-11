@@ -212,6 +212,7 @@ class RLTractEnvironment(gym.Env):
         next_state = TractographyState(next_position, self.state_interpol_func)
 
         # -- REWARD --
+        '''
         prev_tangent = None
         if self.stepCounter > 1:
             # The following ops are done in CPU. The performance shouldnt suffer from that and we save 1 host-device copy.
@@ -219,9 +220,9 @@ class RLTractEnvironment(gym.Env):
             prev_tangent = prev_tangent.view(-1, 3)
             prev_tangent = prev_tangent / torch.sqrt(torch.sum(prev_tangent ** 2, dim=1))  # normalize to unit vector
             prev_tangent = prev_tangent.to(self.device)
+        '''
         
-        reward = self.reward_for_state_action_pair(self.state, prev_tangent, action)
-        #print("reward for state action pair: ", reward)
+        reward = self.reward_for_state_action_pair(self.state, action, direction) # prev_tangent => None
 
         # -- book keeping --
         self.state_history.append(next_state)
@@ -230,61 +231,61 @@ class RLTractEnvironment(gym.Env):
         return self.get_observation_from_state(next_state), reward, False, {}
 
 
-    def reward_for_state(self, state, prev_direction):
+    def reward_for_state(self, state, direction, prev_direction = None):
         my_position = state.getCoordinate().squeeze(0).to(self.device)
         # -- main peaks from ODF --
         pmf_cur = self.interpolate_odf_at_state(my_position)
         reward = pmf_cur / torch.max(pmf_cur)
         
-        ## ablation study found that peak finding not required
-        #peak_indices = self._get_odf_peaks(reward, window_width=int(self.action_space.n/3))
-        #mask = torch.zeros_like(reward, device = self.device)
-        #mask[peak_indices] = 1
-        #reward *= mask
+        #if(prev_direction != None):
+        #    print("[Warning] cosine similarity loss not used anymore due to resutls of ablation study.")
         
+        ## ablation study on CST found that peak finding not required
+        '''
+        peak_indices = self._get_odf_peaks(reward, window_width=int(self.action_space.n/3))
+        mask = torch.zeros_like(reward, device = self.device)
+        mask[peak_indices] = 1
+        reward *= mask
+        '''
+        
+        ## ablation study on CST found that angular deviation not needed
+        '''
         # -- limit angular deviation --
         if prev_direction is not None:
             reward = reward * abs(torch.nn.functional.cosine_similarity(self.directions, prev_direction.view(1,-1))).view(-1) # noActions
         # neuroanatomical reward
-        next_pos = my_position.view(1,-1) + self.directions # gets next positions for all directions actions X 3
-
-        # -- neuroanatomical reward --
-        #TODO: check if shape of @next_pos matches the expected shape
-        #print(next_pos.shape)
-        print(self.seed_index)
-        print(my_position.view(1,-1))
-        local_reward_na = self.tractMask_interpolator(next_pos) # noActions x noTracts
-        #print("local_reward_na", local_reward_na.shape)
-        #print("self.na_reward_history", self.na_reward_history.shape)
-        reward_na_mu_hist = torch.mean(self.na_reward_history[0:self.stepCounter-1, :], dim = 0).view(1,-1) # 1 x no_tracts
+        '''
         
-
-        #print("reward na mu hist: ", reward_na_mu_hist)
-        #print("reward_na_mu_hist", reward_na_mu_hist.shape)
+        
+        # -- neuroanatomical reward --
+        orientation = self.step_width * self.directions
+        if(direction == "backward"):
+            orientation = -1 * orientation
+        next_pos = my_position.view(1,-1) + orientation # gets next positions for all directions actions X 3
+        local_reward_na = self.tractMask_interpolator(next_pos) # noActions x noTracts
+       
+        reward_na_mu_hist = torch.mean(self.na_reward_history[0:max(self.stepCounter-1,1), :], dim = 0).view(1,-1) # 1 x no_tracts
         local_reward_na = local_reward_na + reward_na_mu_hist # noActions x noTracts
-        #print("local reward + mu hist: ", local_reward_na)
-        #print("local_reward_na", local_reward_na.shape)
         reward_na, _ = torch.max(local_reward_na, dim = 1) # # marginalize tracts
-        #print("reward na: ", reward_na)
         reward_na = reward_na.view(-1) # noActions 
-        print("reward na after view: ", reward_na)
-        # reward_na_arg = torch.argmax(local_reward_na, dim = 0) # get dominant tract per action
-        #print("local reward: ", reward, "na reward: ", reward_na)    
-        reward = reward + reward_na
-        return reward
+
+        # reward_na_arg = torch.argmax(local_reward_na, dim = 0) # get dominant tract per action        
+
+        return reward + reward_na # ODF + neuroanatomical reward
 
     
-    def reward_for_state_action_pair(self, state, prev_direction, action):
-        reward = self.reward_for_state(state, prev_direction)
+    def reward_for_state_action_pair(self, state, action, direction, prev_direction = None):
+        reward = self.reward_for_state(state, direction, prev_direction)
         return reward[action]
 
     
-    def _get_best_action(self, state, prev_direction):
-        reward = self.reward_for_state(state, prev_direction)
+    def _get_best_action(self, state, direction="forward", prev_direction = None):
+        reward = self.reward_for_state(state, direction, prev_direction)
         return torch.argmax(reward)
 
-    
+    '''
     #@TODO: improve documentation
+    #deprecated
     def _get_odf_peaks(self, odf, window_width=31):
         odf = odf.squeeze(0)
         odf_diff = ((odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1])).type(torch.uint8) #.to(self.device)
@@ -294,6 +295,7 @@ class RLTractEnvironment(gym.Env):
         peaks = torch.nn.functional.max_pool1d_with_indices(odf.view(1,1,-1), window_width, 1, padding=window_width//2)[1].unique()
         peak_indices = peaks[peak_mask[peaks].nonzero()]
         return peak_indices
+    '''
 
     
     def track(self, with_best_action=True):
@@ -313,7 +315,7 @@ class RLTractEnvironment(gym.Env):
                 # current position
                 # get the best choice from environment
                 if with_best_action:
-                    action = self._get_best_action(state, current_direction)
+                    action = self._get_best_action(state, direction="forward", prev_direction=current_direction)
                 else:
                     raise NotImplementedError
                 # store tangent for next time step
@@ -336,7 +338,7 @@ class RLTractEnvironment(gym.Env):
                 my_position = state.getCoordinate().double().squeeze(0)
                 # get the best choice from environment
                 if with_best_action:
-                    action = self._get_best_action(state, current_direction)
+                    action = self._get_best_action(state, direction="backward", prev_direction=current_direction)
                 else:
                     raise NotImplementedError
                 # store tangent for next time step
