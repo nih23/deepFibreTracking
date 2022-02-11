@@ -66,7 +66,7 @@ def resume(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gam
                     lr = learning_rate,
                     gamma = gamma,
                     device = device,
-                    )
+                    )               
 
     print("..done!")
     print("Resume training..")
@@ -101,11 +101,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.resume:
-        import glob
-        paths = glob.glob(args.path+'*.pt')
-        p_cp = max(paths, key=os.path.getctime)
-
-        resume(p_cp)
+        resume(args.path, checkpoint_every=args.checkpoint_every)
 
     else:
         train(args.path, max_steps=args.max_steps, replay_memory_size=args.replay_memory_size, 

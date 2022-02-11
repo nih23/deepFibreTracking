@@ -598,7 +598,7 @@ class DQNAgent:
 
         return loss.item()
         
-    def train(self, num_steps: int, plotting_interval: int = 200, checkpoint_interval: int = 20000, path: str = "./", losses: list = [], scores: list = [], plot: bool = False):
+    def train(self, num_steps: int, steps_done: int = 1, plotting_interval: int = 200, checkpoint_interval: int = 20000, path: str = "./", losses: list = [], scores: list = [], plot: bool = False):
         """Train the agent."""
         self.is_test = False
         
@@ -609,7 +609,7 @@ class DQNAgent:
         score = 0
 
 
-        for step_idx in range(1, num_steps + 1):
+        for step_idx in range(steps_done, num_steps + 1):
             action = self.select_action(state)
             next_state, reward, done = self.step(action, backwards)
 
@@ -649,7 +649,7 @@ class DQNAgent:
             if plot and step_idx % plotting_interval == 0:
                 self._plot(step_idx, scores, losses)
 
-            if step_idx % checkpoint_interval == 0:
+            if step_idx % checkpoint_interval == 0 and step_idx != steps_done:
                 #print("Step number: ", step_idx, "Avg. reward: ", np.mean(scores[-1000:]))
                 print("Step number: ", step_idx, "Median reward: ", np.median(scores[-1000:]))
                 self._save_model(path, step_idx, scores, losses, num_steps)
@@ -682,12 +682,6 @@ class DQNAgent:
     # def _compute_dqn_loss(self, samples: Dict[str, np.ndarray], gamma: float) -> torch.Tensor:
     def _compute_dqn_loss(self, samples: Dict[str, torch.Tensor], gamma: float) -> torch.Tensor:
         """Return categorical dqn loss."""
-        #device = self.device  # for shortening the following lines
-        # state = torch.Tensor(samples["obs"]).to(device)
-        # next_state = torch.Tensor(samples["next_obs"]).to(device)
-        # action = torch.LongTensor(samples["acts"]).to(device)
-        # reward = torch.Tensor(samples["rews"].reshape(-1, 1)).to(device)
-        # done = torch.Tensor(samples["done"].reshape(-1, 1)).to(device)
         state = samples["obs"]
         next_state = samples["next_obs"]
         action = samples["acts"]
@@ -806,15 +800,15 @@ class DQNAgent:
 
         return num_steps, rewards, losses, max_steps
 
-    def resume_training(self, path, plot: bool = False):
+    def resume_training(self, path, plot: bool = False, checkpoint_interval: int = 2000):
         num_steps, rewards, losses, max_steps = self._load_model(path)
-        remaining_steps = max_steps - num_steps   # set max_steps to remaining amount of steps
+        #remaining_steps = max_steps - num_steps   # set max_steps to remaining amount of steps
 
         path_dir = os.path.dirname(path)        # get the base directory 
         path_dir = os.path.split(path_dir)[0]
 
         print("Resume training at %d / %d steps." % (num_steps, max_steps) )
-        self.train(num_steps=remaining_steps, losses = losses, scores = rewards, path=path_dir, plot=plot)
+        self.train(num_steps=max_steps, steps_done=num_steps, losses = losses, scores = rewards, path=path_dir, checkpoint_interval=checkpoint_interval, plot=plot)
 
     def create_tractogram(self, path: str = './'):
         self.is_test = True                                                 

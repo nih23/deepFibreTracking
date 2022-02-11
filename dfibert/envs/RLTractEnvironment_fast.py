@@ -160,7 +160,7 @@ class RLTractEnvironment(gym.Env):
         # -- set up interpolator for odf evaluation
         odf = torch.from_numpy(odf).to(device=self.device).float()
         self.odf_interpolator = TorchGridInterpolator(odf)
-
+        print("..done!")
 
     def interpolate_dwi_at_state(self, stateCoordinates):
         # torch
