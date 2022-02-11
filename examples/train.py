@@ -14,7 +14,7 @@ from dfibert.tracker.nn.rainbow_agent import DQNAgent
 import dfibert.envs.RLTractEnvironment_fast as RLTe
 
 
-def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamma=0.99, network_update_every=10000, learning_rate=0.0000625, checkpoint_every=200000):
+def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamma=0.99, network_update_every=10000, learning_rate=0.0000625, checkpoint_every=200000, wandb=False):
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Device:", device)
@@ -41,11 +41,11 @@ def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamm
     print("..done!")
     print("Start training...")
 
-    agent.train(num_steps = max_steps, checkpoint_interval=checkpoint_every, path = path, plot=False)
+    agent.train(num_steps = max_steps, checkpoint_interval=checkpoint_every, path = path, plot=False, wandb_log=wandb)
     
 
 
-def resume(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamma=0.99, network_update_every=10000, learning_rate=0.0000625, checkpoint_every=200000):
+def resume(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamma=0.99, network_update_every=10000, learning_rate=0.0000625, checkpoint_every=200000, wandb=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Device:", device)
     print("Init environment..")
@@ -100,13 +100,19 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    if args.wandb:
+        import wandb
+        config = args
+
     if args.resume:
-        resume(args.path, checkpoint_every=args.checkpoint_every)
+        wandb.init(project='defi', entity='pia', resume=True)
+        resume(args.path, checkpoint_every=args.checkpoint_every, wandb=args.wandb)
 
     else:
+        wandb.init(project='defi', entity='pia', config=config)
         train(args.path, max_steps=args.max_steps, replay_memory_size=args.replay_memory_size, 
               batch_size=args.batch_size, gamma=args.gamma, 
               network_update_every=args.network_update_every, learning_rate=args.learning_rate,
-              checkpoint_every=args.checkpoint_every)
+              checkpoint_every=args.checkpoint_every, wandb=args.wandb)
     
         

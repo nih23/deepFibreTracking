@@ -598,16 +598,38 @@ class DQNAgent:
 
         return loss.item()
         
-    def train(self, num_steps: int, steps_done: int = 1, plotting_interval: int = 200, checkpoint_interval: int = 20000, path: str = "./", losses: list = [], scores: list = [], plot: bool = False):
+    def train(self, num_steps: int, steps_done: int = 1, plotting_interval: int = 200, checkpoint_interval: int = 20000, path: str = "./", losses: list = [], scores: list = [], plot: bool = False, wandb_log: bool = False):
         """Train the agent."""
         self.is_test = False
-        
+        if wandb_log:
+            import wandb
+            wandb.config.update = {
+                        "max steps": num_steps,
+                        "network_update_every": self.target_update,
+                        "prior_epsilon": self.prior_eps,
+                        "batch_size": self.batch_size,
+                        "gamma": self.gamma,
+                        "alpha": self.alpha,
+                        "lr": self.lr,
+                        "adam_eps": self.adam_eps,
+                        "beta": self.beta,
+                        "v_min": self.v_min,
+                        "v_max": self.v_max,
+                        "atom_size": self.atom_size,
+                        "n_step": self.n_step,
+                        "support": self.support,
+                        "memory_size": self.memory_size,
+                     }
+
+            wandb.watch(self.dqn, log='all')
+            wandb.watch(self.dqn_target, log='all')
 
         state = self.env.reset()
         backwards = False
         update_cnt = 0
         score = 0
-
+        streamline_len = deque(maxlen=1000)
+        cur_streamline_len = 0
 
         for step_idx in range(steps_done, num_steps + 1):
             action = self.select_action(state)
@@ -633,11 +655,24 @@ class DQNAgent:
                 state = self.env.reset(seed_index)
                 #state = torch.tensor(self.env.reset(seed_index), dtype=torch.float32, device=self.device)
                 scores.append(score)
+                streamline_len.append(cur_streamline_len)
+                if wandb_log:
+                    wandb.log({
+                        'Mean episode reward over past 1000 episodes': np.mean(scores[-1000:]),
+                        'Median episode reward over past 1000 episodes': np.median(scores[-1000:]),
+                        'Mean streamline length over past 1000 episodes': np.mean(list(streamline_len)),
+                        'Median streamline length over past 1000 episodes': np.median(list(streamline_len)),
+                    })
                 score = 0
+                cur_streamline_len = 0
+
+            cur_streamline_len += 1
 
             # if training is ready
             if len(self.memory) >= self.batch_size:
                 loss = self.update_model()
+                if wandb_log:
+                    wandb.log({'Loss': loss})
                 losses.append(loss)
                 update_cnt += 1
                 
@@ -655,6 +690,11 @@ class DQNAgent:
                 self._save_model(path, step_idx, scores, losses, num_steps)
                 
         #self.env.close()
+
+    # def _compare_to_gt(self, num_streamline: int = 5):
+    #     gt_streamlines = []
+    #     agent_streamlines = []
+
                 
     def test(self) -> List[np.ndarray]:
         raise NotImplementedError
@@ -765,6 +805,8 @@ class DQNAgent:
         checkpoint["network"] = self.dqn.state_dict()
         checkpoint["prior_epsilon"] = self.prior_eps
         checkpoint["batch_size"] = self.batch_size
+        checkpoint["learning_rate"] = self.lr
+        checkpoint["adam_eps"] = self.adam_eps
         checkpoint["gamma"] = self.gamma
         checkpoint["alpha"] = self.alpha
         checkpoint["beta"] = self.beta
@@ -787,7 +829,9 @@ class DQNAgent:
         self.dqn.load_state_dict(checkpoint["network"])
         self.dqn_target.load_state_dict(checkpoint["network"])
         self.prior_eps = checkpoint["prior_epsilon"] 
-        self.batch_size = checkpoint["batch_size"] 
+        self.batch_size = checkpoint["batch_size"]
+        self.lr = checkpoint["learning_rate"]
+        self.adam_eps = checkpoint["adam_eps"]
         self.gamma = checkpoint["gamma"]
         self.alpha = checkpoint["alpha"]
         self.beta = checkpoint["beta"]
@@ -800,7 +844,7 @@ class DQNAgent:
 
         return num_steps, rewards, losses, max_steps
 
-    def resume_training(self, path, plot: bool = False, checkpoint_interval: int = 2000):
+    def resume_training(self, path, plot: bool = False, checkpoint_interval: int = 2000, wandb: bool = False):
         num_steps, rewards, losses, max_steps = self._load_model(path)
         #remaining_steps = max_steps - num_steps   # set max_steps to remaining amount of steps
 
@@ -808,7 +852,7 @@ class DQNAgent:
         path_dir = os.path.split(path_dir)[0]
 
         print("Resume training at %d / %d steps." % (num_steps, max_steps) )
-        self.train(num_steps=max_steps, steps_done=num_steps, losses = losses, scores = rewards, path=path_dir, checkpoint_interval=checkpoint_interval, plot=plot)
+        self.train(num_steps=max_steps, steps_done=num_steps, losses = losses, scores = rewards, path=path_dir, checkpoint_interval=checkpoint_interval, plot=plot, wandb_log=wandb)
 
     def create_tractogram(self, path: str = './'):
         self.is_test = True                                                 
