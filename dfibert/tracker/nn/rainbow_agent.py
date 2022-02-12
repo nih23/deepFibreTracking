@@ -678,11 +678,12 @@ class DQNAgent:
                 streamline_len.append(cur_streamline_len)
                 if self.wandb_log:
                     wandb.log({
-                        'Mean episode reward over past 1000 episodes': np.mean(scores[-1000:], step=step_idx),
-                        'Median episode reward over past 1000 episodes': np.median(scores[-1000:], step=step_idx),
-                        'Mean streamline length over past 1000 episodes': np.mean(list(streamline_len, step=step_idx)),
-                        'Median streamline length over past 1000 episodes': np.median(list(streamline_len), step=step_idx)
-                    })
+                        'Mean episode reward over past 1000 episodes': np.mean(scores[-1000:]),
+                        'Median episode reward over past 1000 episodes': np.median(scores[-1000:]),
+                        'Mean streamline length over past 1000 episodes': np.mean(list(streamline_len)),
+                        'Median streamline length over past 1000 episodes': np.median(list(streamline_len))
+                         }, 
+                        step=step_idx)
                 score = 0
                 cur_streamline_len = 0
 

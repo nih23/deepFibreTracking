@@ -127,7 +127,14 @@ def train(dqn, env, batch_size: int = 1024, epochs: int = 1000, lr: float = 1e-4
                 loss.backward()
                 optimizer.step()
 
+                if loss < 0.005:
+                    break
 
+            if( loss < 0.0005):
+                print("Early stop at loss %.4f" % (loss))
+                p_cp = path+'defi_super_%d.pt' % (epoch)
+                save_model(p_cp, model, epoch, loss.item(), noActions)
+                break
             if( (epoch % 50) == 0):
                 p_cp = path+'defi_super_%d.pt' % (epoch)
                 save_model(p_cp, model, epoch, loss.item(), noActions)
