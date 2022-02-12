@@ -67,7 +67,6 @@ class RLTractEnvironment(gym.Env):
         # permute into CxHxWxD
         self.dwi = torch.from_numpy(Resample100().process(self.dataset, None, self.dataset.dwi)).to(device=device).float()
 
-        np.random.seed(42)
         action_space = action_space 
         phi = np.pi * np.random.rand(action_space)
         theta = 2 * np.pi * np.random.rand(action_space)
@@ -309,7 +308,7 @@ class RLTractEnvironment(gym.Env):
 
     def _track_single_streamline(self, index, agent=None):
         all_states = []
-        env.reset(seed_index=index)
+        self.reset(seed_index=index)
         state = self.state  # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
         seed_position = state.getCoordinate().to(self.device)
         current_direction = None
@@ -359,7 +358,7 @@ class RLTractEnvironment(gym.Env):
             if (False in torch.eq(my_coord, my_position)) & (not terminal):
                 all_states.append(my_coord)
 
-        return all_states
+        return all_states, streamline_reward
 
     def get_observation_from_state(self, state):
         dwi_values = state.getValue().flatten()

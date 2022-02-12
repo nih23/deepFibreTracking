@@ -1,7 +1,4 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import gym
 import numpy as np
 import argparse
 import random
@@ -13,8 +10,17 @@ from dfibert.tracker.nn.rainbow_agent import DQNAgent
 
 import dfibert.envs.RLTractEnvironment_fast as RLTe
 
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    np.random.seed(seed)
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
 
-def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamma=0.99, network_update_every=10000, learning_rate=0.0000625, checkpoint_every=200000, wandb=False):
+
+def train(path, pretraining=False, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamma=0.99, network_update_every=10000, learning_rate=0.0000625, checkpoint_every=200000, wandb=False):
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Device:", device)
@@ -40,8 +46,12 @@ def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamm
                     wandb_log=wandb
                     )
     print("..done!")
-    print("Start training...")
 
+    if pretraining:
+        print("Start pretraining..")
+        agent.pretrain(path=path+'super_checkpoints/')
+
+    print("Start DQL...")
     agent.train(num_steps = max_steps, checkpoint_interval=checkpoint_every, path = path, plot=False)
     
 
@@ -73,7 +83,7 @@ def resume(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gam
     print("..done!")
     print("Resume training..")
 
-    agent.resume_training(path=path, plot=False)
+    agent.resume_training(path=path, plot=False, wandb=wandb)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -94,25 +104,35 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_every", default=200000, type=int, help="Set checkpointing interval")
 
     parser.add_argument("--path", default=".", type=str, help="Set default saving path of logs and checkpoints")
+    parser.add_argument("--seed", default=42, type=int, help="Set a seed for the training run")
 
+
+    parser.add_argument("--pretrain", action='store_true', help="Pretrain the DQN with superwised learnin")
     parser.add_argument("--resume_training", dest="resume", action='store_true', help="Load checkpoint from path folder and resume training")
+    
     parser.add_argument("--wandb", action='store_true', help="Log training on W&B")
+    parser.add_argument("--wandb_project", default="deepFibreTracking", type=str, help="Set name of W&B project")
+    parser.add_argument("--wandb_entity", default=None, type=str, help="Set entity of W&B project")
     #parser.add_argument("--odf-as-state-value",dest="odf_state", action='store_true')
     #parser.set_defaults(odf_state=False)
 
     args = parser.parse_args()
+
+    set_seed(args.seed)
 
     if args.wandb:
         import wandb
         config = args
 
     if args.resume:
-        wandb.init(project='defi', entity='pia', config=config, resume=True)
+        if args.wandb:
+            wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=config, resume=True)
         resume(args.path, batch_size=args.batch_size, gamma=args.gamma, checkpoint_every=args.checkpoint_every, wandb=args.wandb)
 
     else:
-        wandb.init(project='defi', entity='pia', config=config, resume='allow')
-        train(args.path, max_steps=args.max_steps, replay_memory_size=args.replay_memory_size, 
+        if args.wandb:
+            wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=config, resume='allow')
+        train(args.path, pretraining=args.pretrain, max_steps=args.max_steps, replay_memory_size=args.replay_memory_size, 
               batch_size=args.batch_size, gamma=args.gamma, 
               network_update_every=args.network_update_every, learning_rate=args.learning_rate,
               checkpoint_every=args.checkpoint_every, wandb=args.wandb)
