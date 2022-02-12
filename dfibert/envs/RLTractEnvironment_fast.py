@@ -298,63 +298,68 @@ class RLTractEnvironment(gym.Env):
     '''
 
     
-    def track(self, with_best_action=True):
+    def track(self, agent=None):
         streamlines = []
         for i in trange(len(self.seeds)):
-            all_states = []
-            self.reset(seed_index=i)
-            state = self.state  # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
-            seed_position = state.getCoordinate().to(self.device)
-            current_direction = None
-            all_states.append(seed_position.squeeze(0))
-
-            # -- forward tracking --
-            terminal = False
-            eval_steps = 0
-            while not terminal:
-                # current position
-                # get the best choice from environment
-                if with_best_action:
-                    action = self._get_best_action(state, direction="forward", prev_direction=current_direction)
-                else:
-                    raise NotImplementedError
-                # store tangent for next time step
-                current_direction = self.directions[action] #.numpy()
-                # take a step
-                _, reward, terminal, _ = self.step(action)
-                state = self.state # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
-                if not terminal:
-                    all_states.append(state.getCoordinate().squeeze(0))
-                eval_steps = eval_steps + 1
-
-            # -- backward tracking --
-            self.reset(seed_index=i, terminal_F=True)
-            state = self.state # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
-            current_direction = None  # potentially take tangent of first step of forward tracker
-            terminal = False
-            all_states = all_states[::-1]
-            while not terminal:
-                # current position
-                my_position = state.getCoordinate().double().squeeze(0)
-                # get the best choice from environment
-                if with_best_action:
-                    action = self._get_best_action(state, direction="backward", prev_direction=current_direction)
-                else:
-                    raise NotImplementedError
-                # store tangent for next time step
-                current_direction = self.directions[action]#.numpy()
-                # take a step
-                _, reward, terminal, _ = self.step(action, direction="backward")
-                state = self.state
-                my_position = my_position.to(self.device) # DIRTY!!!
-                my_coord = state.getCoordinate().squeeze(0).to(self.device)
-                if (False in torch.eq(my_coord, my_position)) & (not terminal):
-                    all_states.append(my_coord)
-
-            streamlines.append((all_states))
+            streamline, _ = self._track_single_streamline(i, agent)
+            streamlines.append((streamline))
 
         return streamlines
 
+
+    def _track_single_streamline(self, index, agent=None):
+        all_states = []
+        env.reset(seed_index=index)
+        state = self.state  # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
+        seed_position = state.getCoordinate().to(self.device)
+        current_direction = None
+        all_states.append(seed_position.squeeze(0))
+        streamline_reward = 0
+        # -- forward tracking --
+        terminal = False
+        eval_steps = 0
+        while not terminal:
+            # current position
+            # get the best choice from environment
+            if agent is None:
+                action = self._get_best_action(state, direction="forward", prev_direction=current_direction)
+            else:
+                action = agent(self.get_observation_from_state(self.state))
+            # store tangent for next time step
+            current_direction = self.directions[action] #.numpy()
+            # take a step
+            _, reward, terminal, _ = self.step(action)
+            streamline_reward += reward
+            state = self.state # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
+            if not terminal:
+                all_states.append(state.getCoordinate().squeeze(0))
+            eval_steps = eval_steps + 1
+
+        # -- backward tracking --
+        self.reset(seed_index=index, terminal_F=True)
+        state = self.state # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
+        current_direction = None  # potentially take tangent of first step of forward tracker
+        terminal = False
+        all_states = all_states[::-1]
+        while not terminal:
+            # current position
+            my_position = state.getCoordinate().double().squeeze(0)
+            # get the best choice from environment
+            if agent is None:
+                action = self._get_best_action(state, direction="forward", prev_direction=current_direction)
+            else:
+                action = agent(self.get_observation_from_state(self.state))
+            # store tangent for next time step
+            current_direction = self.directions[action]#.numpy()
+            # take a step
+            _, reward, terminal, _ = self.step(action, direction="backward")
+            state = self.state
+            my_position = my_position.to(self.device) # DIRTY!!!
+            my_coord = state.getCoordinate().squeeze(0).to(self.device)
+            if (False in torch.eq(my_coord, my_position)) & (not terminal):
+                all_states.append(my_coord)
+
+        return all_states
 
     def get_observation_from_state(self, state):
         dwi_values = state.getValue().flatten()

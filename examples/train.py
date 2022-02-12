@@ -37,11 +37,12 @@ def train(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamm
                     lr = learning_rate,
                     gamma = gamma,
                     device = device,
+                    wandb_log=wandb
                     )
     print("..done!")
     print("Start training...")
 
-    agent.train(num_steps = max_steps, checkpoint_interval=checkpoint_every, path = path, plot=False, wandb_log=wandb)
+    agent.train(num_steps = max_steps, checkpoint_interval=checkpoint_every, path = path, plot=False)
     
 
 
@@ -66,6 +67,7 @@ def resume(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gam
                     lr = learning_rate,
                     gamma = gamma,
                     device = device,
+                    wandb_log=wandb
                     )               
 
     print("..done!")
@@ -84,7 +86,7 @@ if __name__ == "__main__":
     #parser.add_argument("--eval_runs", default=10, type=int, help="Set amount of runs performed during evaluation")
     parser.add_argument("--network_update_every", default=1000, type=int, help="Set target network update frequency")
     #parser.add_argument("--max_episode_length", default=550, type=int, help="Set maximum episode length")
-    parser.add_argument("--batch_size", default=32, type=int, help="Set batch size retrieved from memory for learning")
+    parser.add_argument("--batch_size", default=512, type=int, help="Set batch size retrieved from memory for learning")
     parser.add_argument("--learning_rate", default=0.0000625, type=float, help="Set learning rate")
     parser.add_argument("--gamma", default=0.99, type=float, help="Set discount factor for Bellman equation")
     #parser.add_argument("--eps_final", default=0.1, type=float, help="Set first value to which epsilon is lowered to after eps_annealing_steps")
@@ -105,11 +107,11 @@ if __name__ == "__main__":
         config = args
 
     if args.resume:
-        wandb.init(project='defi', entity='pia', resume=True)
-        resume(args.path, checkpoint_every=args.checkpoint_every, wandb=args.wandb)
+        wandb.init(project='defi', entity='pia', config=config, resume=True)
+        resume(args.path, batch_size=args.batch_size, gamma=args.gamma, checkpoint_every=args.checkpoint_every, wandb=args.wandb)
 
     else:
-        wandb.init(project='defi', entity='pia', config=config)
+        wandb.init(project='defi', entity='pia', config=config, resume='allow')
         train(args.path, max_steps=args.max_steps, replay_memory_size=args.replay_memory_size, 
               batch_size=args.batch_size, gamma=args.gamma, 
               network_update_every=args.network_update_every, learning_rate=args.learning_rate,

@@ -15,6 +15,7 @@ import torch.optim as optim
 from IPython.display import clear_output
 from torch.nn.utils import clip_grad_norm_
 from zmq import device
+import bisect
 
 from dfibert.tracker import save_streamlines
 from dfibert.tracker.nn._segment_tree import MinSegmentTree, SumSegmentTree
@@ -435,6 +436,7 @@ class DQNAgent:
         # N-step Learning
         n_step: int = 3,
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        wandb_log: bool = False,
         path: str = './training'
     ):
         """Initialization.
@@ -598,10 +600,11 @@ class DQNAgent:
 
         return loss.item()
         
-    def train(self, num_steps: int, steps_done: int = 1, plotting_interval: int = 200, checkpoint_interval: int = 20000, path: str = "./", losses: list = [], scores: list = [], plot: bool = False, wandb_log: bool = False):
+    def train(self, num_steps: int, steps_done: int = 1, plotting_interval: int = 200, checkpoint_interval: int = 20000, path: str = "./", losses: list = [], scores: list = [], plot: bool = False, wandb=False):
         """Train the agent."""
         self.is_test = False
-        if wandb_log:
+
+        if self.wandb_log:
             import wandb
             wandb.config.update = {
                         "max steps": num_steps,
@@ -656,7 +659,7 @@ class DQNAgent:
                 #state = torch.tensor(self.env.reset(seed_index), dtype=torch.float32, device=self.device)
                 scores.append(score)
                 streamline_len.append(cur_streamline_len)
-                if wandb_log:
+                if self.wandb_log:
                     wandb.log({
                         'Mean episode reward over past 1000 episodes': np.mean(scores[-1000:]),
                         'Median episode reward over past 1000 episodes': np.median(scores[-1000:]),
@@ -671,7 +674,7 @@ class DQNAgent:
             # if training is ready
             if len(self.memory) >= self.batch_size:
                 loss = self.update_model()
-                if wandb_log:
+                if self.wandb_log:
                     wandb.log({'Loss': loss})
                 losses.append(loss)
                 update_cnt += 1
@@ -686,14 +689,56 @@ class DQNAgent:
 
             if step_idx % checkpoint_interval == 0 and step_idx != steps_done:
                 #print("Step number: ", step_idx, "Avg. reward: ", np.mean(scores[-1000:]))
-                print("Step number: ", step_idx, "Median reward: ", np.median(scores[-1000:]))
+                mean_distance_to_gt = self._compare_to_gt(num_streamlines = 20)
+                print("Step number: ", step_idx, "Median reward: ", np.median(scores[-1000:]), "Mean distance to gt streamlines: ", mean_distance_to_gt)
+                if self.wandb_log:
+                    wandb.log({"Mean distance to gt streamlines": mean_distance_to_gt})
                 self._save_model(path, step_idx, scores, losses, num_steps)
                 
         #self.env.close()
 
-    # def _compare_to_gt(self, num_streamline: int = 5):
-    #     gt_streamlines = []
-    #     agent_streamlines = []
+    def _compare_to_gt(self, num_streamlines: int = 5):
+        gt_streamlines = []
+        agent_streamlines = []
+        distances = []
+
+        seed_indices = np.random.randint(len(env.seeds), size=num_streamlines)
+
+        for i in range(seed_indices):
+            _ = env.reset(seed_index=i)
+            seed_point = env.state.getCoordinate().detach().cpu().tolist()
+            # track ground-truth streamline and predicted streamline by agent
+            gt_streamline, gt_reward = env._track_single_streamline(i)
+            agent_streamline, agent_reward = env._track_single_streamline(i, self.predict_action)
+
+            # track single streamline returns a list of tensors
+            # for ease of use, convert to list of lists
+            gt_streamline = [i.tolist() for i in gt_streamline]
+            agent_streamline = [i.tolist() for i in agent_streamline]
+
+            # find the index of the seed point in both streamlines
+            index_seed_point_agent = agent_streamline.index(seed_point)
+            index_seed_point_gt = gt_streamline.index(seed_point)
+            
+            # to compare both streamlines, they need to be of the same length:
+            # therefore, we determine how many [0., 0., 0.] need to be filled at the beginning and the end of the streamline,
+            # such that the seed_position is at the same index for both gt_streamline and agent_streamline
+            if len(gt_streamline) > len(agent_streamline):
+                lower_fill = (index_seed_point_gt - 1) - (index_seed_point_agent -1) 
+                upper_fill = (len(gt_streamline) - index_seed_point_gt -1) - (len(agent_streamlines) - index_seed_point_agent - 1)
+                agent_streamline = [[0., 0., 0.]]*lower_fill + agent_streamline + [[0., 0., 0.]]*upper_fill
+            else:
+                lower_fill = (index_seed_point_agent -1) - (index_seed_point_gt - 1)
+                upper_fill = (len(agent_streamlines) - index_seed_point_agent - 1) - (len(gt_streamline) - index_seed_point_gt -1)
+                gt_streamline = [[0., 0., 0.]]*lower_fill + gt_streamline + [[0., 0., 0.]]*upper_fill
+
+            # now we can calculate the l1 distance
+            #TODO: decide on a lp norm
+            l1_distance = np.linalg.norm(numpy.array(agent_streamline) - numpy.array(gt_streamline), ord=1)
+            distances.append(l1_distance)
+
+        # return the mean of all l1 distances    
+        return np.mean(distances)
 
                 
     def test(self) -> List[np.ndarray]:
@@ -844,7 +889,7 @@ class DQNAgent:
 
         return num_steps, rewards, losses, max_steps
 
-    def resume_training(self, path, plot: bool = False, checkpoint_interval: int = 2000, wandb: bool = False):
+    def resume_training(self, path, plot: bool = False, checkpoint_interval: int = 2000, wandb=False):
         num_steps, rewards, losses, max_steps = self._load_model(path)
         #remaining_steps = max_steps - num_steps   # set max_steps to remaining amount of steps
 
@@ -852,12 +897,12 @@ class DQNAgent:
         path_dir = os.path.split(path_dir)[0]
 
         print("Resume training at %d / %d steps." % (num_steps, max_steps) )
-        self.train(num_steps=max_steps, steps_done=num_steps, losses = losses, scores = rewards, path=path_dir, checkpoint_interval=checkpoint_interval, plot=plot, wandb_log=wandb)
+        self.train(num_steps=max_steps, steps_done=num_steps, losses = losses, scores = rewards, path=path_dir, checkpoint_interval=checkpoint_interval, plot=plot)
 
     def create_tractogram(self, path: str = './'):
         self.is_test = True                                                 
 
-        streamlines = self.env.track(with_best_action=False, agent=self.select_action)
+        streamlines = self.env.track(agent=self.select_action)
         # if ras:
         #      streamlines = [self.env.dataset.to_ras(sl) for sl in streamlines if len(sl)>10]
         streamlines = list(filter(None, streamlines))
