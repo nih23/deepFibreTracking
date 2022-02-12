@@ -26,12 +26,12 @@ def train(path, pretraining=False, max_steps=3000000, batch_size=32, replay_memo
     print("Device:", device)
     print("Init environment..")
     
-    seeds_CST = np.load('data/ismrm_seeds_CST.npy')
-    seeds_CST = torch.from_numpy(seeds_CST)
+    #seeds_CST = np.load('data/ismrm_seeds_CST.npy')
+    #seeds_CST = torch.from_numpy(seeds_CST)
 
     env = RLTe.RLTractEnvironment(dataset = 'ISMRM', step_width=0.2,
-                                  device = device, seeds = seeds_CST, action_space=20,
-                                  tracking_in_RAS = False, odf_state = False, odf_mode = "DTI")
+                                  device = device, seeds = None, action_space=20,
+                                  tracking_in_RAS = False, odf_state = False, odf_mode = "CSD")
 
     print("..done!")
     print("Init agent..")
@@ -61,12 +61,12 @@ def resume(path, max_steps=3000000, batch_size=32, replay_memory_size=20000, gam
     print("Device:", device)
     print("Init environment..")
     
-    seeds_CST = np.load('data/ismrm_seeds_CST.npy')
-    seeds_CST = torch.from_numpy(seeds_CST)
+    #seeds_CST = np.load('data/ismrm_seeds_CST.npy')
+    #seeds_CST = torch.from_numpy(seeds_CST)
 
     env = RLTe.RLTractEnvironment(dataset = 'ISMRM', step_width=0.2,
-                                  device = device, seeds = seeds_CST, action_space=20,
-                                  tracking_in_RAS = False, odf_state = False, odf_mode = "DTI")
+                                  device = device, seeds = None, action_space=20,
+                                  tracking_in_RAS = False, odf_state = False, odf_mode = "CSD")
 
     print("..done!")
     print("Init agent..")
