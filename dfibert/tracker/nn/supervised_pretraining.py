@@ -1,5 +1,6 @@
-from tqdm import trange
-from tqdm.autonotebook import tqdm
+from tqdm import trange, tqdm
+#from tqdm.notebook import tqdm as tqdm
+#from tqdm.autonotebook import tqdm
 import dipy.reconst.dti as dti
 from dipy.tracking import utils
 

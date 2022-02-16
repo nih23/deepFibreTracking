@@ -299,7 +299,7 @@ class RLTractEnvironment(gym.Env):
     
     def track(self, agent=None):
         streamlines = []
-        for i in trange(len(self.seeds)):
+        for i in trange(len(self.seeds), ascii=True):
             streamline, _ = self._track_single_streamline(i, agent)
             streamlines.append((streamline))
 

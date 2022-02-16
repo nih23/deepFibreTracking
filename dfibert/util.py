@@ -1,9 +1,21 @@
 """Helpful functions required multiple times in different contexts
 """
+import os
+import random
 import torch
 import numpy as np
 from dipy.core.sphere import Sphere
 from dipy.core.geometry import sphere_distance
+
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    np.random.seed(seed)
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
 
 
 def rotation_from_vectors_p(rot, vectors_orig, vectors_fin):

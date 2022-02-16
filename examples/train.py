@@ -1,26 +1,17 @@
 import torch
 import numpy as np
 import argparse
-import random
 
 import os, sys
 sys.path.insert(0,'..')
 
 from dfibert.tracker.nn.rainbow_agent import DQNAgent
+from dfibert.util import set_seed
 
 import dfibert.envs.RLTractEnvironment_fast as RLTe
 
-def set_seed(seed):
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    np.random.seed(seed)
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
 
-
-def train(path, pretraining=False, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamma=0.99, network_update_every=10000, learning_rate=0.0000625, checkpoint_every=200000, wandb=False):
+def train(path, pretraining=False, max_steps=3000000, batch_size=32, replay_memory_size=20000, gamma=0.99, network_update_every=10000, learning_rate=0.0000625, checkpoint_every=200000, wandb=False, step_width = 0.8, odf_mode = "CSD"):
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Device:", device)
@@ -29,9 +20,9 @@ def train(path, pretraining=False, max_steps=3000000, batch_size=32, replay_memo
     #seeds_CST = np.load('data/ismrm_seeds_CST.npy')
     #seeds_CST = torch.from_numpy(seeds_CST)
 
-    env = RLTe.RLTractEnvironment(dataset = 'ISMRM', step_width=0.2,
+    env = RLTe.RLTractEnvironment(dataset = 'ISMRM', step_width=step_width,
                                   device = device, seeds = None, action_space=20,
-                                  tracking_in_RAS = False, odf_state = False, odf_mode = "CSD")
+                                  tracking_in_RAS = False, odf_state = False, odf_mode = odf_mode)
 
     print("..done!")
     print("Init agent..")
@@ -106,7 +97,9 @@ if __name__ == "__main__":
     parser.add_argument("--path", default=".", type=str, help="Set default saving path of logs and checkpoints")
     parser.add_argument("--seed", default=42, type=int, help="Set a seed for the training run")
 
-
+    parser.add_argument("--step_width", default=0.8, type=float, help="step width for tracking")
+    parser.add_argument("--odf_mode", default="CSD", type=str, help="compute ODF in reward based on DTI or CSD?")
+    
     parser.add_argument("--pretrain", action='store_true', help="Pretrain the DQN with superwised learnin")
     parser.add_argument("--resume_training", dest="resume", action='store_true', help="Load checkpoint from path folder and resume training")
     
@@ -135,6 +128,6 @@ if __name__ == "__main__":
         train(args.path, pretraining=args.pretrain, max_steps=args.max_steps, replay_memory_size=args.replay_memory_size, 
               batch_size=args.batch_size, gamma=args.gamma, 
               network_update_every=args.network_update_every, learning_rate=args.learning_rate,
-              checkpoint_every=args.checkpoint_every, wandb=args.wandb)
+              checkpoint_every=args.checkpoint_every, wandb=args.wandb, step_width = args.step_width, odf_mode = args.odf_mode)
     
         
