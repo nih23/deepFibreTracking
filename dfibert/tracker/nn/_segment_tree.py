@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Source: https://github.com/Curt-Park/rainbow-is-all-you-need
 """Segment tree for Prioritized Replay Buffer."""
 
 import operator

@@ -30,5 +30,5 @@ class PointOutsideOfDWIError(LookupError):
         self.affected_points = affected_points
         super().__init__(("While parsing {no_points} points for further processing, "
                           "it became apparent that {aff} of the points "
-                          "doesn't lay inside of DataContainer '{id}'.")
-                         .format(no_points=len(points), id=data_container.id, aff=affected_points))
+                          "doesn't lay inside of DataContainer 'xyz'.")
+                         .format(no_points=len(points), aff=affected_points))

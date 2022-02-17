@@ -301,7 +301,7 @@ class RLTractEnvironment(gym.Env):
             return odf_cur[actions] + torch.max(local_na_reward, dim = 2).values.squeeze()
 
 
-    def track(self, with_best_action=True):
+    def track(self, with_best_action=True, agent=None):
         streamlines = []
         for i in trange(len(self.seeds)):
             streamline = []
@@ -316,7 +316,8 @@ class RLTractEnvironment(gym.Env):
                     _, reward = self._next_pos_and_reward()
                     action = torch.argmax(reward)
                 else:
-                    raise NotImplementedError
+                    action = agent(self.state.get_value())
+                    #raise NotImplementedError
                 # take a step
                 _, reward, terminal, _ = self.step(action)
                 # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
@@ -334,7 +335,7 @@ class RLTractEnvironment(gym.Env):
                     _, reward = self._next_pos_and_reward(backwards=True)
                     action = torch.argmax(reward)
                 else:
-                    raise NotImplementedError
+                    action = agent(self.state.get_value())
                 # take a step
                 _, reward, terminal, _ = self.step(action, backwards=True)
                 # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines

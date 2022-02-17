@@ -122,6 +122,10 @@ class RLTractEnvironment(gym.Env):
         # -- set default values --
         self.reset()
 
+        # -- init observation space --
+        obs_shape = self.get_observation_from_state(self.state).shape
+        self.observation_space = Box(low=0, high=150, shape=obs_shape)
+
 
     def _init_odf(self):
         print("Initialising ODF")
@@ -216,6 +220,8 @@ class RLTractEnvironment(gym.Env):
         # It is normalized in a way such that its maximum equals 1 Crucial assumption is that self.directions ==
         # self.directions_odf
         odf_cur = torch.from_numpy(self.interpolate_odf_at_state(stateCoordinates=cur_position))[:, 1, 1, 1].view(self.directions_odf.shape[0])
+        if not torch.count_nonzero(odf_cur):  # if all elements in odf_cur are zero, terminate episode
+            return self.get_observation_from_state(next_state), 0., True, {}
         reward = odf_cur / torch.max(odf_cur)
         reward = reward[action]
 
@@ -230,7 +236,7 @@ class RLTractEnvironment(gym.Env):
             cos_similarity = abs(torch.nn.functional.cosine_similarity(prev_tangent, cur_tangent))
             reward = (reward * cos_similarity).squeeze()
             if cos_similarity <= 0.:
-                return next_state, reward, True, {}
+                return self.get_observation_from_state(next_state), reward, True, {}
 
         #@todo: replace the following lines by a call to reward_for_state_action_pair(-)
         #reward_sap = self.reward_for_state_action_pair(self.state, prev_tangent, action)
@@ -294,7 +300,7 @@ class RLTractEnvironment(gym.Env):
         return peak_indices
 
     
-    def track(self, with_best_action=True):
+    def track(self, action_function=None):
         streamlines = []
         for i in trange(len(self.seeds)):
             all_states = []
@@ -310,10 +316,10 @@ class RLTractEnvironment(gym.Env):
             while not terminal:
                 # current position
                 # get the best choice from environment
-                if with_best_action:
+                if action_function is None:
                     action = self._get_best_action(state, current_direction)
                 else:
-                    raise NotImplementedError
+                    action = action_function(self.get_observation_from_state(state))
                 # store tangent for next time step
                 current_direction = self.directions[action] #.numpy()
                 # take a step
@@ -333,10 +339,10 @@ class RLTractEnvironment(gym.Env):
                 # current position
                 my_position = state.getCoordinate().double().squeeze(0)
                 # get the best choice from environment
-                if with_best_action:
+                if action_function is None:
                     action = self._get_best_action(state, current_direction)
                 else:
-                    raise NotImplementedError
+                    action = action_function(self.get_observation_from_state(state))
                 # store tangent for next time step
                 current_direction = self.directions[action]#.numpy()
                 # take a step
@@ -353,7 +359,7 @@ class RLTractEnvironment(gym.Env):
 
 
     def get_observation_from_state(self, state):
-        dwi_values = state#.getValue().flatten()
+        dwi_values = state.getValue().flatten()
         # TODO -> currently only on dwi values, not on past states
         #past_coordinates = np.array(list(self.state_history)).flatten()
         #return np.concatenate((dwi_values, past_coordinates))

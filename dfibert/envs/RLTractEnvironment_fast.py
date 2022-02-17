@@ -6,7 +6,8 @@ import torch
 import dipy.reconst.dti as dti
 from dipy.core.interpolation import trilinear_interpolate4d
 from dipy.core.sphere import HemiSphere, Sphere
-from dipy.core.sphere import disperse_charges
+from dipy.core.sphere_stats import random_uniform_on_sphere
+
 from dipy.data import get_sphere
 from dipy.direction import peaks_from_model
 from dipy.reconst.csdeconv import ConstrainedSphericalDeconvModel
@@ -20,7 +21,7 @@ from tqdm import trange
 
 from dfibert.data import DataPreprocessor, PointOutsideOfDWIError
 from dfibert.data.postprocessing import Resample, Resample100
-from dfibert.util import get_grid
+from dfibert.util import get_grid, set_seed
 from ._state import TractographyState
 
 
@@ -31,7 +32,7 @@ from .NARLTractEnvironment import TorchGridInterpolator
 class RLTractEnvironment(gym.Env):
     def __init__(self, device, seeds=None, step_width=0.8, dataset='100307', grid_dim=(3, 3, 3),
                  max_l2_dist_to_state=0.1, tracking_in_RAS=False, fa_threshold=0.1, b_val=1000, 
-                 odf_state=True, odf_mode="CSD", action_space=100, pFolderBundles = "data/gt_bundles/"):
+                 odf_state=True, odf_mode="CSD", action_space=100, pFolderBundles = "data/gt_bundles/", rnd_seed = 2342):
         print("Will be deprecated by NARLTractEnvironment as soon as Jos fixes all bugs in the reward function.")
         self.state_history = None
         self.reference_seed_point_ijk = None
@@ -65,16 +66,13 @@ class RLTractEnvironment(gym.Env):
         # build DWI object by interpolating at all IJK coordinates
         interpol_pts = None
         # permute into CxHxWxD
-        self.dwi = torch.from_numpy(Resample100().process(self.dataset, None, self.dataset.dwi)).to(device=device).float()
-
-        np.random.seed(42)
-        action_space = action_space 
-        phi = np.pi * np.random.rand(action_space)
-        theta = 2 * np.pi * np.random.rand(action_space)
-        sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
-        sphere, _ = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
-        self.sphere = sphere
-        self.sphere_odf = sphere
+        self.dwi = torch.from_numpy(Resample100().process(self.dataset, None, self.dataset.dwi)).to(device=device).float()       
+        
+        set_seed(rnd_seed)
+        X = random_uniform_on_sphere(n=action_space)
+        
+        self.sphere = HemiSphere(xyz=X)
+        self.sphere_odf = self.sphere
 
         # -- interpolation function of state's value --
         self.state_interpol_func = self.interpolate_dwi_at_state
@@ -90,6 +88,7 @@ class RLTractEnvironment(gym.Env):
         self.dwi_postprocessor = Resample(sphere=get_sphere('repulsion100'))  # resample(sphere=sphere)
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
+        self.grid = torch.from_numpy(self.grid).to(self.device)
         self.maxL2dist_to_State = max_l2_dist_to_state
         self.tracking_in_RAS = tracking_in_RAS
 
@@ -159,7 +158,7 @@ class RLTractEnvironment(gym.Env):
         # -- set up interpolator for odf evaluation
         odf = torch.from_numpy(odf).to(device=self.device).float()
         self.odf_interpolator = TorchGridInterpolator(odf)
-
+        print("..done!")
 
     def interpolate_dwi_at_state(self, stateCoordinates):
         # torch
@@ -261,12 +260,13 @@ class RLTractEnvironment(gym.Env):
         if(direction == "backward"):
             orientation = -1 * orientation
         next_pos = my_position.view(1,-1) + orientation # gets next positions for all directions actions X 3
-        
         local_reward_na = self.tractMask_interpolator(next_pos) # noActions x noTracts
-        reward_na_mu_hist = torch.mean(self.na_reward_history[0:self.stepCounter-1, :], dim = 0).view(1,-1) # 1 x no_tracts
+       
+        reward_na_mu_hist = torch.mean(self.na_reward_history[0:max(self.stepCounter-1,1), :], dim = 0).view(1,-1) # 1 x no_tracts
         local_reward_na = local_reward_na + reward_na_mu_hist # noActions x noTracts
         reward_na, _ = torch.max(local_reward_na, dim = 1) # # marginalize tracts
         reward_na = reward_na.view(-1) # noActions 
+
         # reward_na_arg = torch.argmax(local_reward_na, dim = 0) # get dominant tract per action        
 
         return reward + reward_na # ODF + neuroanatomical reward
@@ -296,66 +296,71 @@ class RLTractEnvironment(gym.Env):
     '''
 
     
-    def track(self, with_best_action=True):
+    def track(self, agent=None):
         streamlines = []
-        for i in trange(len(self.seeds)):
-            all_states = []
-            self.reset(seed_index=i)
-            state = self.state  # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
-            seed_position = state.getCoordinate().to(self.device)
-            current_direction = None
-            all_states.append(seed_position.squeeze(0))
-
-            # -- forward tracking --
-            terminal = False
-            eval_steps = 0
-            while not terminal:
-                # current position
-                # get the best choice from environment
-                if with_best_action:
-                    action = self._get_best_action(state, direction="forward", prev_direction=current_direction)
-                else:
-                    raise NotImplementedError
-                # store tangent for next time step
-                current_direction = self.directions[action] #.numpy()
-                # take a step
-                _, reward, terminal, _ = self.step(action)
-                state = self.state # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
-                if not terminal:
-                    all_states.append(state.getCoordinate().squeeze(0))
-                eval_steps = eval_steps + 1
-
-            # -- backward tracking --
-            self.reset(seed_index=i, terminal_F=True)
-            state = self.state # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
-            current_direction = None  # potentially take tangent of first step of forward tracker
-            terminal = False
-            all_states = all_states[::-1]
-            while not terminal:
-                # current position
-                my_position = state.getCoordinate().double().squeeze(0)
-                # get the best choice from environment
-                if with_best_action:
-                    action = self._get_best_action(state, direction="backward", prev_direction=current_direction)
-                else:
-                    raise NotImplementedError
-                # store tangent for next time step
-                current_direction = self.directions[action]#.numpy()
-                # take a step
-                _, reward, terminal, _ = self.step(action, direction="backward")
-                state = self.state
-                my_position = my_position.to(self.device) # DIRTY!!!
-                my_coord = state.getCoordinate().squeeze(0).to(self.device)
-                if (False in torch.eq(my_coord, my_position)) & (not terminal):
-                    all_states.append(my_coord)
-
-            streamlines.append((all_states))
+        for i in trange(len(self.seeds), ascii=True):
+            streamline, _ = self._track_single_streamline(i, agent)
+            streamlines.append((streamline))
 
         return streamlines
 
 
+    def _track_single_streamline(self, index, agent=None):
+        all_states = []
+        self.reset(seed_index=index)
+        state = self.state  # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
+        seed_position = state.getCoordinate().to(self.device)
+        current_direction = None
+        all_states.append(seed_position.squeeze(0))
+        streamline_reward = 0
+        # -- forward tracking --
+        terminal = False
+        eval_steps = 0
+        while not terminal:
+            # current position
+            # get the best choice from environment
+            if agent is None:
+                action = self._get_best_action(state, direction="forward", prev_direction=current_direction)
+            else:
+                action = agent(self.get_observation_from_state(self.state))
+            # store tangent for next time step
+            current_direction = self.directions[action] #.numpy()
+            # take a step
+            _, reward, terminal, _ = self.step(action)
+            streamline_reward += reward
+            state = self.state # step function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
+            if not terminal:
+                all_states.append(state.getCoordinate().squeeze(0))
+            eval_steps = eval_steps + 1
+
+        # -- backward tracking --
+        self.reset(seed_index=index, terminal_F=True)
+        state = self.state # reset function now returns dwi values --> due to compatibility to rainbow agent or stable baselines
+        current_direction = None  # potentially take tangent of first step of forward tracker
+        terminal = False
+        all_states = all_states[::-1]
+        while not terminal:
+            # current position
+            my_position = state.getCoordinate().double().squeeze(0)
+            # get the best choice from environment
+            if agent is None:
+                action = self._get_best_action(state, direction="forward", prev_direction=current_direction)
+            else:
+                action = agent(self.get_observation_from_state(self.state))
+            # store tangent for next time step
+            current_direction = self.directions[action]#.numpy()
+            # take a step
+            _, reward, terminal, _ = self.step(action, direction="backward")
+            state = self.state
+            my_position = my_position.to(self.device) # DIRTY!!!
+            my_coord = state.getCoordinate().squeeze(0).to(self.device)
+            if (False in torch.eq(my_coord, my_position)) & (not terminal):
+                all_states.append(my_coord)
+
+        return all_states, streamline_reward
+
     def get_observation_from_state(self, state):
-        dwi_values = state#.getValue().flatten()
+        dwi_values = state.getValue().flatten()
         # TODO -> currently only on dwi values, not on past states
         #past_coordinates = np.array(list(self.state_history)).flatten()
         #return np.concatenate((dwi_values, past_coordinates))
