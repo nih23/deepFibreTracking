@@ -667,7 +667,6 @@ class DQNAgent:
         streamline_len = deque(maxlen=1000)
         cur_streamline_len = 0
 
-#        for step_idx in tqdm(range(steps_done, num_steps + 1)):
         with tqdm(range(steps_done, num_steps + 1), unit="epochs", ascii=True) as pbar:
             for step_idx in pbar:
                 action = self.select_action(state)
@@ -929,9 +928,11 @@ class DQNAgent:
     def create_tractogram(self, path: str = './'):
         self.is_test = True                                                 
 
+        # track and convert into RAS
         streamlines = self.env.track(agent=self.select_action)
-        # if ras:
-        #      streamlines = [self.env.dataset.to_ras(sl) for sl in streamlines if len(sl)>10]
-        streamlines = list(filter(None, streamlines))
-        save_streamlines(streamlines=streamlines, path=path)
+        streamlines_ras = [self.env.dataset.to_ras(torch.stack(sl).cpu()) for sl in streamlines]
+        
+        # store streamlines as vtk file
+        save_streamlines(streamlines=streamlines_ras, path=path)
+        
         return streamlines

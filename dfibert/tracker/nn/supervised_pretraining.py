@@ -1,6 +1,4 @@
 from tqdm import trange, tqdm
-#from tqdm.notebook import tqdm as tqdm
-#from tqdm.autonotebook import tqdm
 import dipy.reconst.dti as dti
 from dipy.tracking import utils
 
@@ -95,7 +93,6 @@ def train(dqn, env, batch_size: int = 1024, epochs: int = 1000, lr: float = 1e-4
         dwi_interpol_ = env.interpolate_dwi_at_state(pos.to(env.device))
 
         dwi_data[i,:,:,:,:] = dwi_interpol_
-        #rewards[i,:] = reward_
         actions[i] = action_
 
     print("..done!")

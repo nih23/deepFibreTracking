@@ -6,7 +6,8 @@ import torch
 import dipy.reconst.dti as dti
 from dipy.core.interpolation import trilinear_interpolate4d
 from dipy.core.sphere import HemiSphere, Sphere
-from dipy.core.sphere import disperse_charges
+from dipy.core.sphere_stats import random_uniform_on_sphere
+
 from dipy.data import get_sphere
 from dipy.direction import peaks_from_model
 from dipy.reconst.csdeconv import ConstrainedSphericalDeconvModel
@@ -20,7 +21,7 @@ from tqdm import trange
 
 from dfibert.data import DataPreprocessor, PointOutsideOfDWIError
 from dfibert.data.postprocessing import Resample, Resample100
-from dfibert.util import get_grid
+from dfibert.util import get_grid, set_seed
 from ._state import TractographyState
 
 
@@ -31,7 +32,7 @@ from .NARLTractEnvironment import TorchGridInterpolator
 class RLTractEnvironment(gym.Env):
     def __init__(self, device, seeds=None, step_width=0.8, dataset='100307', grid_dim=(3, 3, 3),
                  max_l2_dist_to_state=0.1, tracking_in_RAS=False, fa_threshold=0.1, b_val=1000, 
-                 odf_state=True, odf_mode="CSD", action_space=100, pFolderBundles = "data/gt_bundles/"):
+                 odf_state=True, odf_mode="CSD", action_space=100, pFolderBundles = "data/gt_bundles/", rnd_seed = 2342):
         print("Will be deprecated by NARLTractEnvironment as soon as Jos fixes all bugs in the reward function.")
         self.state_history = None
         self.reference_seed_point_ijk = None
@@ -65,15 +66,13 @@ class RLTractEnvironment(gym.Env):
         # build DWI object by interpolating at all IJK coordinates
         interpol_pts = None
         # permute into CxHxWxD
-        self.dwi = torch.from_numpy(Resample100().process(self.dataset, None, self.dataset.dwi)).to(device=device).float()
-
-        action_space = action_space 
-        phi = np.pi * np.random.rand(action_space)
-        theta = 2 * np.pi * np.random.rand(action_space)
-        sphere = HemiSphere(theta=theta, phi=phi)  #Sphere(theta=theta, phi=phi)
-        sphere, _ = disperse_charges(sphere, 5000) # enforce uniform distribtuion of our points
-        self.sphere = sphere
-        self.sphere_odf = sphere
+        self.dwi = torch.from_numpy(Resample100().process(self.dataset, None, self.dataset.dwi)).to(device=device).float()       
+        
+        set_seed(rnd_seed)
+        X = random_uniform_on_sphere(n=action_space)
+        
+        self.sphere = HemiSphere(xyz=X)
+        self.sphere_odf = self.sphere
 
         # -- interpolation function of state's value --
         self.state_interpol_func = self.interpolate_dwi_at_state
