@@ -19,7 +19,7 @@ from gym.spaces import Discrete, Box
 from scipy.interpolate import RegularGridInterpolator
 from tqdm import trange
 
-from dfibert.data import DataPreprocessor, PointOutsideOfDWIError
+from dfibert.data import DataContainer, DataPreprocessor, PointOutsideOfDWIError
 from dfibert.data.postprocessing import Resample, Resample100
 from dfibert.util import get_grid, set_seed
 from ._state import TractographyState
@@ -31,7 +31,7 @@ from .NARLTractEnvironment import TorchGridInterpolator
 
 class RLTractEnvironment(gym.Env):
     def __init__(self, device, seeds=None, step_width=0.8, dataset='100307', grid_dim=(3, 3, 3),
-                 max_l2_dist_to_state=0.1, tracking_in_RAS=False, fa_threshold=0.1, b_val=1000, 
+                 neuroanatomical_reward=True, tracking_in_RAS=False, fa_threshold=0.1, b_val=1000, 
                  odf_state=True, odf_mode="CSD", action_space=100, pFolderBundles = "data/gt_bundles/", rnd_seed = 2342):
         print("Will be deprecated by NARLTractEnvironment as soon as Jos fixes all bugs in the reward function.")
         self.state_history = None
@@ -44,16 +44,23 @@ class RLTractEnvironment(gym.Env):
         self.seed_index = None
         self.step_angles = None
         self.line = None
-        self.na_reward_history = None
-        self.av_na_reward = None
-        self.past_bundle = None
-        print("Loading dataset # ", dataset)
+        self.neuroanatomical_reward = neuroanatomical_reward
+        if(neuroanatomical_reward):
+            self.na_reward_history = None
+            self.av_na_reward = None
+            self.past_bundle = None
         self.device = device
-        preprocessor = DataPreprocessor().normalize().crop(b_val).fa_estimate()
-        if dataset == 'ISMRM':
-            self.dataset = preprocessor.get_ismrm(f"data/ISMRM2015/")
+        
+        if(dataset.__class__ == DataContainer):
+            print("Using preloaded data.")
+            self.dataset = dataset
         else:
-            self.dataset = preprocessor.get_hcp(f"data/HCP/{dataset}/")
+            print("Loading dataset # %s" % (dataset))
+            preprocessor = DataPreprocessor().normalize().crop(b_val).fa_estimate()
+            if dataset == 'ISMRM':
+                self.dataset = preprocessor.get_ismrm(f"data/ISMRM2015/")
+            else:
+                self.dataset = preprocessor.get_hcp(f"data/HCP/{dataset}/")
 
         self.step_width = step_width
         self.dtype = torch.FloatTensor  # vs. torch.cuda.FloatTensor
@@ -70,7 +77,6 @@ class RLTractEnvironment(gym.Env):
         
         set_seed(rnd_seed)
         X = random_uniform_on_sphere(n=action_space)
-        
         self.sphere = HemiSphere(xyz=X)
         self.sphere_odf = self.sphere
 
@@ -89,7 +95,6 @@ class RLTractEnvironment(gym.Env):
         self.referenceStreamline_ijk = None
         self.grid = get_grid(np.array(grid_dim))
         self.grid = torch.from_numpy(self.grid).to(self.device)
-        self.maxL2dist_to_State = max_l2_dist_to_state
         self.tracking_in_RAS = tracking_in_RAS
 
         # -- load streamlines --
@@ -114,18 +119,21 @@ class RLTractEnvironment(gym.Env):
             self.seeds = torch.from_numpy(seeds)
 
         # -- init bundles for neuroanatomical reward --
-        print("Init tract masks for neuroanatomical reward")
-        fibers = []
-        self.bundleNames = os.listdir(pFolderBundles)
-        for fibFile in self.bundleNames:
-            pFibre = pFolderBundles + fibFile
-            #print(" @ " + pFibre)
-            fibers.append(FiberBundleDataset(path_to_files=pFibre, dataset = self.dataset).tractMask)
+        if(neuroanatomical_reward):
+            print("Init tract masks for neuroanatomical reward")
+            fibers = []
+            self.bundleNames = os.listdir(pFolderBundles)
+            for fibFile in self.bundleNames:
+                pFibre = pFolderBundles + fibFile
+                #print(" @ " + pFibre)
+                fibers.append(FiberBundleDataset(path_to_files=pFibre, dataset = self.dataset).tractMask)
 
-        ## Define our interpolators
-        self.tractMasks = torch.stack(fibers, dim = 0).to(self.device).permute((1,2,3,0)) # [X,Y,Z,C]
-        print(self.tractMasks.shape)
-        self.tractMask_interpolator = TorchGridInterpolator(self.tractMasks)
+            ## Define our interpolators
+            self.tractMasks = torch.stack(fibers, dim = 0).to(self.device).permute((1,2,3,0)) # [X,Y,Z,C]
+            print(self.tractMasks.shape)
+            self.tractMask_interpolator = TorchGridInterpolator(self.tractMasks)
+        
+        # -- init interpolators --
         self.binary_mask = torch.from_numpy(self.dataset.binary_mask).to(device=device)
         self.fa_interpolator = TorchGridInterpolator(torch.from_numpy(self.dataset.fa).to(device=device).unsqueeze(-1).float())
         self.dwi_interpolator = TorchGridInterpolator(self.dwi.to(self.device))
@@ -210,16 +218,6 @@ class RLTractEnvironment(gym.Env):
         next_state = TractographyState(next_position, self.state_interpol_func)
 
         # -- REWARD --
-        '''
-        prev_tangent = None
-        if self.stepCounter > 1:
-            # The following ops are done in CPU. The performance shouldnt suffer from that and we save 1 host-device copy.
-            prev_tangent = self.state_history[-1].getCoordinate() - self.state_history[-2].getCoordinate()
-            prev_tangent = prev_tangent.view(-1, 3)
-            prev_tangent = prev_tangent / torch.sqrt(torch.sum(prev_tangent ** 2, dim=1))  # normalize to unit vector
-            prev_tangent = prev_tangent.to(self.device)
-        '''
-        
         reward = self.reward_for_state_action_pair(self.state, action, direction) # prev_tangent => None
 
         # -- book keeping --
@@ -260,16 +258,20 @@ class RLTractEnvironment(gym.Env):
         if(direction == "backward"):
             orientation = -1 * orientation
         next_pos = my_position.view(1,-1) + orientation # gets next positions for all directions actions X 3
-        local_reward_na = self.tractMask_interpolator(next_pos) # noActions x noTracts
-       
-        reward_na_mu_hist = torch.mean(self.na_reward_history[0:max(self.stepCounter-1,1), :], dim = 0).view(1,-1) # 1 x no_tracts
-        local_reward_na = local_reward_na + reward_na_mu_hist # noActions x noTracts
-        reward_na, _ = torch.max(local_reward_na, dim = 1) # # marginalize tracts
-        reward_na = reward_na.view(-1) # noActions 
+        
+        if(self.neuroanatomical_reward):
+            local_reward_na = self.tractMask_interpolator(next_pos) # noActions x noTracts
 
-        # reward_na_arg = torch.argmax(local_reward_na, dim = 0) # get dominant tract per action        
+            reward_na_mu_hist = torch.mean(self.na_reward_history[0:max(self.stepCounter-1,1), :], dim = 0).view(1,-1) # 1 x no_tracts
+            local_reward_na = local_reward_na + reward_na_mu_hist # noActions x noTracts
+            reward_na, _ = torch.max(local_reward_na, dim = 1) # # marginalize tracts
+            reward_na = reward_na.view(-1) # noActions 
 
-        return reward + reward_na # ODF + neuroanatomical reward
+            # reward_na_arg = torch.argmax(local_reward_na, dim = 0) # get dominant tract per action     
+            
+            reward = reward + na
+
+        return reward
 
     
     def reward_for_state_action_pair(self, state, action, direction, prev_direction = None):
@@ -280,20 +282,6 @@ class RLTractEnvironment(gym.Env):
     def _get_best_action(self, state, direction="forward", prev_direction = None):
         reward = self.reward_for_state(state, direction, prev_direction)
         return torch.argmax(reward)
-
-    '''
-    #@TODO: improve documentation
-    #deprecated
-    def _get_odf_peaks(self, odf, window_width=31):
-        odf = odf.squeeze(0)
-        odf_diff = ((odf[:-2]<odf[1:-1]) & (odf[2:]<odf[1:-1])).type(torch.uint8) #.to(self.device)
-        if window_width % 2 == 0.:
-            window_width += 1
-        peak_mask = torch.cat([torch.zeros(1, dtype=torch.uint8, device = self.device), odf_diff, torch.zeros(1, dtype=torch.uint8, device = self.device)], dim=0)
-        peaks = torch.nn.functional.max_pool1d_with_indices(odf.view(1,1,-1), window_width, 1, padding=window_width//2)[1].unique()
-        peak_indices = peaks[peak_mask[peaks].nonzero()]
-        return peak_indices
-    '''
 
     
     def track(self, agent=None):
@@ -359,6 +347,7 @@ class RLTractEnvironment(gym.Env):
 
         return all_states, streamline_reward
 
+    
     def get_observation_from_state(self, state):
         dwi_values = state.getValue().flatten()
         # TODO -> currently only on dwi values, not on past states
@@ -391,7 +380,9 @@ class RLTractEnvironment(gym.Env):
         self.reference_seed_point_ijk = reference_seed_point_ijk.to(self.device)
         self.state = TractographyState(self.reference_seed_point_ijk, self.state_interpol_func)
         self.state_history = deque([self.state]*4, maxlen=4)
-        self.na_reward_history = torch.zeros((self.maxSteps, self.tractMasks.shape[-1]), device = self.device) 
+        
+        if(self.neuroanatomical_reward):
+            self.na_reward_history = torch.zeros((self.maxSteps, self.tractMasks.shape[-1]), device = self.device) 
 
         return self.get_observation_from_state(self.state)
 
