@@ -112,8 +112,8 @@ class RLTractEnvironment(gym.Env):
 
             fa_img = dti_fit.fa
             seed_mask = fa_img.copy()
-            seed_mask[seed_mask >= 0.2] = 1
-            seed_mask[seed_mask < 0.2] = 0
+            seed_mask[seed_mask >= 0.3] = 1
+            seed_mask[seed_mask < 0.3] = 0
 
             seeds = utils.seeds_from_mask(seed_mask, affine=np.eye(4), density=1)  # tracking in IJK
             self.seeds = torch.from_numpy(seeds)

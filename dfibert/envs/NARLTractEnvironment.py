@@ -24,12 +24,17 @@ import torch
 class TorchGridInterpolator:
     def __init__(self, data) -> None:
         self.data = data.float() # [X,Y,Z,C]
-        self.data = data.permute((3,0,1,2)).unsqueeze(0) #compatible to torch>1.7
-        #self.data = self.data.moveaxis(3,0).unsqueeze(0) # [1, C, X, Y, Z], requires torch>1.10
+        self.data = data.permute((3,0,1,2)).unsqueeze(0) #compatible to torch>1.7, [1,C,X,Y,Z]
         self.interpol_transform = (torch.tensor(data.shape[:3], device=self.data.device) - 1) / 2
     
     def _convert_points(self, pts):
-        return (pts[:, (2,1,0)] / self.interpol_transform) - 1
+        #print("pts", pts.shape)
+        #return (pts[:, (2,1,0)] / self.interpol_transform) - 1 ## clash of dimensions?
+        pts_norm = pts / self.interpol_transform - 1
+        #print("ptsnorm", pts_norm.shape)
+        pts_norm = pts_norm[:, (2,1,0)]
+        #print("ptsnorm_re", pts_norm.shape)
+        return pts_norm
 
     def __call__(self, pts) -> None:
         new_shape = (*pts.shape[:-1], -1)

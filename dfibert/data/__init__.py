@@ -179,7 +179,7 @@ class DataPreprocessor(object):
         img = nb.load(path_mapping['img'])
         t1 = nb.load(path_mapping['t1']).get_data()
 
-        dwi = img.get_data().astype("float32")
+        dwi = img.get_fdata()
 
         aff = img.affine
 
